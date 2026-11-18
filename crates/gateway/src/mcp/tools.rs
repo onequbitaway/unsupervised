@@ -10,13 +10,14 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use unsup_protocol::{
-    ActionAck, ActionRequest, ActionStatus, Detail, Observation, ResidentId, SimError, VerbInfo,
-    VerbScope,
+    ActionAck, ActionRequest, ActionStatus, Detail, Observation, OwnerId, ResidentId, SimError,
+    VerbInfo, VerbScope,
 };
 
 use super::session::CursorKey;
 use super::text;
-use crate::actions::{observe_opts, run_plan, set_routines, wait_filter};
+use crate::actions::{observe_opts, routines_request, run_plan, set_routines, wait_filter};
+use crate::error::ApiError;
 use crate::state::Gateway;
 use crate::validate;
 
@@ -145,6 +146,8 @@ impl ToolResult {
 pub(crate) struct Call<'a> {
     pub(crate) gateway: &'a Gateway,
     pub(crate) resident: ResidentId,
+    /// The owner of the resident.
+    pub(crate) owner: OwnerId,
     /// Where the notice cursor of the caller lives.
     pub(crate) cursor: &'a CursorKey,
 }
@@ -219,6 +222,15 @@ impl Call<'_> {
         self.gateway.config().mcp.line_width
     }
 
+    /// Checks the text of action requests. A refusal is a tool error that
+    /// names the code of the HTTPS API.
+    async fn admit(&self, requests: &[ActionRequest]) -> Result<(), ToolResult> {
+        self.gateway
+            .admit(self.resident, requests)
+            .await
+            .map_err(|refusal| ToolResult::error(format!("{}: {}", refusal.code, refusal.message)))
+    }
+
     /// Converts an error of the simulation into a tool error.
     async fn sim_error(&self, error: SimError) -> ToolResult {
         let error = self.gateway.resident_error(self.resident, error).await;
@@ -232,17 +244,29 @@ impl Call<'_> {
         detail: Option<Detail>,
         sections: Option<Vec<String>>,
     ) -> Result<String, ToolResult> {
-        let sessions = &self.gateway.inner.sessions;
-        let opts = observe_opts(detail, Some(sessions.cursor(self.cursor)), sections);
+        let since = self.gateway.inner.sessions.cursor(self.cursor);
+        let opts = observe_opts(detail, Some(since), sections);
         match self.gateway.sim().observe(self.resident, opts).await {
-            Ok(observation) => Ok(self.show(&observation)),
+            Ok(observation) => Ok(self.show(observation, since)),
             Err(error) => Err(self.sim_error(error).await),
         }
     }
 
-    fn show(&self, observation: &Observation) -> String {
-        self.gateway.inner.sessions.advance(self.cursor, observation.next_notice);
-        text::observation(observation, self.width())
+    /// Writes an observation that was made with the cursor `since`, and
+    /// moves the cursor behind its news. News that another call of the
+    /// same client showed in the meantime is left out: the sequence
+    /// numbers of the notices and of the reports tell which.
+    fn show(&self, mut observation: Observation, since: u64) -> String {
+        let sessions = &self.gateway.inner.sessions;
+        let shown_before = sessions.claim(self.cursor, since, observation.next_notice);
+        if shown_before > since {
+            observation.notices.retain(|notice| notice.seq >= shown_before);
+            if let Some(Value::Array(reports)) = observation.sections.get_mut(REPORTS) {
+                let seq = |report: &Value| report.get("seq").and_then(Value::as_u64);
+                reports.retain(|report| seq(report).is_none_or(|seq| seq >= shown_before));
+            }
+        }
+        text::observation(&observation, self.width())
     }
 
     async fn observe(&self, args: Map<String, Value>) -> Result<ToolResult, ToolResult> {
@@ -264,6 +288,7 @@ impl Call<'_> {
         let args: ActArgs = arguments(args)?;
         let request = ActionRequest::new(args.verb, args.args);
         validate::action("The action", &request).map_err(ToolResult::error)?;
+        self.admit(std::slice::from_ref(&request)).await?;
         let ack = match self.gateway.sim().act(self.resident, request).await {
             Ok(ack) => ack,
             Err(error) => return Err(self.sim_error(error).await),
@@ -279,6 +304,7 @@ impl Call<'_> {
         let requests =
             validate::plan_from_values("actions", args.actions, max).map_err(ToolResult::error)?;
         let asked = requests.len();
+        self.admit(&requests).await?;
         let acks = match run_plan(self.gateway.sim(), self.resident, requests).await {
             Ok(acks) => acks,
             Err(error) => return Err(self.sim_error(error).await),
@@ -333,8 +359,12 @@ impl Call<'_> {
                 Err(error) => return Err(self.sim_error(error).await),
             },
             () = self.gateway.stopped() => return Err(ToolResult::error("The server stops.")),
+            () = self.gateway.inner.sanctions.banned(self.owner) => {
+                let banned = ApiError::banned();
+                return Err(ToolResult::error(format!("{}: {}", banned.code, banned.message)));
+            }
         };
-        Ok(ToolResult::ok(self.show(&observation)))
+        Ok(ToolResult::ok(self.show(observation, since)))
     }
 
     fn describe(&self, args: Map<String, Value>) -> Result<ToolResult, ToolResult> {
@@ -355,6 +385,7 @@ impl Call<'_> {
         let args: RoutinesArgs = arguments(args)?;
         let routines =
             validate::routines_from_values("routines", args.routines).map_err(ToolResult::error)?;
+        self.admit(&[routines_request(&routines)]).await?;
         let ack = match set_routines(self.gateway.sim(), self.resident, &routines).await {
             Ok(ack) => ack,
             Err(error) => return Err(self.sim_error(error).await),

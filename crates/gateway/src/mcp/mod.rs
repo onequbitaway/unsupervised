@@ -29,7 +29,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
-use unsup_protocol::ResidentId;
+use unsup_protocol::{OwnerId, ResidentId};
 use unsup_store::Principal;
 
 use self::rpc::{Incoming, RpcError};
@@ -90,7 +90,10 @@ enum Era {
 /// Checks what every MCP request needs before its body is read: an
 /// allowed origin and a resident key. The refusal is in a box because a
 /// response is a large value.
-async fn admit(gateway: &Gateway, headers: &HeaderMap) -> Result<ResidentId, Box<Response>> {
+async fn admit(
+    gateway: &Gateway,
+    headers: &HeaderMap,
+) -> Result<(ResidentId, OwnerId), Box<Response>> {
     // A browser page of another origin must not reach this endpoint.
     if let Some(origin) = header(headers, header::ORIGIN.as_str())
         && !gateway.config().allows_origin(origin)
@@ -102,8 +105,8 @@ async fn admit(gateway: &Gateway, headers: &HeaderMap) -> Result<ResidentId, Box
         );
         return Err(Box::new(error.response(None)));
     }
-    let resident = match gateway.authenticate(headers).await {
-        Ok(Principal::Resident { resident, .. }) => resident,
+    let admitted = match gateway.authenticate(headers).await {
+        Ok(Principal::Resident { resident, owner }) => (resident, owner),
         Ok(Principal::Owner(_)) => {
             let error = ApiError::forbidden(
                 "wrong_token_kind",
@@ -113,14 +116,14 @@ async fn admit(gateway: &Gateway, headers: &HeaderMap) -> Result<ResidentId, Box
         }
         Err(error) => return Err(Box::new(error.into_response())),
     };
-    Ok(resident)
+    Ok(admitted)
 }
 
 /// `POST /mcp`: one JSON-RPC message.
 pub(crate) async fn post(State(gateway): State<Gateway>, request: Request) -> Response {
     let headers = request.headers().clone();
-    let resident = match admit(&gateway, &headers).await {
-        Ok(resident) => resident,
+    let (resident, owner) = match admit(&gateway, &headers).await {
+        Ok(admitted) => admitted,
         Err(response) => return *response,
     };
     if !is_json(&headers) {
@@ -178,7 +181,7 @@ pub(crate) async fn post(State(gateway): State<Gateway>, request: Request) -> Re
         }
         (Incoming::Request { id, method, params }, Some(session)) => {
             let cursor = CursorKey::Session(session.to_string());
-            let call = Call { gateway: &gateway, resident, cursor: &cursor };
+            let call = Call { gateway: &gateway, resident, owner, cursor: &cursor };
             match in_session(&call, &headers, &method, params).await {
                 Ok(result) => rpc::result(&id, result),
                 Err(error) => error.response(Some(&id)),
@@ -198,7 +201,7 @@ pub(crate) async fn post(State(gateway): State<Gateway>, request: Request) -> Re
         }
         (Incoming::Request { id, method, params }, None) => {
             let cursor = CursorKey::Resident(resident);
-            let call = Call { gateway: &gateway, resident, cursor: &cursor };
+            let call = Call { gateway: &gateway, resident, owner, cursor: &cursor };
             match stateless(&call, &headers, &method, params).await {
                 Ok(result) => rpc::result(&id, result),
                 Err(error) => error.response(Some(&id)),
@@ -211,7 +214,7 @@ pub(crate) async fn post(State(gateway): State<Gateway>, request: Request) -> Re
 pub(crate) async fn delete(State(gateway): State<Gateway>, request: Request) -> Response {
     let headers = request.headers();
     let resident = match admit(&gateway, headers).await {
-        Ok(resident) => resident,
+        Ok((resident, _owner)) => resident,
         Err(response) => return *response,
     };
     let Some(id) = header(headers, SESSION_HEADER) else {

@@ -10,6 +10,10 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer};
 use unsup_store::TokenHash;
 
+use crate::identity::{GitHubConfig, GitHubSignIn};
+use crate::moderation::{ModerationConfig, RuleFilter};
+use crate::ops::{AbuseConfig, OpsConfig};
+
 /// The defaults of the gateway, as TOML text.
 pub const DEFAULTS: &str = include_str!("../data/defaults.toml");
 
@@ -87,6 +91,14 @@ pub struct GatewayConfig {
     pub mcp: McpConfig,
     /// Webhook deliveries.
     pub webhooks: WebhookConfig,
+    /// The rules for text.
+    pub moderation: ModerationConfig,
+    /// The detectors of abuse.
+    pub abuse: AbuseConfig,
+    /// What the gateway watches for an administrator.
+    pub ops: OpsConfig,
+    /// Sign-in with GitHub. Off unless it has a client id and a secret.
+    pub github: GitHubConfig,
 }
 
 /// Limits for requests. A value of 0 turns off a rate limit, the limit
@@ -231,13 +243,32 @@ impl GatewayConfig {
     ///
     /// # Errors
     ///
-    /// Fails when `overrides` has a key that the gateway does not know or
-    /// a value of the wrong type.
+    /// Fails when `overrides` has a key that the gateway does not know, a
+    /// value of the wrong type, or a value that [`GatewayConfig::validate`]
+    /// refuses.
     pub fn from_table(overrides: toml::Table) -> Result<GatewayConfig, ConfigError> {
         let mut table: toml::Table =
             toml::from_str(DEFAULTS).map_err(|e| ConfigError(e.to_string()))?;
         merge_tables(&mut table, overrides);
-        table.try_into().map_err(|e: toml::de::Error| ConfigError(e.message().to_string()))
+        let config: GatewayConfig =
+            table.try_into().map_err(|e: toml::de::Error| ConfigError(e.message().to_string()))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Checks the values that have a form of their own: the words and the
+    /// patterns of the moderation rules, and the endpoints of the GitHub
+    /// sign-in when it is on.
+    ///
+    /// # Errors
+    ///
+    /// Fails for the first value that the gateway cannot use.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        RuleFilter::new(&self.moderation)?;
+        if self.github.is_on() {
+            GitHubSignIn::new(&self.github)?;
+        }
+        Ok(())
     }
 
     /// Makes a configuration from the defaults and TOML text.

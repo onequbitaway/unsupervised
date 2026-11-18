@@ -30,6 +30,11 @@ pub(crate) async fn run_plan(
     Ok(acks)
 }
 
+/// Builds the action request that replaces the routines of a resident.
+pub(crate) fn routines_request(routines: &[Routine]) -> ActionRequest {
+    ActionRequest::new(SET_ROUTINES, json!({ "routines": routines }))
+}
+
 /// Replaces the routines of a resident. The simulation checks them; a
 /// refusal is in the acknowledgement.
 pub(crate) async fn set_routines(
@@ -37,7 +42,7 @@ pub(crate) async fn set_routines(
     resident: ResidentId,
     routines: &[Routine],
 ) -> Result<ActionAck, SimError> {
-    sim.act(resident, ActionRequest::new(SET_ROUTINES, json!({ "routines": routines }))).await
+    sim.act(resident, routines_request(routines)).await
 }
 
 /// Builds observation options from the optional values of a request.

@@ -2361,6 +2361,7 @@ dependencies = [
  "toml",
  "tower-http 0.7.1",
  "tracing",
+ "tracing-subscriber",
  "unsup-kernel",
  "unsup-protocol",
  "unsup-runtime",

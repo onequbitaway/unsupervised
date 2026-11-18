@@ -9,6 +9,10 @@
 //! 4. flags of the command line.
 //!
 //! The development mode sits between 2 and 3: it applies the `[dev]` table.
+//!
+//! The data directory holds two things: the store of accounts and keys
+//! (one SQLite file) and the world (the directory `world` with the input
+//! log and the snapshots).
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -17,6 +21,7 @@ use std::time::Duration;
 use anyhow::Context;
 use serde::Deserialize;
 use unsup_gateway::{GatewayConfig, merge_tables};
+use unsup_runtime::{DurableConfig, SyncPolicy};
 
 use crate::world::WorldShape;
 
@@ -25,6 +30,8 @@ pub const DEFAULTS: &str = include_str!("../data/defaults.toml");
 
 /// Name of the SQLite file in the data directory.
 const STORE_FILE: &str = "store.sqlite3";
+/// Name of the directory of the world in the data directory.
+const WORLD_DIR: &str = "world";
 
 /// Which storage engine keeps accounts and keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -45,6 +52,80 @@ impl StoreKind {
     }
 }
 
+/// Where the world lives between two runs: the name in a file or a flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorldStoreKind {
+    /// The directory `world` in the data directory.
+    Disk,
+    /// Memory only. The world is lost when the server stops.
+    Memory,
+}
+
+impl WorldStoreKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            WorldStoreKind::Disk => "disk",
+            WorldStoreKind::Memory => "memory",
+        }
+    }
+}
+
+/// Where the world lives between two runs of the server.
+///
+/// In both cases the world has an input log and snapshots, so an
+/// administrator can roll it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorldStore {
+    /// Memory only. Each start makes a new world.
+    Memory,
+    /// This directory. The server makes it when it does not exist. When
+    /// it holds a world, the server recovers that world at the start.
+    Dir(PathBuf),
+}
+
+/// How the server keeps the world: the input log, the snapshots, time
+/// dilation and the audit. `None` takes the number of the runtime
+/// (`crates/runtime/data/runtime.toml`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Durability {
+    /// When the input log is forced to the disk.
+    pub sync: Option<SyncPolicy>,
+    /// Frames between two snapshots.
+    pub snapshot_every: Option<u64>,
+    /// Number of snapshots to keep. A rollback can go to each of them.
+    pub keep_snapshots: Option<usize>,
+    /// A log segment rolls when it is larger than this many bytes.
+    pub segment_bytes: Option<u64>,
+    /// True: a zone whose tick takes too long skips frames.
+    pub dilation: bool,
+    /// Frames between two audits of the money and the goods of the whole
+    /// world. A failed audit is an alert. 0: no audit while the server
+    /// runs.
+    pub audit_every: u64,
+    /// For an operator, after a start failed because one input of the
+    /// log makes the simulation panic: the recovery stops before the
+    /// input with this sequence number, and that input and all later
+    /// ones leave the log.
+    pub drop_from: Option<u64>,
+}
+
+impl Durability {
+    /// Returns the configuration of the durable journal of the runtime.
+    #[must_use]
+    pub fn to_runtime(&self) -> DurableConfig {
+        let base = DurableConfig::default();
+        DurableConfig {
+            sync: self.sync.unwrap_or(base.sync),
+            segment_bytes: self.segment_bytes.unwrap_or(base.segment_bytes),
+            snapshot_every: self.snapshot_every.unwrap_or(base.snapshot_every),
+            keep_snapshots: self.keep_snapshots.unwrap_or(base.keep_snapshots),
+            drop_from: self.drop_from,
+            ..base
+        }
+    }
+}
+
 /// Where accounts and keys live.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreConfig {
@@ -58,8 +139,9 @@ pub enum StoreConfig {
 /// Configuration of a server.
 ///
 /// `ServerConfig::default()` has the values of `data/defaults.toml`: it
-/// keeps accounts in a SQLite file under `var/`. Tests and tools start
-/// from [`ServerConfig::dev`], which keeps everything in memory:
+/// keeps accounts in a SQLite file and the world in a directory, both
+/// under `var/`. Tests and tools start from [`ServerConfig::dev`], which
+/// keeps everything in memory:
 ///
 /// ```
 /// use unsup_server::ServerConfig;
@@ -83,6 +165,17 @@ pub struct ServerConfig {
     pub web_dir: Option<PathBuf>,
     /// Where accounts and keys live.
     pub store: StoreConfig,
+    /// Where the world lives. With accounts in memory the world is in
+    /// memory too, whatever this says: after a restart nobody would have
+    /// a key for the residents of a world on the disk.
+    pub world_store: WorldStore,
+    /// How the server keeps the world.
+    pub durability: Durability,
+    /// Files with parameter overrides: TOML in the format of the data
+    /// files of the modules. The server gives them to the kernel, in this
+    /// order, when it makes a new world. A world that the server recovers
+    /// keeps the parameters that it has.
+    pub params: Vec<PathBuf>,
     /// Limits and options of the gateway.
     pub gateway: GatewayConfig,
     /// Development mode: the server makes a ready owner, and an admin
@@ -115,10 +208,21 @@ pub struct Overrides {
     pub data_dir: Option<PathBuf>,
     /// The storage engine.
     pub store: Option<StoreKind>,
+    /// Where the world lives.
+    pub world_store: Option<WorldStoreKind>,
+    /// Files with parameter overrides. An empty list keeps the list of
+    /// the configuration file.
+    pub params: Vec<PathBuf>,
+    /// The first input of the log that a recovery drops.
+    pub drop_from: Option<u64>,
     /// The file that `GET /join.md` serves.
     pub join_file: Option<PathBuf>,
     /// The token of the administrator.
     pub admin_token: Option<String>,
+    /// The client id of the GitHub sign-in.
+    pub github_client_id: Option<String>,
+    /// The client secret of the GitHub sign-in.
+    pub github_client_secret: Option<String>,
 }
 
 /// The shape of the configuration file.
@@ -129,11 +233,75 @@ struct FileConfig {
     tick_ms: u64,
     data_dir: PathBuf,
     store: StoreKind,
+    world_store: WorldStoreKind,
+    params: Vec<PathBuf>,
     web_dir: PathBuf,
     join_file: PathBuf,
     shutdown_grace_ms: u64,
     world: WorldFile,
+    durability: DurabilityFile,
     gateway: toml::Table,
+}
+
+/// When the input log is forced to the disk: the name in a file.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SyncKind {
+    Record,
+    Batch,
+    Interval,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurabilityFile {
+    #[serde(default)]
+    sync: Option<SyncKind>,
+    #[serde(default)]
+    sync_interval_ms: Option<u64>,
+    #[serde(default)]
+    snapshot_every_frames: Option<u64>,
+    #[serde(default)]
+    keep_snapshots: Option<usize>,
+    #[serde(default)]
+    segment_bytes: Option<u64>,
+    dilation: bool,
+    audit_every_frames: u64,
+    #[serde(default)]
+    drop_from: Option<u64>,
+}
+
+impl DurabilityFile {
+    fn into_durability(self) -> anyhow::Result<Durability> {
+        let interval = self.sync_interval_ms.map(Duration::from_millis);
+        let sync = match (self.sync, interval) {
+            (Some(SyncKind::Record), _) => Some(SyncPolicy::EveryRecord),
+            (Some(SyncKind::Batch), _) => Some(SyncPolicy::EveryBatch),
+            (Some(SyncKind::Interval) | None, Some(interval)) => {
+                Some(SyncPolicy::Interval(interval))
+            }
+            (None, None) => None,
+            // The interval of the runtime, when its own policy has one.
+            (Some(SyncKind::Interval), None) => match DurableConfig::default().sync {
+                policy @ SyncPolicy::Interval(_) => Some(policy),
+                _ => anyhow::bail!(
+                    "`durability.sync = \"interval\"` needs `durability.sync_interval_ms`"
+                ),
+            },
+        };
+        if let Some(keep) = self.keep_snapshots {
+            anyhow::ensure!(keep >= 1, "`durability.keep_snapshots` must be at least 1");
+        }
+        Ok(Durability {
+            sync,
+            snapshot_every: self.snapshot_every_frames,
+            keep_snapshots: self.keep_snapshots,
+            segment_bytes: self.segment_bytes,
+            dilation: self.dilation,
+            audit_every: self.audit_every_frames,
+            drop_from: self.drop_from,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -160,6 +328,8 @@ impl Overrides {
         let mut table = toml::Table::new();
         let mut world = toml::Table::new();
         let mut gateway = toml::Table::new();
+        let mut durability = toml::Table::new();
+        let mut github = toml::Table::new();
         if let Some(bind) = self.bind {
             table.insert("bind".into(), toml::Value::String(bind.to_string()));
         }
@@ -184,13 +354,31 @@ impl Overrides {
         if let Some(store) = self.store {
             table.insert("store".into(), toml::Value::String(store.as_str().into()));
         }
+        if let Some(world_store) = self.world_store {
+            table.insert("world_store".into(), toml::Value::String(world_store.as_str().into()));
+        }
+        if !self.params.is_empty() {
+            let files = self.params.iter().map(|file| path_value(file)).collect();
+            table.insert("params".into(), toml::Value::Array(files));
+        }
+        if let Some(drop_from) = self.drop_from {
+            durability.insert("drop_from".into(), integer("drop_from", drop_from)?);
+        }
+        if let Some(client_id) = self.github_client_id {
+            github.insert("client_id".into(), toml::Value::String(client_id));
+        }
+        if let Some(client_secret) = self.github_client_secret {
+            github.insert("client_secret".into(), toml::Value::String(client_secret));
+        }
         if let Some(join_file) = &self.join_file {
             table.insert("join_file".into(), path_value(join_file));
         }
         if let Some(admin_token) = self.admin_token {
             gateway.insert("admin_token".into(), toml::Value::String(admin_token));
         }
+        gateway.insert("github".into(), toml::Value::Table(github));
         table.insert("world".into(), toml::Value::Table(world));
+        table.insert("durability".into(), toml::Value::Table(durability));
         table.insert("gateway".into(), toml::Value::Table(gateway));
         Ok(table)
     }
@@ -247,15 +435,25 @@ impl ServerConfig {
                 StoreKind::Memory => StoreConfig::Memory,
                 StoreKind::Sqlite => StoreConfig::Sqlite(file.data_dir.join(STORE_FILE)),
             },
+            // Accounts in memory: a world on the disk would have residents
+            // without keys after a restart.
+            world_store: match (file.world_store, file.store) {
+                (WorldStoreKind::Disk, StoreKind::Sqlite) => {
+                    WorldStore::Dir(file.data_dir.join(WORLD_DIR))
+                }
+                (WorldStoreKind::Memory, _) | (_, StoreKind::Memory) => WorldStore::Memory,
+            },
+            durability: file.durability.into_durability()?,
+            params: file.params,
             gateway: GatewayConfig::from_table(gateway)?,
             dev,
             shutdown_grace: Duration::from_millis(file.shutdown_grace_ms),
         })
     }
 
-    /// Returns the configuration of the development mode: fast ticks, a
-    /// store in memory, webhooks to local addresses, a viewer on any
-    /// origin, and a ready owner.
+    /// Returns the configuration of the development mode: fast ticks,
+    /// accounts and the world in memory, webhooks to local addresses, a
+    /// viewer on any origin, and a ready owner.
     #[must_use]
     pub fn dev() -> ServerConfig {
         // The defaults are part of the binary, and a test reads them.

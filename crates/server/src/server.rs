@@ -10,19 +10,21 @@ use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
+use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 use unsup_gateway::{AdminToken, Gateway};
+use unsup_kernel::WorldConfig;
 use unsup_protocol::OwnerId;
-use unsup_runtime::{RuntimeConfig, RuntimeJoin, SimHandle};
+use unsup_runtime::{Dilation, DilationConfig, RuntimeConfig, RuntimeJoin, SimHandle};
 use unsup_store::{
     MemoryStore, NewOwner, SqliteStore, Store, Token, TokenKind, random_hex, unix_now,
 };
 
-use crate::config::{ServerConfig, StoreConfig};
-use crate::world::try_build_world;
+use crate::config::{ServerConfig, StoreConfig, WorldStore};
+use crate::durable::{self, WorldStart, hash_text};
 
 /// Paths that belong to the API. An unknown path under one of them gets a
 /// JSON error, never a file of the viewer.
@@ -49,6 +51,18 @@ impl std::fmt::Debug for DevAccess {
     }
 }
 
+/// What a server left behind when it stopped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stopped {
+    /// Number of the last frame of the world.
+    pub frame: u64,
+    /// The state hash of the world at the stop, as hexadecimal text. A
+    /// start from the same data directory gives a world with this hash.
+    pub state_hash: String,
+    /// Number of residents of the world.
+    pub residents: usize,
+}
+
 /// A running server.
 pub struct Server {
     /// The address that the server listens on.
@@ -57,6 +71,9 @@ pub struct Server {
     pub sim: SimHandle,
     /// The owner and the tokens of the development mode.
     pub dev: Option<DevAccess>,
+    /// How the world of this run began: recovered or new, and its state
+    /// hash at the start.
+    pub world: WorldStart,
     gateway: Gateway,
     runtime: RuntimeJoin,
     grace: Duration,
@@ -147,30 +164,114 @@ async fn cut_at_stop(
     }
 }
 
+/// Returns the world configuration for a new world: the shape and the
+/// parameter override files.
+fn world_config(config: &ServerConfig) -> anyhow::Result<WorldConfig> {
+    let mut world = config.world.to_config();
+    world.data = durable::read_params(&config.params)?;
+    Ok(world)
+}
+
 /// Starts the simulation and the HTTP server.
+///
+/// The world has the durable journal of the runtime: every input goes to
+/// the input log, and a snapshot is taken at an interval. With a world
+/// directory, the start recovers the world that the directory holds, also
+/// after a crash; an empty directory gets a new world. A new world ends
+/// the resident records of the store. A recovered world keeps them.
 ///
 /// # Errors
 ///
-/// Fails when the world shape is not valid, when the store cannot be
-/// opened, or when the address cannot be bound.
+/// Fails when the world shape or a parameter file is not valid, when the
+/// world directory holds a world that cannot be recovered or is in use by
+/// another server, when the store cannot be opened, or when the address
+/// cannot be bound.
 pub async fn start(mut config: ServerConfig) -> anyhow::Result<Server> {
     let store = open_store(&config.store)?;
-    let world = try_build_world(config.world.to_config())
-        .map_err(|error| anyhow::anyhow!("cannot build the world: {error}"))?;
-    // The world is new. The resident ids of an earlier run mean nothing
-    // in it, so their records and keys end. Owners and their tokens stay.
-    let retired = store.retire_all_residents("world_reset", unix_now())?;
-    if retired > 0 {
-        tracing::info!(retired, "resident records of an earlier world retired");
+    // Accounts in memory do not outlive the world on the disk: after a
+    // restart nobody would have a key for its residents.
+    let world_store = match (&config.store, &config.world_store) {
+        (StoreConfig::Memory, WorldStore::Dir(_)) => WorldStore::Memory,
+        (_, world_store) => world_store.clone(),
+    };
+    let opened = durable::open(
+        &world_store,
+        world_config(&config)?,
+        config.durability.to_runtime(),
+        config.durability.audit_every,
+    )?;
+    let world = opened.start.clone();
+    if world.recovered {
+        tracing::info!(
+            frame = world.frame,
+            replayed_inputs = world.replayed_inputs,
+            torn_tail = world.torn_tail,
+            "world recovered from the data directory"
+        );
+        if !config.params.is_empty() {
+            tracing::warn!(
+                "the parameter files were not read: the recovered world keeps its parameters"
+            );
+        }
+    } else {
+        // The world is new. The resident ids of an earlier world mean
+        // nothing in it, so their records and keys end. Owners and their
+        // tokens stay.
+        let retired = store.retire_all_residents("world_reset", unix_now())?;
+        if retired > 0 {
+            tracing::info!(retired, "resident records of an earlier world retired");
+        }
+        tracing::info!(frame = world.frame, "new world");
     }
     let dev = if config.dev { Some(dev_access(store.as_ref(), &mut config)?) } else { None };
 
-    let runtime_config =
-        RuntimeConfig { tick_interval: config.tick_interval, ..RuntimeConfig::default() };
-    let (sim, runtime) = unsup_runtime::start(world, runtime_config);
+    let mut runtime_config = RuntimeConfig {
+        tick_interval: config.tick_interval,
+        journal: opened.journal,
+        ..RuntimeConfig::default()
+    };
+    if config.durability.dilation {
+        runtime_config.pacer = Box::new(Dilation::new(DilationConfig::default()));
+    }
+    let (sim, runtime) = unsup_runtime::start(opened.world, runtime_config);
     let gateway = Gateway::start(sim.clone(), store, config.gateway.clone())
         .await
         .context("cannot start the gateway")?;
+
+    // What only the host knows, for the admin dashboard.
+    opened.board.attach(gateway.alerts());
+    let (board, storage) = (opened.board, opened.storage);
+    let place = match &world_store {
+        WorldStore::Memory => json!("memory"),
+        WorldStore::Dir(dir) => json!(dir),
+    };
+    let started = world.clone();
+    gateway.set_host_info(move || {
+        json!({
+            "world_store": place,
+            "start": started,
+            "audit": board.report(),
+            "snapshots": durable::snapshots(storage.as_ref()),
+        })
+    });
+    if world.recovered {
+        // The store and the world were written apart. A record whose
+        // resident the world does not have ends before a request can
+        // use it.
+        let reconciled = gateway.reconcile().await.map_err(|error| {
+            anyhow::anyhow!("cannot compare the store with the world: {}", error.message)
+        })?;
+        if !reconciled.orphans.is_empty() {
+            gateway.alerts().raise(
+                "orphan_residents",
+                format!(
+                    "{} residents of the recovered world have no owner record. Nobody has a \
+                     key for them.",
+                    reconciled.orphans.len()
+                ),
+            );
+        }
+    }
 
     let viewer = config.web_dir.filter(|dir| dir.is_dir()).map(ServeDir::new);
     let (cut, cut_signal) = watch::channel(false);
@@ -195,7 +296,18 @@ pub async fn start(mut config: ServerConfig) -> anyhow::Result<Server> {
             .await
     });
     tracing::info!(%addr, "server started");
-    Ok(Server { addr, sim, dev, gateway, runtime, grace: config.shutdown_grace, stop, cut, task })
+    Ok(Server {
+        addr,
+        sim,
+        dev,
+        world,
+        gateway,
+        runtime,
+        grace: config.shutdown_grace,
+        stop,
+        cut,
+        task,
+    })
 }
 
 impl Server {
@@ -206,12 +318,23 @@ impl Server {
     /// grace time of the configuration to end. A request that still runs
     /// after that gets the answer `shutdown`, and its connection gets the
     /// grace time once more to take that answer. Then the simulation
-    /// stops, and the feeds of the viewers end with it.
+    /// stops, and the feeds of the viewers end with it. The journal
+    /// writes a final snapshot, so the next start replays nothing.
     ///
     /// # Errors
     ///
     /// Fails when the HTTP server or the simulation thread failed.
     pub async fn stop(self) -> anyhow::Result<()> {
+        self.stop_with_report().await.map(|_| ())
+    }
+
+    /// Stops the server like [`Server::stop`] and says what the world was
+    /// at the stop.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the HTTP server or the simulation thread failed.
+    pub async fn stop_with_report(self) -> anyhow::Result<Stopped> {
         self.gateway.shutdown();
         // The receiver is gone only when the server task already ended.
         let _ = self.stop.send(());
@@ -236,9 +359,17 @@ impl Server {
             Err(error) => return Err(error).context("the HTTP server task failed"),
         }
         drop(self.sim);
-        self.runtime
-            .shutdown()
-            .map(|_world| ())
-            .map_err(|panic| anyhow::anyhow!("the simulation stopped with an error: {panic}"))
+        // The stop of the runtime writes the final snapshot. It waits for
+        // the disk, so it runs on a thread that may block.
+        let runtime = self.runtime;
+        let world = tokio::task::spawn_blocking(move || runtime.shutdown())
+            .await
+            .context("the stop of the simulation failed")?
+            .map_err(|panic| anyhow::anyhow!("the simulation stopped with an error: {panic}"))?;
+        Ok(Stopped {
+            frame: world.frame(),
+            state_hash: hash_text(&world.state_hash()),
+            residents: world.residents(),
+        })
     }
 }

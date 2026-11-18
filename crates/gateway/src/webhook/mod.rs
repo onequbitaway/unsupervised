@@ -185,6 +185,10 @@ async fn run(
                 Err(_) => break,
             };
             if news.is_empty() {
+                // After a rollback of the world the inbox ends before the
+                // cursor. The cursor goes back with it, or the webhook
+                // would miss the news up to the old place.
+                cursor = cursor.min(news.next);
                 break;
             }
             if shared.deliver(resident, &url, &secret, &news).await {

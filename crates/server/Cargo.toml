@@ -12,6 +12,8 @@ publish.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+# The `admin` command calls the admin routes of a server, also over https.
+reqwest = { workspace = true, features = ["rustls"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -42,5 +44,4 @@ path = "src/main.rs"
 
 [dev-dependencies]
 futures.workspace = true
-reqwest.workspace = true
 tokio-tungstenite.workspace = true

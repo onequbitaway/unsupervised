@@ -25,24 +25,33 @@
 //! An [`IdentityProvider`] says who signs up. [`LocalSignUp`] is the only
 //! provider in this crate: every sign-up makes a new owner, and the owner
 //! token is the only credential. A provider that asks an OAuth service
-//! implements the same trait.
+//! implements the same trait. A provider whose sign-in has a step at the
+//! service returns an [`Authorization`] from [`IdentityProvider::begin`].
+//!
+//! # Sanctions
+//!
+//! An administrator can mute or freeze a resident and ban an owner. The
+//! store keeps each [`Sanction`], so that it is in force again after a
+//! restart. The store only keeps the list; the gateway gives it effect.
 
 mod error;
 mod identity;
 mod memory;
 mod model;
+mod sanction;
 mod sqlite;
 mod store;
 mod token;
 
 pub use error::StoreError;
 pub use identity::{
-    Identity, IdentityError, IdentityFuture, IdentityProvider, LocalSignUp, SignUp,
+    Authorization, Identity, IdentityError, IdentityFuture, IdentityProvider, LocalSignUp, SignUp,
 };
 pub use memory::MemoryStore;
 pub use model::{
     NewOwner, NewResident, Owner, Principal, ResidentRecord, StoreCounts, Webhook, unix_now,
 };
+pub use sanction::{Sanction, SanctionRecord};
 pub use sqlite::SqliteStore;
 pub use store::Store;
 pub use token::{Secret, Token, TokenHash, TokenKind, constant_time_eq, random_hex};

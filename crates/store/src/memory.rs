@@ -7,6 +7,7 @@ use unsup_protocol::{OwnerId, ResidentId};
 
 use crate::error::StoreError;
 use crate::model::{NewOwner, NewResident, Owner, Principal, ResidentRecord, StoreCounts, Webhook};
+use crate::sanction::{Sanction, SanctionRecord};
 use crate::store::Store;
 use crate::token::{Secret, TokenHash};
 
@@ -28,6 +29,8 @@ struct Inner {
     webhooks: BTreeMap<ResidentId, Webhook>,
     retired: u64,
     settings: BTreeMap<String, String>,
+    /// Every sanction in force, with its reason and its time.
+    sanctions: BTreeMap<Sanction, (String, u64)>,
 }
 
 impl Inner {
@@ -40,6 +43,8 @@ impl Inner {
             self.tokens.remove(&key);
         }
         self.webhooks.remove(&resident);
+        self.sanctions.remove(&Sanction::Mute(resident));
+        self.sanctions.remove(&Sanction::Freeze(resident));
         self.retired += 1;
         true
     }
@@ -188,6 +193,10 @@ impl Store for MemoryStore {
         Ok(self.lock().residents.values().filter(|r| r.owner == owner).count() as u64)
     }
 
+    fn resident_ids(&self) -> Result<Vec<ResidentId>, StoreError> {
+        Ok(self.lock().residents.keys().copied().collect())
+    }
+
     fn rotate_resident_key(
         &self,
         resident: ResidentId,
@@ -226,6 +235,44 @@ impl Store for MemoryStore {
             inner.retire(*resident);
         }
         Ok(live.len() as u64)
+    }
+
+    fn impose(&self, sanction: Sanction, reason: &str, now: u64) -> Result<bool, StoreError> {
+        let mut inner = self.lock();
+        match sanction {
+            Sanction::Mute(resident) | Sanction::Freeze(resident) => {
+                if !inner.residents.contains_key(&resident) {
+                    return Err(no_resident(resident));
+                }
+            }
+            Sanction::Ban(owner) => {
+                if !inner.owners.contains_key(&owner) {
+                    return Err(no_owner(owner));
+                }
+            }
+        }
+        if inner.sanctions.contains_key(&sanction) {
+            return Ok(false);
+        }
+        inner.sanctions.insert(sanction, (reason.to_string(), now));
+        Ok(true)
+    }
+
+    fn lift(&self, sanction: Sanction) -> Result<bool, StoreError> {
+        Ok(self.lock().sanctions.remove(&sanction).is_some())
+    }
+
+    fn sanctions(&self) -> Result<Vec<SanctionRecord>, StoreError> {
+        let inner = self.lock();
+        Ok(inner
+            .sanctions
+            .iter()
+            .map(|(sanction, (reason, created_at))| SanctionRecord {
+                sanction: *sanction,
+                reason: reason.clone(),
+                created_at: *created_at,
+            })
+            .collect())
     }
 
     fn set_webhook(

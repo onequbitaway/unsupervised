@@ -3,6 +3,9 @@
 
 #![allow(dead_code, reason = "each test file uses a part of the harness")]
 
+pub mod github;
+pub mod market;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -135,7 +138,8 @@ pub struct Harness {
     pub gateway: Gateway,
     pub store: Arc<MemoryStore>,
     pub http: reqwest::Client,
-    _runtime: RuntimeJoin,
+    /// Dropping it stops the world. `None` after [`Harness::into_parts`].
+    runtime: std::sync::Mutex<Option<RuntimeJoin>>,
     server: JoinHandle<()>,
 }
 
@@ -189,9 +193,40 @@ impl Harness {
         let gateway = Gateway::start_with_providers(sim.clone(), shared, config, providers)
             .await
             .expect("the gateway starts");
+        Harness::around(sim, runtime, store, gateway).await
+    }
+
+    /// Starts a gateway with the small world on a port that the test
+    /// chose, for a configuration that names the address of the server.
+    pub async fn on_port(config: GatewayConfig, port: u16) -> Harness {
+        let (sim, runtime) = world();
+        let store = Arc::new(MemoryStore::new());
+        let shared: Arc<dyn Store> = store.clone();
+        let gateway =
+            Gateway::start(sim.clone(), shared, config).await.expect("the gateway starts");
+        Harness::listen(sim, runtime, store, gateway, port).await
+    }
+
+    /// Serves a gateway that the test started itself, on a free port.
+    pub async fn around(
+        sim: SimHandle,
+        runtime: RuntimeJoin,
+        store: Arc<MemoryStore>,
+        gateway: Gateway,
+    ) -> Harness {
+        Harness::listen(sim, runtime, store, gateway, 0).await
+    }
+
+    async fn listen(
+        sim: SimHandle,
+        runtime: RuntimeJoin,
+        store: Arc<MemoryStore>,
+        gateway: Gateway,
+        port: u16,
+    ) -> Harness {
         let app = gateway.router().layer(gateway.cors());
         let listener =
-            tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("a free local port");
+            tokio::net::TcpListener::bind(("127.0.0.1", port)).await.expect("a free local port");
         let addr = listener.local_addr().expect("the address of the listener");
         let server = tokio::spawn(async move {
             axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
@@ -206,9 +241,24 @@ impl Harness {
             store,
             // No call of a test is longer than a `wait` of 60 seconds.
             http: reqwest::Client::builder().timeout(PATIENCE * 2).build().expect("an HTTP client"),
-            _runtime: runtime,
+            runtime: std::sync::Mutex::new(Some(runtime)),
             server,
         }
+    }
+
+    /// Stops the gateway and gives back the world and the store, for a
+    /// test that starts a second gateway on them: a restart of the
+    /// server with the same data.
+    pub fn into_parts(self) -> (SimHandle, RuntimeJoin, Arc<MemoryStore>) {
+        let (sim, runtime) = self.take_runtime();
+        (sim, runtime, Arc::clone(&self.store))
+    }
+
+    /// Takes the world out of a harness that stays in use, for a test
+    /// that stops the world while the gateway runs.
+    pub fn take_runtime(&self) -> (SimHandle, RuntimeJoin) {
+        let runtime = self.runtime.lock().expect("the lock").take();
+        (self.sim.clone(), runtime.expect("the harness owns the runtime"))
     }
 
     pub fn url(&self, path: &str) -> String {
@@ -290,4 +340,40 @@ pub async fn send(request: RequestBuilder) -> (StatusCode, Value) {
 /// Returns the `code` of an error answer.
 pub fn code(body: &Value) -> &str {
     body["error"]["code"].as_str().unwrap_or_else(|| panic!("an error answer, not {body}"))
+}
+
+/// The agent WebSocket of one resident, as a client.
+pub type AgentSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Opens the agent WebSocket of a resident. `query` is empty or starts
+/// with `?`.
+pub async fn agent_socket(h: &Harness, key: &str, query: &str) -> AgentSocket {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request =
+        format!("ws://{}/v1/ws{query}", h.addr).into_client_request().expect("a request");
+    let value = format!("Bearer {key}").parse().expect("a header value");
+    request.headers_mut().insert("Authorization", value);
+    tokio_tungstenite::connect_async(request).await.expect("the socket opens").0
+}
+
+/// Reads the next text frame of a socket as JSON. Pings are skipped.
+///
+/// # Panics
+///
+/// Panics when no text frame comes in time. The pings of the server do
+/// not count: one limit covers the whole wait.
+pub async fn next_frame(socket: &mut AgentSocket) -> Value {
+    use futures::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+    soon(async {
+        loop {
+            match socket.next().await.expect("the socket is open").expect("a frame") {
+                Message::Text(text) => return serde_json::from_str(&text).expect("JSON"),
+                Message::Ping(_) | Message::Pong(_) => {}
+                other => panic!("a text frame, not {other:?}"),
+            }
+        }
+    })
+    .await
 }

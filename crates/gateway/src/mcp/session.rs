@@ -8,6 +8,10 @@
 //!   a session id. The cursor belongs to the session.
 //! - A client of a stateless protocol version has no session. The cursor
 //!   belongs to the resident key that every request carries.
+//!
+//! Notices and action reports share one sequence, and each of them
+//! carries its number. The cursor is a number of that sequence: the
+//! client saw everything below it.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -121,19 +125,62 @@ impl Sessions {
         }
     }
 
-    /// Moves the cursor forward. It never moves back.
-    pub(crate) fn advance(&self, key: &CursorKey, to: u64) {
+    /// Takes the news of one observation for the caller: moves the cursor
+    /// to `next`, the end of the observation, and returns the sequence
+    /// number below which the caller shows nothing. `since` is the cursor
+    /// that the observation was made with.
+    ///
+    /// Two calls of one client can run at the same time and read the same
+    /// news. The call that comes here second gets a higher number back,
+    /// and drops what the first call showed. So each notice and each
+    /// report is shown one time.
+    ///
+    /// When `next` is below `since`, the world went back to a snapshot.
+    /// The cursor goes back with it.
+    pub(crate) fn claim(&self, key: &CursorKey, since: u64, next: u64) -> u64 {
         let mut state = self.lock();
-        match key {
-            CursorKey::Session(id) => {
-                if let Some(session) = state.sessions.get_mut(id) {
-                    session.cursor = session.cursor.max(to);
-                }
-            }
-            CursorKey::Resident(resident) => {
-                let cursor = state.cursors.entry(*resident).or_insert(0);
-                *cursor = (*cursor).max(to);
-            }
+        let cursor = match key {
+            CursorKey::Session(id) => state.sessions.get_mut(id).map(|session| &mut session.cursor),
+            CursorKey::Resident(resident) => Some(state.cursors.entry(*resident).or_insert(0)),
+        };
+        // The session ended while the call ran. Nothing remembers a cursor.
+        let Some(cursor) = cursor else {
+            return since;
+        };
+        if next < since {
+            *cursor = next;
+            return next;
+        }
+        let shown_before = (*cursor).max(since);
+        *cursor = (*cursor).max(next);
+        shown_before
+    }
+
+    /// Returns every resident that has a cursor.
+    pub(crate) fn residents(&self) -> Vec<ResidentId> {
+        let state = self.lock();
+        let mut residents: Vec<ResidentId> = state
+            .sessions
+            .values()
+            .map(|session| session.resident)
+            .chain(state.cursors.keys().copied())
+            .collect();
+        residents.sort_unstable();
+        residents.dedup();
+        residents
+    }
+
+    /// Moves every cursor of a resident back to `end`, the end of its
+    /// inbox, when the cursor is behind that end. The gateway calls it
+    /// after a rollback of the world: the inbox is shorter then, and the
+    /// news that comes next gets numbers that the cursor already passed.
+    pub(crate) fn clamp(&self, resident: ResidentId, end: u64) {
+        let mut state = self.lock();
+        for session in state.sessions.values_mut().filter(|s| s.resident == resident) {
+            session.cursor = session.cursor.min(end);
+        }
+        if let Some(cursor) = state.cursors.get_mut(&resident) {
+            *cursor = (*cursor).min(end);
         }
     }
 
@@ -147,5 +194,54 @@ impl Sessions {
     /// Returns the number of open sessions.
     pub(crate) fn len(&self) -> usize {
         self.lock().sessions.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use unsup_protocol::ResidentId;
+
+    use super::{CursorKey, Sessions};
+    use crate::config::GatewayConfig;
+
+    fn sessions() -> Sessions {
+        Sessions::new(&GatewayConfig::default().mcp)
+    }
+
+    #[test]
+    fn two_calls_with_the_same_cursor_share_the_news_without_a_repeat() {
+        let sessions = sessions();
+        let key = CursorKey::Resident(ResidentId(1));
+        // Both calls read the cursor 0. The first one saw the news up to
+        // 5, the second one, a moment later, up to 7.
+        assert_eq!(sessions.claim(&key, 0, 5), 0, "the first call shows everything from 0");
+        assert_eq!(sessions.claim(&key, 0, 7), 5, "the second call shows only 5 and 6");
+        assert_eq!(sessions.cursor(&key), 7);
+        // A call that ends late does not move the cursor back, and shows
+        // nothing: everything below 7 was shown.
+        assert_eq!(sessions.claim(&key, 0, 6), 7);
+        assert_eq!(sessions.cursor(&key), 7);
+    }
+
+    #[test]
+    fn a_rollback_of_the_world_moves_the_cursor_back() {
+        let sessions = sessions();
+        let id = sessions.open(ResidentId(1), Instant::now()).expect("random bytes");
+        let key = CursorKey::Session(id);
+        assert_eq!(sessions.claim(&key, 0, 9), 0);
+        // The inbox now ends at 4, before the cursor 9 of the call.
+        assert_eq!(sessions.claim(&key, 9, 4), 4);
+        assert_eq!(sessions.cursor(&key), 4);
+        assert_eq!(sessions.claim(&key, 4, 6), 4, "the news after the rollback is shown");
+    }
+
+    #[test]
+    fn a_session_that_ended_keeps_no_cursor() {
+        let sessions = sessions();
+        let key = CursorKey::Session("gone".into());
+        assert_eq!(sessions.claim(&key, 3, 8), 3);
+        assert_eq!(sessions.cursor(&key), 0);
     }
 }

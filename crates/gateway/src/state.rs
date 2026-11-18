@@ -6,17 +6,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::body::Bytes;
+use serde_json::Value;
 use tokio::sync::watch;
 use unsup_protocol::{OwnerId, ResidentId, SimError};
 use unsup_runtime::SimHandle;
 use unsup_store::{IdentityProvider, LocalSignUp, ResidentRecord, Store, StoreError, unix_now};
 
-use crate::config::GatewayConfig;
+use crate::config::{ConfigError, GatewayConfig};
 use crate::error::ApiError;
 use crate::gauge::Gauge;
+use crate::identity::GitHubSignIn;
 use crate::limit::RateLimiter;
 use crate::mcp::session::Sessions;
+use crate::moderation::{Moderation, RuleFilter, TextFilter};
+use crate::ops::Ops;
+use crate::ops::alerts::Alerts;
 use crate::push::{Hub, cursor_now};
+use crate::sanctions::Sanctions;
 use crate::webhook::Webhooks;
 
 /// The key of a rate limit bucket: one for each owner and each resident.
@@ -34,6 +40,8 @@ pub(crate) struct Counters {
     /// WebSocket connections that the server dropped because the client
     /// read too slowly.
     pub(crate) ws_dropped: AtomicU64,
+    /// Requests with a token of a banned owner.
+    pub(crate) banned: AtomicU64,
 }
 
 impl Counters {
@@ -76,42 +84,104 @@ pub(crate) struct Inner {
     /// The catalogue as JSON. It does not change while the server runs.
     pub(crate) catalogue: Bytes,
     pub(crate) counters: Counters,
+    pub(crate) moderation: Moderation,
+    pub(crate) sanctions: Sanctions,
+    pub(crate) ops: Ops,
+    /// Counts the rollbacks of the world. An open connection watches it:
+    /// its cursors must go back with the world.
+    pub(crate) rollbacks: watch::Sender<u64>,
 }
 
-impl std::fmt::Debug for Gateway {
+/// The gateway could not start.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum StartError {
+    /// The configuration has a value that the gateway cannot use.
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    /// The store could not be read.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+/// Collects what a gateway needs, then starts it.
+///
+/// ```no_run
+/// # async fn example(sim: unsup_runtime::SimHandle) -> Result<(), unsup_gateway::StartError> {
+/// use std::sync::Arc;
+/// use unsup_gateway::{Gateway, GatewayConfig};
+/// use unsup_store::MemoryStore;
+///
+/// let store = Arc::new(MemoryStore::new());
+/// let gateway = Gateway::builder(sim, store, GatewayConfig::default()).start().await?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct GatewayBuilder {
+    sim: SimHandle,
+    store: Arc<dyn Store>,
+    config: GatewayConfig,
+    providers: Vec<Arc<dyn IdentityProvider>>,
+    filters: Vec<Arc<dyn TextFilter>>,
+}
+
+impl std::fmt::Debug for GatewayBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Gateway").finish_non_exhaustive()
+        f.debug_struct("GatewayBuilder")
+            .field("providers", &self.providers.len())
+            .field("filters", &self.filters.len())
+            .finish_non_exhaustive()
     }
 }
 
-impl Gateway {
-    /// Starts the gateway with local sign-up as the only identity
-    /// provider. Call it inside a Tokio runtime: it starts the tasks that
-    /// push notices and deliver webhooks.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the store cannot list the webhooks.
-    pub async fn start(
-        sim: SimHandle,
-        store: Arc<dyn Store>,
-        config: GatewayConfig,
-    ) -> Result<Gateway, StoreError> {
-        Gateway::start_with_providers(sim, store, config, vec![Arc::new(LocalSignUp)]).await
+impl GatewayBuilder {
+    /// Replaces the list of identity providers. A sign-up names a
+    /// provider; the first one is the default. Without this call the
+    /// list has local sign-up only. The provider `github` joins the list
+    /// when the configuration turns it on.
+    #[must_use]
+    pub fn providers(mut self, providers: Vec<Arc<dyn IdentityProvider>>) -> GatewayBuilder {
+        self.providers = providers;
+        self
     }
 
-    /// Starts the gateway with a list of identity providers. A sign-up
-    /// names a provider; the first one is the default.
+    /// Adds a text filter. The gateway asks the rule filter of the
+    /// configuration first, then the filters of these calls in their
+    /// order. A filter that asks a model goes here.
+    #[must_use]
+    pub fn filter(mut self, filter: Arc<dyn TextFilter>) -> GatewayBuilder {
+        self.filters.push(filter);
+        self
+    }
+
+    /// Starts the gateway. Call it inside a Tokio runtime: it starts the
+    /// tasks that push notices, deliver webhooks and watch the frames.
     ///
     /// # Errors
     ///
-    /// Fails when the store cannot list the webhooks.
-    pub async fn start_with_providers(
-        sim: SimHandle,
-        store: Arc<dyn Store>,
-        config: GatewayConfig,
-        providers: Vec<Arc<dyn IdentityProvider>>,
-    ) -> Result<Gateway, StoreError> {
+    /// Fails when the configuration has a rule or an endpoint that cannot
+    /// be used, and when the store cannot be read.
+    pub async fn start(self) -> Result<Gateway, StartError> {
+        let GatewayBuilder { sim, store, config, mut providers, filters } = self;
+        let rules: Arc<dyn TextFilter> = Arc::new(RuleFilter::new(&config.moderation)?);
+        let filters = std::iter::once(rules).chain(filters).collect();
+        if config.github.is_on() && providers.iter().all(|p| p.name() != GitHubSignIn::NAME) {
+            providers.push(Arc::new(GitHubSignIn::new(&config.github)?));
+        }
+
+        // What the store kept from the last run: sanctions and webhooks.
+        let reader = Arc::clone(&store);
+        let (sanctions, saved) = tokio::task::spawn_blocking(move || {
+            let sanctions = reader.sanctions()?;
+            let mut saved = Vec::new();
+            for webhook in reader.webhooks()? {
+                let owner = reader.resident(webhook.resident)?.map(|record| record.owner);
+                saved.push((webhook, owner));
+            }
+            Ok::<_, StoreError>((sanctions, saved))
+        })
+        .await
+        .map_err(|e| StoreError::Engine(format!("the store task failed: {e}")))??;
+
         let limits = &config.limits;
         let minute = Duration::from_secs(60);
         let hour = Duration::from_secs(3600);
@@ -145,6 +215,10 @@ impl Gateway {
                 stopping,
                 catalogue,
                 counters: Counters::default(),
+                moderation: Moderation::new(config.moderation.clone(), filters),
+                sanctions: Sanctions::load(&sanctions),
+                ops: Ops::new(&config.ops, config.abuse.funnel.clone()),
+                rollbacks: watch::channel(0).0,
                 providers,
                 sim,
                 store,
@@ -153,14 +227,82 @@ impl Gateway {
         };
 
         tokio::spawn(hub.run(gateway.inner.sim.frames()));
-        let store = Arc::clone(&gateway.inner.store);
-        let saved = tokio::task::spawn_blocking(move || store.webhooks())
-            .await
-            .map_err(|e| StoreError::Engine(format!("the store task failed: {e}")))??;
-        for webhook in saved {
+        tokio::spawn(gateway.clone().watch(gateway.inner.sim.frames()));
+        for (webhook, owner) in saved {
+            // A banned owner gets no deliveries. The store keeps the
+            // webhook for the day on which the ban is lifted.
+            if owner.is_some_and(|owner| gateway.inner.sanctions.is_banned(owner)) {
+                continue;
+            }
             gateway.inner.webhooks.set(webhook.resident, &webhook.url, webhook.secret).await;
         }
         Ok(gateway)
+    }
+}
+
+impl std::fmt::Debug for Gateway {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Gateway").finish_non_exhaustive()
+    }
+}
+
+impl Gateway {
+    /// Returns a builder for a gateway with local sign-up as the only
+    /// identity provider and the rule filter as the only text filter.
+    #[must_use]
+    pub fn builder(sim: SimHandle, store: Arc<dyn Store>, config: GatewayConfig) -> GatewayBuilder {
+        GatewayBuilder {
+            sim,
+            store,
+            config,
+            providers: vec![Arc::new(LocalSignUp)],
+            filters: Vec::new(),
+        }
+    }
+
+    /// Starts the gateway with local sign-up as the first identity
+    /// provider. Call it inside a Tokio runtime: it starts the tasks that
+    /// push notices, deliver webhooks and watch the frames.
+    ///
+    /// # Errors
+    ///
+    /// See [`GatewayBuilder::start`].
+    pub async fn start(
+        sim: SimHandle,
+        store: Arc<dyn Store>,
+        config: GatewayConfig,
+    ) -> Result<Gateway, StartError> {
+        Gateway::builder(sim, store, config).start().await
+    }
+
+    /// Starts the gateway with a list of identity providers. A sign-up
+    /// names a provider; the first one is the default.
+    ///
+    /// # Errors
+    ///
+    /// See [`GatewayBuilder::start`].
+    pub async fn start_with_providers(
+        sim: SimHandle,
+        store: Arc<dyn Store>,
+        config: GatewayConfig,
+        providers: Vec<Arc<dyn IdentityProvider>>,
+    ) -> Result<Gateway, StartError> {
+        Gateway::builder(sim, store, config).providers(providers).start().await
+    }
+
+    /// Returns the alert list. The host raises an alert for a problem
+    /// that only it can see, for example an audit of the world that
+    /// failed.
+    #[must_use]
+    pub fn alerts(&self) -> Arc<Alerts> {
+        Arc::clone(&self.inner.ops.alerts)
+    }
+
+    /// Gives the gateway a function that describes the host: the data
+    /// directory, the recovery at the start, the snapshots. The admin
+    /// dashboard shows its answer in the field `host`.
+    pub fn set_host_info(&self, info: impl Fn() -> Value + Send + Sync + 'static) {
+        self.inner.ops.set_host(Arc::new(info));
     }
 
     /// Returns the configuration.
@@ -208,6 +350,8 @@ impl Gateway {
     pub(crate) async fn retire(&self, resident: ResidentId, reason: &'static str) {
         self.inner.webhooks.clear(resident);
         self.inner.sessions.forget(resident);
+        // The store ends the mute and the freeze with the record.
+        self.inner.sanctions.forget(resident);
         let retired = self.store(move |s| s.retire_resident(resident, reason, unix_now())).await;
         if matches!(retired, Ok(true)) {
             tracing::info!(%resident, reason, "resident record retired");

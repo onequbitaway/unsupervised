@@ -27,6 +27,7 @@
 //! # Map of the crate
 //!
 //! - [`Gateway`] holds the shared state and builds the router.
+//!   [`GatewayBuilder`] adds identity providers and text filters.
 //! - [`GatewayConfig`] has every limit. The defaults are in
 //!   `data/defaults.toml`.
 //! - Three kinds of token authenticate a request: an owner token, a
@@ -38,6 +39,15 @@
 //! - [`mcp`] is the Model Context Protocol endpoint.
 //! - [`webhook`] signs deliveries and decides which addresses a webhook
 //!   can point at.
+//! - [`moderation`] is the door for text: every text that a client sends
+//!   passes the [`TextFilter`]s before it enters the simulation.
+//!   [`RuleFilter`] is the filter with fixed rules.
+//! - Sanctions: an administrator mutes or freezes a resident and bans an
+//!   owner. The store keeps them across a restart.
+//! - Operations: the funnel detector with its [`Flag`] list, the
+//!   [`Alerts`], the admin dashboard, and the rollback of the world with
+//!   [`Gateway::reconcile`].
+//! - [`identity`] has the sign-in with GitHub.
 
 mod actions;
 mod auth;
@@ -46,10 +56,15 @@ mod config;
 mod error;
 mod extract;
 mod gauge;
+pub mod identity;
 mod limit;
 pub mod mcp;
+pub mod moderation;
+mod ops;
 mod push;
+mod recover;
 mod routes;
+mod sanctions;
 mod state;
 mod validate;
 pub mod webhook;
@@ -60,7 +75,16 @@ pub use config::{
     merge_tables,
 };
 pub use error::ApiError;
+pub use identity::{ClientSecret, GitHubConfig, GitHubSignIn};
 pub use limit::{RateLimiter, limit_address, retry_after_secs};
+pub use moderation::{
+    Author, FilterFuture, LinkRule, ModerationConfig, Refusal, RuleFilter, Text, TextFilter,
+    TextUse,
+};
+pub use ops::alerts::{Alert, Alerts};
+pub use ops::funnel::{Flag, FunnelConfig, Gift, GiftEvent, Giver};
+pub use ops::{AbuseConfig, OpsConfig};
+pub use recover::Reconciled;
 pub use routes::not_found;
-pub use state::Gateway;
+pub use state::{Gateway, GatewayBuilder, StartError};
 pub use webhook::url::is_public_address;
