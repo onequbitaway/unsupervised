@@ -1,6 +1,6 @@
 [package]
 name = "unsup-runtime"
-description = "Real-time driver for an Unsupervised world: one simulation thread and the SimHandle API."
+description = "Real-time driver for an Unsupervised world: the simulation thread, SimHandle, the input log, snapshots, recovery, replay and time dilation."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,8 +11,12 @@ publish.workspace = true
 [dependencies]
 unsup-kernel.workspace = true
 unsup-protocol.workspace = true
+blake3.workspace = true
+rmp-serde.workspace = true
 serde.workspace = true
 tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

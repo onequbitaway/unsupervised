@@ -1869,9 +1869,13 @@ dependencies = [
 name = "unsup-runtime"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "rmp-serde",
  "serde",
  "serde_json",
  "tokio",
+ "toml",
+ "tracing",
  "unsup-kernel",
  "unsup-protocol",
 ]
