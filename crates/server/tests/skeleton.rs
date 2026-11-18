@@ -2,12 +2,12 @@
 
 use std::time::Duration;
 
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 use unsup_server::{ServerConfig, WorldShape};
 
-/// Reads frames from the viewer socket until one moves `resident`.
+/// Reads the viewer feed until a `delta` message moves `resident`.
 async fn next_move(
     socket: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
     resident: u64,
@@ -15,15 +15,13 @@ async fn next_move(
     loop {
         let message = socket.next().await.expect("the feed ended").expect("the feed failed");
         let Message::Text(text) = message else { continue };
-        let frame: Value = serde_json::from_str(&text).expect("a frame is JSON");
-        for zone in frame["zones"].as_array().into_iter().flatten() {
-            for moved in zone["moved"].as_array().into_iter().flatten() {
-                if moved[0].as_u64() == Some(resident) {
-                    return (
-                        moved[1]["x"].as_i64().expect("x"),
-                        moved[1]["y"].as_i64().expect("y"),
-                    );
-                }
+        let message: Value = serde_json::from_str(&text).expect("a feed message is JSON");
+        if message["op"] != "delta" {
+            continue;
+        }
+        for moved in message["moved"].as_array().into_iter().flatten() {
+            if moved[0].as_u64() == Some(resident) {
+                return (moved[1].as_i64().expect("x"), moved[2].as_i64().expect("y"));
             }
         }
     }
@@ -48,6 +46,26 @@ async fn a_resident_moves_through_http_and_a_viewer_sees_it() {
         tokio_tungstenite::connect_async(format!("ws://{}/v1/spectate", server.addr))
             .await
             .expect("the viewer connects");
+    // The feed sends the residents of subscribed zones only.
+    let world: Value = http
+        .get(format!("{base}/v1/world"))
+        .send()
+        .await
+        .expect("world")
+        .json()
+        .await
+        .expect("layout");
+    let zones: Vec<u64> = world["zones"]
+        .as_array()
+        .expect("zones")
+        .iter()
+        .map(|zone| zone["id"].as_u64().expect("a zone id"))
+        .collect();
+    assert_eq!(zones.len(), 4);
+    viewer
+        .send(Message::Text(json!({ "op": "subscribe", "zones": zones }).to_string().into()))
+        .await
+        .expect("the viewer subscribes");
 
     let created: Value = http
         .post(format!("{base}/v1/dev/residents"))
@@ -87,10 +105,19 @@ async fn a_resident_moves_through_http_and_a_viewer_sees_it() {
     assert_eq!(answer["acks"][0]["status"]["state"], "started", "answer: {answer}");
     assert_eq!(answer["acks"][0]["status"]["ticks"], 3);
 
-    let seen = tokio::time::timeout(Duration::from_secs(10), next_move(&mut viewer, resident))
-        .await
-        .expect("the viewer sees the move in time");
-    assert_eq!(seen, target);
+    // The resident walks one tile in each tick. The viewer sees every step;
+    // the last one is the target.
+    let seen = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut steps = Vec::new();
+        while steps.last() != Some(&target) {
+            steps.push(next_move(&mut viewer, resident).await);
+        }
+        steps
+    })
+    .await
+    .expect("the viewer sees the walk in time");
+    assert_eq!(seen.len(), 3, "one visible step for each tick: {seen:?}");
+    assert_eq!(seen.last(), Some(&target));
 
     let after: Value = http
         .get(format!("{base}/v1/observe"))
