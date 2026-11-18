@@ -1,1 +1,393 @@
-# Balance numbers of the economy module. See docs/design/architecture.md, section 7.
+# Balance numbers of the economy module. See docs/design/architecture.md,
+# section 7, and docs/design/modules/economy.md for the formulas.
+#
+# Money is in cents. Rates are basis points (1/10,000). The goods are in
+# `items.toml`, the recipes in `recipes.toml`, the site kinds in
+# `sites.toml` and the depot prices in `depot.toml`.
+
+# ---- Work --------------------------------------------------------------------
+
+[params."economy.shift_minutes"]
+value = 240
+min = 10
+max = 720
+policy = true
+summary = "Game minutes that one `work` shift lasts."
+
+[params."economy.min_wage"]
+value = 0
+min = 0
+max = 1000000
+policy = true
+summary = "Least wage in cents for one shift that `post_job` accepts."
+
+[params."economy.wage_max"]
+value = 10000000
+min = 1
+max = 1000000000
+policy = false
+summary = "Greatest wage in cents for one shift that `post_job` accepts."
+
+[params."economy.job_slots_max"]
+value = 50
+min = 1
+max = 1000
+policy = false
+summary = "Greatest number of workers of one job."
+
+[params."economy.site_jobs_max"]
+value = 8
+min = 1
+max = 64
+policy = false
+summary = "Greatest number of jobs at one site."
+
+[params."economy.income_tax_bp"]
+value = 1000
+min = 0
+max = 9000
+policy = true
+summary = "Income tax on wages in basis points. The employer withholds it for the city."
+
+[params."economy.xp_per_hour"]
+value = 10
+min = 0
+max = 1000
+policy = false
+summary = "Experience points for one game hour of work at full mood."
+
+[params."economy.xp_per_sale"]
+value = 1
+min = 0
+max = 100
+policy = false
+summary = "Experience points in `trading` for one `sell` action."
+
+[params."economy.mood_floor_bp"]
+value = 5000
+min = 0
+max = 10000
+policy = false
+summary = "Share of the normal harvest and experience, in basis points, that a resident with mood 0 gets."
+
+[params."economy.energy_per_hour"]
+value = 20
+min = 0
+max = 1000
+policy = false
+summary = "Energy points that one game hour of `work`, `gather` or `produce` costs."
+
+[params."economy.labor_min_energy"]
+value = 50
+min = 0
+max = 1000
+policy = false
+summary = "Least energy that a resident needs to start `work`, `gather` or `produce`."
+
+[params."economy.skill_bonus_bp"]
+value = 1000
+min = 0
+max = 10000
+policy = false
+summary = "Extra harvest in basis points for each skill level."
+
+[params."economy.speed_bonus_bp"]
+value = 500
+min = 0
+max = 10000
+policy = false
+summary = "Extra production speed in basis points for each skill level above the least level of the recipe."
+
+[params."economy.gather_minutes"]
+value = 60
+min = 1
+max = 720
+policy = false
+summary = "Game minutes of one `gather` action when the resident gives none."
+
+[params."economy.gather_minutes_min"]
+value = 10
+min = 1
+max = 720
+policy = false
+summary = "Least game minutes of one `gather` action."
+
+[params."economy.gather_minutes_max"]
+value = 240
+min = 1
+max = 1440
+policy = false
+summary = "Greatest game minutes of one `gather` action."
+
+[params."economy.produce_batches_max"]
+value = 20
+min = 1
+max = 1000
+policy = false
+summary = "Greatest number of batches of one `produce` action."
+
+# ---- Public works --------------------------------------------------------------
+
+[params."economy.public_works_wage"]
+value = 2000
+min = 0
+max = 1000000
+policy = true
+summary = "Wage in cents, before income tax, for one starter shift at a city hall or a depot."
+
+[params."economy.public_works_budget"]
+value = 200000
+min = 0
+max = 1000000000
+policy = true
+summary = "Cents that one city can pay for starter shifts in one game day."
+
+# ---- Time that actions take ----------------------------------------------------
+
+[params."economy.trade_minutes"]
+value = 1
+min = 1
+max = 60
+policy = false
+summary = "Game minutes of `buy`, `sell`, `stock`, `unstock`, `till_collect` and `till_fund`."
+
+[params."economy.paperwork_minutes"]
+value = 5
+min = 1
+max = 240
+policy = false
+summary = "Game minutes of `post_job`, `close_job`, `apply_job`, `quit_job`, `fire`, `set_price`, `sell_property`, `rent_out` and `end_lease`."
+
+[params."economy.deal_minutes"]
+value = 10
+min = 1
+max = 240
+policy = false
+summary = "Game minutes of `buy_property`, `rent`, `open_business` and `close_business`."
+
+# ---- Trade ---------------------------------------------------------------------
+
+[params."economy.sales_tax_bp"]
+value = 500
+min = 0
+max = 9000
+policy = true
+summary = "Sales tax on shop sales in basis points. The shop pays it to the city out of the price."
+
+[params."economy.trade_qty_max"]
+value = 1000
+min = 1
+max = 1000000
+policy = false
+summary = "Greatest number of units in one `buy`, `sell`, `stock` or `unstock` action."
+
+[params."economy.price_max"]
+value = 100000000
+min = 1
+max = 1000000000000
+policy = false
+summary = "Greatest price, rent or till amount in cents that a verb accepts."
+
+# ---- Property ------------------------------------------------------------------
+
+[params."economy.property_tax_bp"]
+value = 5
+min = 0
+max = 1000
+policy = true
+summary = "Property tax for one game day in basis points of the site value."
+
+[params."economy.property_tax_grace_days"]
+value = 3
+min = 0
+max = 28
+policy = true
+summary = "Days in a row that a site can owe property tax before the city takes it."
+
+[params."economy.city_rent_bp"]
+value = 20
+min = 0
+max = 1000
+policy = true
+summary = "Rent for one game day of a home that the city owns, in basis points of the site value."
+
+[params."economy.rent_grace_days"]
+value = 2
+min = 0
+max = 28
+policy = true
+summary = "Days in a row that a tenant can miss the rent before the eviction."
+
+[params."economy.permit_fee"]
+value = 5000
+min = 0
+max = 100000000
+policy = true
+summary = "Cents that `open_business` costs. The city gets them."
+
+[params."economy.daily_spread_minutes"]
+value = 60
+min = 1
+max = 1440
+policy = false
+summary = "Game minutes after midnight over which the districts spread their daily work: rent and property tax. 1: all at midnight."
+
+# ---- Boards and observations ---------------------------------------------------
+
+[params."economy.list_default"]
+value = 10
+min = 1
+max = 100
+policy = false
+summary = "Entries that `list_jobs` and `list_property` return when the resident gives no limit."
+
+[params."economy.list_max"]
+value = 20
+min = 1
+max = 100
+policy = false
+summary = "Greatest number of entries that `list_jobs` and `list_property` return."
+
+[params."economy.board_refresh_minutes"]
+value = 60
+min = 1
+max = 1440
+policy = false
+summary = "Game minutes between two full checks of the job board and the property board of a district."
+
+[params."economy.observe_prices_max"]
+value = 6
+min = 0
+max = 64
+policy = false
+summary = "Greatest number of prices, and of goods in the stock, in the `business` section of a brief observation."
+
+[params."economy.observe_jobs_max"]
+value = 3
+min = 0
+max = 64
+policy = false
+summary = "Greatest number of jobs in the `business` section of a brief observation."
+
+[params."economy.observe_sites_max"]
+value = 6
+min = 0
+max = 64
+policy = false
+summary = "Greatest number of sites, and of leases, in the `property` section of a brief observation."
+
+# ---- Drama of events -----------------------------------------------------------
+# How interesting each event is for viewers, 0 to 100
+# (docs/design/game-design.md, section 6).
+
+[params."economy.drama.shift_completed"]
+value = 2
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a shift ends and the wage is paid."
+
+[params."economy.drama.goods_sold"]
+value = 2
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when goods are sold."
+
+[params."economy.drama.goods_produced"]
+value = 2
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when goods are made or gathered."
+
+[params."economy.drama.job_posted"]
+value = 6
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a job is posted."
+
+[params."economy.drama.worker_left"]
+value = 6
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a worker quits or loses a job that closed."
+
+[params."economy.drama.worker_hired"]
+value = 12
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a resident takes a job."
+
+[params."economy.drama.lease_started"]
+value = 12
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a tenant moves in."
+
+[params."economy.drama.lease_ended"]
+value = 12
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a lease ends without an eviction."
+
+[params."economy.drama.worker_fired"]
+value = 20
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a worker is fired."
+
+[params."economy.drama.business_opened"]
+value = 25
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a business gets its permit."
+
+[params."economy.drama.business_closed"]
+value = 25
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a business loses its permit."
+
+[params."economy.drama.property_sold"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a site is sold."
+
+[params."economy.drama.property_inherited"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a site goes to an heir."
+
+[params."economy.drama.shift_unpaid"]
+value = 35
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a till cannot pay a wage."
+
+[params."economy.drama.tenant_evicted"]
+value = 45
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when a tenant is evicted."
+
+[params."economy.drama.property_foreclosed"]
+value = 55
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the event when the city takes a site."

@@ -1,0 +1,100 @@
+# Recipes. A recipe turns the inputs in the stock of a site into outputs in
+# the stock of the same site.
+#
+# name       the name that `produce` and `post_job` use
+# sites      the site kinds where the recipe works
+# skill      the skill that the recipe uses and trains
+# min_level  the least level in that skill
+# minutes    game minutes for one batch at the least level
+# inputs     goods that one batch uses
+# outputs    goods that one batch makes
+
+[[recipes]]
+name = "bread"
+sites = ["restaurant", "factory"]
+skill = "cooking"
+min_level = 0
+minutes = 20
+inputs = { grain = 2 }
+outputs = { bread = 1 }
+
+[[recipes]]
+name = "meal"
+sites = ["restaurant"]
+skill = "cooking"
+min_level = 1
+minutes = 30
+inputs = { grain = 1, vegetables = 2 }
+outputs = { meal = 1 }
+
+[[recipes]]
+name = "cloth"
+sites = ["factory", "workshop"]
+skill = "crafting"
+min_level = 0
+minutes = 30
+inputs = { cotton = 2 }
+outputs = { cloth = 1 }
+
+[[recipes]]
+name = "metal"
+sites = ["factory"]
+skill = "crafting"
+min_level = 0
+minutes = 60
+inputs = { ore = 3 }
+outputs = { metal = 1 }
+
+[[recipes]]
+name = "tools"
+sites = ["workshop", "factory"]
+skill = "crafting"
+min_level = 1
+minutes = 60
+inputs = { metal = 1, wood = 1 }
+outputs = { tools = 1 }
+
+[[recipes]]
+name = "furniture"
+sites = ["workshop"]
+skill = "crafting"
+min_level = 2
+minutes = 120
+inputs = { wood = 6, cloth = 1 }
+outputs = { furniture = 1 }
+
+[[recipes]]
+name = "clothes"
+sites = ["workshop", "factory"]
+skill = "crafting"
+min_level = 1
+minutes = 45
+inputs = { cloth = 2 }
+outputs = { clothes = 1 }
+
+[[recipes]]
+name = "medicine"
+sites = ["workshop"]
+skill = "medicine"
+min_level = 0
+minutes = 60
+inputs = { herbs = 3 }
+outputs = { medicine = 1 }
+
+[[recipes]]
+name = "moonshine"
+sites = ["workshop"]
+skill = "cooking"
+min_level = 0
+minutes = 60
+inputs = { grain = 3 }
+outputs = { moonshine = 1 }
+
+[[recipes]]
+name = "stims"
+sites = ["workshop"]
+skill = "medicine"
+min_level = 2
+minutes = 90
+inputs = { herbs = 2, medicine = 1 }
+outputs = { stims = 2 }

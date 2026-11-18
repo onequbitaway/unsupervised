@@ -1,0 +1,130 @@
+# What each site kind can do. The life module creates the sites; this file
+# says how the economy uses them. A kind that is not in this file trains the
+# skill `labor` and has no special use.
+#
+# kind                  the site kind (docs/design/game-design.md, section 2)
+# skill                 the skill that a shift at the site trains
+# business              the site needs a permit (`open_business`) to trade,
+#                       to produce and to hire; `open_business` can change one
+#                       business kind into another
+# retail                the owner sets prices; residents buy and sell here
+# lettable              the owner can let the site to tenants
+# units                 how many tenants a lettable site takes, when the site
+#                       has no attribute `capacity`
+# public_works          a resident without a job can work a starter shift here
+# depot                 the site is the buyer and seller of last resort
+# gather                goods that `gather` gives, with the units for one
+#                       hour of work at level 0
+# node_max              the greatest stock of the node of the site
+# node_regen_per_hour   units that the node gets back each game hour
+
+[[kinds]]
+kind = "home"
+skill = "labor"
+lettable = true
+units = 1
+
+[[kinds]]
+kind = "apartment"
+skill = "labor"
+lettable = true
+units = 8
+
+[[kinds]]
+kind = "shop"
+skill = "trading"
+business = true
+retail = true
+
+[[kinds]]
+kind = "restaurant"
+skill = "cooking"
+business = true
+retail = true
+
+[[kinds]]
+kind = "office"
+skill = "management"
+business = true
+
+[[kinds]]
+kind = "factory"
+skill = "crafting"
+business = true
+
+[[kinds]]
+kind = "workshop"
+skill = "crafting"
+business = true
+
+[[kinds]]
+kind = "warehouse"
+skill = "labor"
+business = true
+
+[[kinds]]
+kind = "farm"
+skill = "farming"
+node_max = 600
+node_regen_per_hour = 30
+gather = [
+    { item = "grain", per_hour = 6 },
+    { item = "vegetables", per_hour = 5 },
+    { item = "cotton", per_hour = 5 },
+]
+
+[[kinds]]
+kind = "mine"
+skill = "mining"
+node_max = 400
+node_regen_per_hour = 15
+gather = [{ item = "ore", per_hour = 3 }]
+
+[[kinds]]
+kind = "forest"
+skill = "labor"
+node_max = 500
+node_regen_per_hour = 20
+gather = [
+    { item = "wood", per_hour = 4 },
+    { item = "herbs", per_hour = 3 },
+]
+
+[[kinds]]
+kind = "bank"
+skill = "management"
+
+[[kinds]]
+kind = "exchange"
+skill = "trading"
+
+[[kinds]]
+kind = "city_hall"
+skill = "labor"
+public_works = true
+
+[[kinds]]
+kind = "depot"
+skill = "labor"
+public_works = true
+depot = true
+
+[[kinds]]
+kind = "police_station"
+skill = "investigation"
+
+[[kinds]]
+kind = "courthouse"
+skill = "law"
+
+[[kinds]]
+kind = "hospital"
+skill = "medicine"
+
+[[kinds]]
+kind = "school"
+skill = "rhetoric"
+
+[[kinds]]
+kind = "newsroom"
+skill = "rhetoric"

@@ -1,0 +1,80 @@
+# Prices of the depot: the buyer and seller of last resort. Each entry
+# becomes two policy parameters, `economy.depot_floor.<item>` and
+# `economy.depot_ceiling.<item>`, so a law or an override file can change
+# them. The depot does not trade a good that is not in this file.
+#
+# floor    cents that the depot pays for one unit (faucet `export.sale`)
+# ceiling  cents that one unit costs at the depot (sink `import.purchase`)
+#
+# Keep every chain a loss through the depot: the inputs of a recipe at the
+# ceiling must cost more than its outputs give at the floor.
+
+[[depot]]
+item = "grain"
+floor = 80
+ceiling = 500
+
+[[depot]]
+item = "vegetables"
+floor = 120
+ceiling = 750
+
+[[depot]]
+item = "cotton"
+floor = 100
+ceiling = 625
+
+[[depot]]
+item = "herbs"
+floor = 160
+ceiling = 1000
+
+[[depot]]
+item = "wood"
+floor = 120
+ceiling = 750
+
+[[depot]]
+item = "ore"
+floor = 200
+ceiling = 1250
+
+[[depot]]
+item = "bread"
+floor = 320
+ceiling = 2000
+
+[[depot]]
+item = "meal"
+floor = 720
+ceiling = 4500
+
+[[depot]]
+item = "cloth"
+floor = 320
+ceiling = 2000
+
+[[depot]]
+item = "metal"
+floor = 720
+ceiling = 4500
+
+[[depot]]
+item = "tools"
+floor = 1400
+ceiling = 8750
+
+[[depot]]
+item = "furniture"
+floor = 2000
+ceiling = 12500
+
+[[depot]]
+item = "clothes"
+floor = 1000
+ceiling = 6250
+
+[[depot]]
+item = "medicine"
+floor = 1200
+ceiling = 7500

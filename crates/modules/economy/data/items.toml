@@ -1,0 +1,124 @@
+# The goods catalogue. The format is that of `data/balance.toml`
+# (docs/design/architecture.md, section 7).
+#
+# Tags that other modules read: `food` (with `nutrition`), `medicine` (with
+# `healing`), `contraband`. `base_price` is the normal price of one unit in
+# cents. It is a guide for residents; no rule uses it.
+
+# ---- Raw goods ---------------------------------------------------------------
+
+[[items]]
+name = "grain"
+weight = 1
+tags = ["raw"]
+attrs = { base_price = 200 }
+summary = "Grain from a farm. An input for bread, meals and moonshine."
+
+[[items]]
+name = "vegetables"
+weight = 1
+tags = ["raw", "food"]
+attrs = { base_price = 300, nutrition = 120 }
+summary = "Vegetables from a farm. Food, and an input for meals."
+
+[[items]]
+name = "cotton"
+weight = 1
+tags = ["raw"]
+attrs = { base_price = 250 }
+summary = "Cotton from a farm. An input for cloth."
+
+[[items]]
+name = "herbs"
+weight = 1
+tags = ["raw"]
+attrs = { base_price = 400 }
+summary = "Herbs from a forest. An input for medicine."
+
+[[items]]
+name = "wood"
+weight = 3
+tags = ["raw"]
+attrs = { base_price = 300 }
+summary = "Wood from a forest. An input for tools and furniture."
+
+[[items]]
+name = "ore"
+weight = 4
+tags = ["raw"]
+attrs = { base_price = 500 }
+summary = "Ore from a mine. An input for metal."
+
+# ---- Products ----------------------------------------------------------------
+
+[[items]]
+name = "bread"
+weight = 1
+tags = ["food"]
+attrs = { base_price = 800, nutrition = 300 }
+summary = "A loaf of bread."
+
+[[items]]
+name = "meal"
+weight = 1
+tags = ["food"]
+attrs = { base_price = 1800, nutrition = 600 }
+summary = "A cooked meal."
+
+[[items]]
+name = "cloth"
+weight = 1
+tags = ["material"]
+attrs = { base_price = 800 }
+summary = "Cloth. An input for clothes and furniture."
+
+[[items]]
+name = "metal"
+weight = 4
+tags = ["material"]
+attrs = { base_price = 1800 }
+summary = "Metal bars. An input for tools."
+
+[[items]]
+name = "tools"
+weight = 3
+tags = ["tool"]
+attrs = { base_price = 3500 }
+summary = "A set of tools."
+
+[[items]]
+name = "furniture"
+weight = 20
+tags = ["furniture"]
+attrs = { base_price = 5000 }
+summary = "A piece of furniture."
+
+[[items]]
+name = "clothes"
+weight = 1
+tags = ["clothing"]
+attrs = { base_price = 2500 }
+summary = "A set of clothes."
+
+[[items]]
+name = "medicine"
+weight = 1
+tags = ["medicine"]
+attrs = { base_price = 3000, healing = 400 }
+summary = "Medicine that heals."
+
+# ---- Contraband ----------------------------------------------------------------
+
+[[items]]
+name = "moonshine"
+weight = 1
+tags = ["contraband"]
+attrs = { base_price = 2000 }
+summary = "Strong drink made without a licence. It is illegal to carry."
+
+[[items]]
+name = "stims"
+weight = 1
+tags = ["contraband"]
+attrs = { base_price = 4000 }
+summary = "Stimulant pills. They are illegal to carry."
