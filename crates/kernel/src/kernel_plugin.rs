@@ -87,7 +87,10 @@ impl Plugin for KernelPlugin {
                 free: true,
                 allowed_in: &[],
             },
-            |realm, ctx, args| realm.set_routines(ctx.idx, &args.routines),
+            |realm, ctx, args| {
+                realm.set_routines(ctx.idx, &args.routines)?;
+                Ok(json!({ "routines": args.routines.len() }))
+            },
         );
         for verb in ["wait", "cancel", "set_routines"] {
             b.allow_everywhere(verb);

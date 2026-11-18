@@ -36,7 +36,7 @@ use crate::ledger::{AuditError, UNCLAIMED};
 use crate::message::{Body, Dest, Envelope, KernelMsg};
 use crate::plugin::{Blueprint, NameTables, Plugin, WorldGen};
 use crate::realm::{Identity, Realm, RealmState, Transfer};
-use crate::sites::Site;
+use crate::spawn::SpawnSites;
 
 /// Greatest length of a resident name and of a model name, in bytes.
 const NAME_MAX: usize = 64;
@@ -295,6 +295,8 @@ pub struct World {
     clock: Option<TickClock>,
     timings: Vec<ZoneTiming>,
     dropped: u64,
+    /// Where new residents of each city appear. Derived from the sites.
+    spawn_sites: SpawnSites,
 }
 
 impl fmt::Debug for World {
@@ -396,6 +398,7 @@ impl World {
             clock: None,
             timings: Vec::new(),
             dropped: 0,
+            spawn_sites: SpawnSites::default(),
         }
     }
 
@@ -534,22 +537,18 @@ impl World {
     /// with the tag `spawn` when the city has one (the residents are spread
     /// over all such sites by id), else the centre of the first zone of the
     /// city.
-    fn spawn_point(&self, city: CityId, id: ResidentId) -> Result<(ZoneId, Pos), SimError> {
+    ///
+    /// The list of spawn sites comes from a cache (see [`SpawnSites`]), so
+    /// a spawn does not scan the sites of the city.
+    fn spawn_point(&mut self, city: CityId, id: ResidentId) -> Result<(ZoneId, Pos), SimError> {
         let city = self.layout.city(city).ok_or(SimError::Invalid)?;
-        let mut points: Vec<(ZoneId, Pos)> = Vec::new();
-        for &zone in &city.zones {
-            if let Some(realm) = self.zone(zone) {
-                points.extend(
-                    realm.sites().with_tag(Site::SPAWN_TAG).map(|s| (zone, s.rect.centre())),
-                );
-            }
-        }
+        let points = self.spawn_sites.of_city(city, &self.zones);
         if !points.is_empty() {
             return Ok(points[(id.0 % points.len() as u64) as usize]);
         }
         let first = city.zones.first().copied().ok_or(SimError::Invalid)?;
         let info = self.layout.zone(first).ok_or(SimError::Invalid)?;
-        if self.zone(first).is_none() {
+        if self.zones.get(first.0 as usize).is_none_or(Option::is_none) {
             return Err(SimError::NotHosted);
         }
         Ok((first, info.bounds.centre()))
@@ -627,7 +626,10 @@ impl World {
     }
 
     fn do_deliver(&mut self, messages: Vec<Envelope>) {
-        for envelope in messages {
+        for mut envelope in messages {
+            // The world did not make this envelope. A module message in it
+            // that no handler can take is dropped, not a reason to stop.
+            envelope.foreign = true;
             let (money, items) = value_of(&envelope);
             self.external_money = self.external_money.wrapping_sub(money);
             for (item, qty) in items {
@@ -785,12 +787,12 @@ impl World {
             None => {
                 self.locations.remove(&id);
                 self.away.insert(id);
-                self.send_external(Envelope {
+                self.send_external(Envelope::new(
                     from,
-                    seq: 0,
-                    to: Dest::Zone(target),
-                    body: Body::Kernel(Box::new(KernelMsg::Arrive(Box::new(transfer)))),
-                });
+                    0,
+                    Dest::Zone(target),
+                    Body::Kernel(Box::new(KernelMsg::Arrive(Box::new(transfer)))),
+                ));
             }
         }
     }
@@ -837,7 +839,7 @@ impl World {
                     self.dropped += 1;
                     return;
                 }
-                let Envelope { from, seq, to, body } = envelope;
+                let Envelope { from, seq, to, body, foreign } = envelope;
                 match body {
                     Body::Kernel(msg) if matches!(*msg, KernelMsg::Arrive(_)) => {
                         if let KernelMsg::Arrive(transfer) = *msg {
@@ -845,7 +847,7 @@ impl World {
                         }
                     }
                     body => {
-                        let envelope = Envelope { from, seq, to, body };
+                        let envelope = Envelope { from, seq, to, body, foreign };
                         match self.zone(zone) {
                             Some(realm) => realm.enqueue(envelope),
                             None => self.send_external(envelope),
@@ -1017,12 +1019,19 @@ impl World {
         self.locations.len()
     }
 
-    /// Returns the number of messages that had no target and were dropped:
-    /// a message for a resident that no longer exists, or for a zone that
-    /// does not exist. It is a statistic, not simulation state.
+    /// Returns the number of messages that were dropped. It is a statistic,
+    /// not simulation state.
+    ///
+    /// A message is dropped when it has no target: it is for a resident
+    /// that no longer exists, or for a zone that does not exist. A module
+    /// message that came through `Input::Deliver` is also dropped when no
+    /// handler of its target takes the kind, or when its payload does not
+    /// decode into the type of the handler.
     #[must_use]
     pub fn dropped_messages(&self) -> u64 {
-        self.dropped
+        let in_realms: u64 =
+            self.global.iter().chain(self.zones.iter().flatten()).map(Realm::dropped).sum();
+        self.dropped + in_realms
     }
 
     /// Brings every zone to rest and moves residents that left their zone,
@@ -1183,6 +1192,25 @@ impl World {
             .map(|realm| RealmBlob { id: realm.id(), data: realm.save() })
             .collect();
         codec::encode("snapshot", &parts)
+    }
+
+    /// Returns the snapshot and the state hash, and serializes the state of
+    /// every realm only once. The bytes are those of [`World::snapshot`] and
+    /// the hash is that of [`World::state_hash`]; a caller that needs both
+    /// (a snapshot writer that names the file after the hash) saves half of
+    /// the work.
+    #[must_use]
+    pub fn snapshot_with_hash(&self) -> (Vec<u8>, [u8; 32]) {
+        let mut parts = self.snapshot_parts();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&codec::encode("snapshot header", &parts));
+        for realm in self.global.iter().chain(self.zones.iter().flatten()) {
+            let data = realm.save();
+            hasher.update(&(data.len() as u64).to_le_bytes());
+            hasher.update(&data);
+            parts.realms.push(RealmBlob { id: realm.id(), data });
+        }
+        (codec::encode("snapshot", &parts), hasher.finalize().into())
     }
 
     /// Makes a world from a snapshot. World generation does not run again.

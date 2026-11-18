@@ -158,6 +158,50 @@ impl Layout {
             .filter_map(|p| self.zone_at(p))
             .collect()
     }
+
+    /// Returns the zones, other than `zone`, that have a tile at most
+    /// `distance` tiles from a tile of `zone`, ordered by id. The metric is
+    /// that of `Pos::dist`: a diagonal step counts as one, so with a
+    /// distance of 1 the zones that touch `zone` at a corner are in the
+    /// list too. Zones of another city count when the cities are that
+    /// near.
+    #[must_use]
+    pub fn zones_within(&self, zone: ZoneId, distance: u32) -> Vec<ZoneId> {
+        let Some(info) = self.zone(zone) else {
+            return Vec::new();
+        };
+        // Every tile at most `distance` tiles from the zone. 64-bit numbers
+        // cannot overflow here.
+        let reach = i64::from(distance);
+        let (x0, y0) = (i64::from(info.bounds.x0) - reach, i64::from(info.bounds.y0) - reach);
+        let (x1, y1) = (i64::from(info.bounds.x1) + reach, i64::from(info.bounds.y1) + reach);
+        let size = i64::from(self.zone_size);
+        let mut found = Vec::new();
+        for city in &self.cities {
+            let last = i64::from(city.districts) - 1;
+            // The columns and rows of the city that the reach covers.
+            let cells = |low: i64, high: i64, origin: i32| {
+                let first = (low - i64::from(origin)).div_euclid(size);
+                let end = (high - 1 - i64::from(origin)).div_euclid(size);
+                (first <= last && end >= 0).then(|| (first.max(0), end.min(last)))
+            };
+            let (Some((col0, col1)), Some((row0, row1))) =
+                (cells(x0, x1, city.bounds.x0), cells(y0, y1, city.bounds.y0))
+            else {
+                continue;
+            };
+            for row in row0..=row1 {
+                for col in col0..=col1 {
+                    let index = row * i64::from(city.districts) + col;
+                    match city.zones.get(index as usize) {
+                        Some(&other) if other != zone => found.push(other),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        found
+    }
 }
 
 #[cfg(test)]
@@ -228,6 +272,38 @@ mod tests {
         // The centre zone of the 3 by 3 city has four neighbours.
         assert_eq!(layout.neighbours(ZoneId(8)), [ZoneId(5), ZoneId(9), ZoneId(11), ZoneId(7)]);
         assert_eq!(layout.neighbours(ZoneId(99)), []);
+    }
+
+    #[test]
+    fn zones_within_a_distance_include_corners_and_near_cities() {
+        let layout = two_cities();
+        // A corner zone of the 2 by 2 city sees the other three.
+        assert_eq!(layout.zones_within(ZoneId(0), 1), [ZoneId(1), ZoneId(2), ZoneId(3)]);
+        assert_eq!(layout.zones_within(ZoneId(0), 0), []);
+        // The centre zone of the 3 by 3 city sees all eight around it. The
+        // other city is 808 tiles away.
+        let around: Vec<ZoneId> = [4, 5, 6, 7, 9, 10, 11, 12].into_iter().map(ZoneId).collect();
+        assert_eq!(layout.zones_within(ZoneId(8), 1), around);
+        assert_eq!(layout.zones_within(ZoneId(8), 64), around);
+        // A corner zone of the 3 by 3 city: 64 tiles reach the next zone in
+        // each direction, 65 tiles reach the zone after it too.
+        assert_eq!(layout.zones_within(ZoneId(4), 64), [ZoneId(5), ZoneId(7), ZoneId(8)]);
+        assert_eq!(layout.zones_within(ZoneId(4), 65), (5..=12).map(ZoneId).collect::<Vec<_>>());
+        // From zone 1 (columns 64 to 127) the other city starts at column
+        // 1,000: 873 tiles away, not 872. Its first column of zones is all
+        // at that distance.
+        assert_eq!(layout.zones_within(ZoneId(1), 872), [ZoneId(0), ZoneId(2), ZoneId(3)]);
+        assert_eq!(
+            layout.zones_within(ZoneId(1), 873),
+            [0, 2, 3, 4, 7, 10].into_iter().map(ZoneId).collect::<Vec<_>>()
+        );
+        assert_eq!(layout.zones_within(ZoneId(99), 10), []);
+        // The relation is symmetric.
+        for a in layout.zones() {
+            for &b in &layout.zones_within(a.id, 900) {
+                assert!(layout.zones_within(b, 900).contains(&a.id), "{} and {b}", a.id);
+            }
+        }
     }
 
     #[test]

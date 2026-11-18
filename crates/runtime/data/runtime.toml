@@ -1,0 +1,63 @@
+# Tunable numbers of the runtime.
+#
+# `RuntimeConfig::default()`, `DurableConfig::default()` and
+# `DilationConfig::default()` read this file. A host can change every number
+# through the fields of those types.
+
+[runtime]
+# Real milliseconds between two frames. One frame is one game minute.
+tick_interval_ms = 1000
+# Greatest number of calls that wait in the mailbox of the simulation
+# thread. A call that finds the mailbox full fails with `overloaded`.
+mailbox = 16384
+# Greatest number of calls that the simulation thread takes from the mailbox
+# before it writes them to the input log and applies them.
+batch = 256
+# Frames that a slow subscriber can fall behind before it loses frames.
+frame_buffer = 64
+# Greatest number of `wait` calls that wait at the same time. One more call
+# fails with `overloaded`.
+max_waiters = 1000000
+# Greatest number of `wait` calls that wait for one resident. One more call
+# ends the oldest one.
+max_waiters_per_resident = 4
+# Frames in the window of the frame time percentiles.
+stats_window_frames = 512
+# Milliseconds in the window of the input rate.
+rate_window_ms = 1000
+# A batch with this many answers or more is handed to the reply thread.
+reply_handoff = 32
+# Greatest number of batches of answers that wait for the reply thread.
+reply_queue = 64
+
+[log]
+# A segment file rolls when it is larger than this many bytes.
+segment_bytes = 67108864
+# Greatest size of one record in bytes. A larger input is refused.
+max_record_bytes = 16777216
+# When the log is forced to the disk: "record" (after every input), "batch"
+# (after every batch of inputs, before they are applied) or "interval"
+# (every `sync_interval_ms`).
+sync = "interval"
+# Milliseconds between two forced writes with `sync = "interval"`.
+sync_interval_ms = 50
+
+[snapshots]
+# Frames between two snapshots.
+every_frames = 600
+# Number of snapshots to keep. Older ones are deleted, with the part of the
+# log that only they need.
+keep = 5
+
+[dilation]
+# Share of the frame interval that the tick of one zone can use, in percent.
+budget_percent = 50
+# A dilated zone runs faster again when its load is below this share of the
+# budget, in percent. The distance to 100 is the hysteresis.
+relax_percent = 70
+# Slowest pace of a zone: one tick in this many frames.
+max_divisor = 10
+# Number of measurements in the moving average of a zone tick time.
+smoothing = 4
+# Measurements in a row below the relax threshold before a zone runs faster.
+calm_ticks = 8

@@ -135,6 +135,7 @@ fn action_types_and_state_tag() {
     }
 
     let report = ActionReport {
+        seq: 12,
         action_id: 99,
         request_id: None,
         verb: "work".into(),
@@ -145,7 +146,7 @@ fn action_types_and_state_tag() {
     };
     assert_eq!(
         round_trip(&report),
-        json!({ "action_id": 99, "verb": "work", "tick": 77, "ok": false,
+        json!({ "seq": 12, "action_id": 99, "verb": "work", "tick": 77, "ok": false,
                 "error": { "code": "interrupted", "message": "A guard stopped you." } })
     );
 }

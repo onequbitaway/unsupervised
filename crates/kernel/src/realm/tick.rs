@@ -10,7 +10,8 @@
 //! 4. Module systems run: stage `Pre`, then `Update`, then `Post`.
 //! 5. Routines of idle residents are checked.
 //! 6. Residents that leave (migration, despawn) are removed.
-//! 7. The ledger is audited.
+//! 7. The zones around this one are told what changed near their border.
+//! 8. The ledger is audited.
 //!
 //! After every message, after the timers and after every system the realm
 //! *settles*: residents whose action ended start their next action, and
@@ -46,6 +47,7 @@ impl Realm {
         self.run_systems();
         self.scan_routines();
         self.finish_step();
+        self.build_border();
         self.self_audit();
     }
 
@@ -110,19 +112,19 @@ impl Realm {
     }
 
     fn deliver(&self, envelope: Envelope) {
-        let Envelope { from, seq, to, body } = envelope;
+        let Envelope { from, seq, to, body, foreign } = envelope;
         match body {
             Body::Module { kind, payload } => {
                 let def = self.def();
-                match to {
+                // What the handlers of this kind did. `None`: no handler
+                // takes the kind here.
+                let outcome = match to {
                     Dest::Resident(resident) => match self.idx_of(resident) {
-                        Some(idx) => {
-                            if let Some(handlers) = def.resident_messages.get(kind.as_ref()) {
-                                for handler in handlers {
-                                    handler(self, idx, from, &payload);
-                                }
-                            }
-                        }
+                        Some(idx) => def.resident_messages.get(kind.as_ref()).map(|handlers| {
+                            handlers
+                                .iter()
+                                .try_for_each(|handler| handler(self, idx, from, &payload))
+                        }),
                         // The resident moved after the message was routed.
                         None if self.scope == Scope::Zone => {
                             self.reroute(Envelope {
@@ -130,32 +132,48 @@ impl Realm {
                                 seq,
                                 to,
                                 body: Body::Module { kind, payload },
+                                foreign,
                             });
+                            return;
                         }
-                        None => {}
+                        None => None,
                     },
-                    _ => {
-                        if let Some(handlers) = def.messages.get(kind.as_ref()) {
-                            for handler in handlers {
-                                handler(self, from, &payload);
-                            }
-                        }
-                    }
+                    _ => def.messages.get(kind.as_ref()).map(|handlers| {
+                        handlers.iter().try_for_each(|handler| handler(self, from, &payload))
+                    }),
+                };
+                match outcome {
+                    Some(Ok(())) => {}
+                    // A message from outside this process (`Input::Deliver`)
+                    // that no handler takes, or that the handler cannot
+                    // read: the sender made a mistake, the world goes on.
+                    Some(Err(_)) | None if foreign => self.dropped.set(self.dropped.get() + 1),
+                    // A module of this process sent a payload that its own
+                    // handler cannot read. That is a bug in the module.
+                    Some(Err(e)) => panic!("message `{kind}` from {from}: {e}"),
+                    None => {}
                 }
             }
             Body::Kernel(msg) => self.deliver_kernel(from, seq, *msg),
         }
     }
 
+    /// Returns how many messages from outside this process the realm
+    /// dropped because no handler could take them. It is a statistic, not
+    /// simulation state.
+    pub(crate) fn dropped(&self) -> u64 {
+        self.dropped.get()
+    }
+
     fn deliver_kernel(&self, from: RealmId, seq: u64, msg: KernelMsg) {
         // A message for a resident that is not here goes on to its zone.
         let forward = |msg: KernelMsg, resident: ResidentId| {
-            self.reroute(Envelope {
+            self.reroute(Envelope::new(
                 from,
                 seq,
-                to: Dest::Resident(resident),
-                body: Body::Kernel(Box::new(msg)),
-            });
+                Dest::Resident(resident),
+                Body::Kernel(Box::new(msg)),
+            ));
         };
         match msg {
             KernelMsg::Arrive(transfer) => self.arrive(*transfer),
@@ -200,7 +218,13 @@ impl Realm {
             },
             KernelMsg::ParamSet { param, city, value } => {
                 let own_city = self.zone.as_ref().map(|z| z.city);
+                let band = self.border_band();
                 self.params.borrow_mut().set(&self.bp, own_city, param, city, value);
+                // Another sight radius: the zones around this one hold
+                // copies of other residents than they must.
+                if self.border_band() != band {
+                    self.touch_border_all();
+                }
             }
             KernelMsg::Events(events) => {
                 // Zone events for the handlers of the global realm.
@@ -214,6 +238,11 @@ impl Realm {
                 }
                 None => {}
             },
+            KernelMsg::Border(news) => {
+                if let RealmId::Zone(zone) = from {
+                    self.apply_border(zone, news);
+                }
+            }
         }
     }
 
@@ -338,6 +367,7 @@ impl Realm {
                 }
             }
             if !worked {
+                self.border_settled();
                 return;
             }
             rounds += 1;
@@ -369,6 +399,9 @@ impl Realm {
         self.inbox.borrow_mut().push(Inbox::default());
         self.members.borrow_mut().push(Vec::new());
         self.grid.borrow_mut().insert(idx.0, pos);
+        self.border.shown.borrow_mut().push(0);
+        drop(ids);
+        self.border_moved(idx, pos);
         idx
     }
 
@@ -432,6 +465,7 @@ impl Realm {
         self.flags.borrow_mut().swap_remove(i);
         self.inbox.borrow_mut().swap_remove(i);
         self.members.borrow_mut().swap_remove(i);
+        self.border.shown.borrow_mut().swap_remove(i);
     }
 
     /// Removes the residents that leave: runs the lifecycle hooks, then
@@ -469,8 +503,10 @@ impl Realm {
             }
             self.settle();
         }
-        // 2. The delta for viewers, while every index is still valid.
+        // 2. The delta for viewers and the news for the zones around this
+        //    one, while every index is still valid.
         self.build_delta();
+        self.build_border();
         // 3. Take the rows out, highest index first, so that the row that
         //    fills a gap is never one that also leaves.
         let fates = std::mem::take(&mut *self.fates.borrow_mut());

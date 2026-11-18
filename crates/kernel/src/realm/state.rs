@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use unsup_protocol::{Event, ItemId, Pos, RealmId, ResidentId, ZoneId};
 
-use super::{F_BUSY, F_ROUTINES, FOREVER, Fate, Identity, Membership, ParamTable, Realm};
+use super::border::Ghost;
+use super::{F_BORDER, F_BUSY, F_ROUTINES, FOREVER, Fate, Identity, Membership, ParamTable, Realm};
 use crate::agenda::{Agenda, Inbox, rebase_tick};
 use crate::codec::{self, DecodeError};
 use crate::directory::Directory;
-use crate::ids::{CondId, Idx};
+use crate::ids::{CondId, Idx, VerbId};
 use crate::ledger::{Holder, Ledger};
 use crate::message::Envelope;
 use crate::rng::Rng;
@@ -42,6 +43,10 @@ pub(crate) struct Transfer {
     pub(crate) money: i64,
     pub(crate) items: Vec<(ItemId, i64)>,
     depart_tick: u64,
+    /// The zones that hold a copy of the resident under its new zone, for
+    /// sight across borders. The zone that the resident left told them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    seen_by: Vec<ZoneId>,
 }
 
 /// One named blob: a component column or a resource.
@@ -83,6 +88,21 @@ pub(crate) struct RealmState {
     mail: Vec<Envelope>,
     outbox: Vec<Envelope>,
     forward: Vec<Event>,
+    /// Sight across borders: per resident, the zones that hold a copy of
+    /// it. Absent in the state of the global realm, of a world with one
+    /// zone, and in a snapshot from before the kernel had it.
+    #[serde(default)]
+    border_shown: Option<Vec<u32>>,
+    /// The residents whose copies may be out of date, by dense index.
+    #[serde(default)]
+    border_dirty: Vec<u32>,
+    /// The copies of residents of other zones.
+    #[serde(default, with = "crate::codec::pairs")]
+    border_ghosts: BTreeMap<(ZoneId, ResidentId), Ghost>,
+    /// Residents with a copy whose action ended, with the verb, when the
+    /// realm was saved before it settled. Normally empty.
+    #[serde(default, with = "crate::codec::pairs")]
+    border_ended: BTreeMap<u32, VerbId>,
 }
 
 /// The state of a realm as it is written to a snapshot. It borrows the
@@ -115,6 +135,14 @@ struct RealmStateRef<'a> {
     mail: &'a [Envelope],
     outbox: &'a [Envelope],
     forward: &'a [Event],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    border_shown: Option<&'a [u32]>,
+    #[serde(skip_serializing_if = "<[u32]>::is_empty")]
+    border_dirty: &'a [u32],
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", with = "crate::codec::pairs")]
+    border_ghosts: &'a BTreeMap<(ZoneId, ResidentId), Ghost>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", with = "crate::codec::pairs")]
+    border_ended: &'a BTreeMap<u32, VerbId>,
 }
 
 impl Realm {
@@ -140,6 +168,10 @@ impl Realm {
         let mail = self.mail.borrow();
         let outbox = self.outbox.borrow();
         let forward = self.forward.borrow();
+        let border_shown = self.border.shown.borrow();
+        let border_dirty = self.border.dirty.borrow();
+        let border_ghosts = self.border.ghosts.borrow();
+        let border_ended = self.border.ended.borrow();
         let def = self.def();
         let state = RealmStateRef {
             id: self.id,
@@ -183,6 +215,10 @@ impl Realm {
             mail: &mail,
             outbox: &outbox,
             forward: &forward,
+            border_shown: self.border.has_watchers().then_some(border_shown.as_slice()),
+            border_dirty: &border_dirty,
+            border_ghosts: &border_ghosts,
+            border_ended: &border_ended,
         };
         codec::encode("realm state", &state)
     }
@@ -210,6 +246,12 @@ impl Realm {
         }
         if state.attrs.len() > self.attrs.len() && n > 0 {
             return Err(fail("the snapshot has more attributes than the world".into()));
+        }
+        if state.border_shown.as_ref().is_some_and(|shown| shown.len() != n)
+            || state.border_dirty.iter().any(|&i| i as usize >= n)
+            || state.border_ended.keys().any(|&i| i as usize >= n)
+        {
+            return Err(fail("the border columns do not match the residents".into()));
         }
         let tick = state.tick;
         self.tick.set(tick);
@@ -256,6 +298,7 @@ impl Realm {
         params.refresh(&self.bp, own_city);
         *self.params.borrow_mut() = params;
         *self.sites.borrow_mut() = state.sites;
+        self.sites_epoch.set(self.sites_epoch.get().wrapping_add(1));
         *self.tiles.borrow_mut() = state.tiles;
         *self.ledger.borrow_mut() = state.ledger;
         *self.directory.borrow_mut() = state.directory;
@@ -301,6 +344,20 @@ impl Realm {
             }
         }
         drop(grid);
+        // Sight across borders. A snapshot from before the kernel had it
+        // knows of no copy: every resident is checked in the next tick.
+        let border_dirty = match &state.border_shown {
+            Some(_) => state.border_dirty,
+            None if self.border.has_watchers() => (0..n as u32).collect(),
+            None => Vec::new(),
+        };
+        for &i in &border_dirty {
+            flags[i as usize] |= F_BORDER;
+        }
+        *self.border.shown.borrow_mut() = state.border_shown.unwrap_or_else(|| vec![0; n]);
+        *self.border.dirty.borrow_mut() = border_dirty;
+        *self.border.ghosts.borrow_mut() = state.border_ghosts;
+        *self.border.ended.borrow_mut() = state.border_ended;
         *self.index.borrow_mut() = index;
         *self.timers.borrow_mut() = timers;
         *self.flags.borrow_mut() = flags;
@@ -340,6 +397,7 @@ impl Realm {
             money,
             items,
             depart_tick: self.tick.get(),
+            seen_by: self.border.take_handoff(id),
         };
         // `remove_row` reads the agenda to keep the routine counter right;
         // the agenda was taken, so do it here.
@@ -377,10 +435,12 @@ impl Realm {
             money,
             items,
             depart_tick,
+            seen_by,
             ..
         } = transfer;
         let tick = self.tick.get();
         let idx = self.add_row(id, identity, pos);
+        self.border_arrived(idx, &seen_by);
         let i = idx.index();
         for (cell, value) in self.attrs.iter().zip(attrs) {
             cell.borrow_mut()[i] = value;
@@ -428,7 +488,9 @@ impl Realm {
                 flag |= F_ROUTINES;
                 self.routine_holders.set(self.routine_holders.get() + 1);
             }
-            self.flags.borrow_mut()[i] = flag;
+            // `add_row` may have marked the row for the zones around this
+            // one; keep that mark.
+            self.flags.borrow_mut()[i] |= flag;
             self.agenda.borrow_mut()[i] = agenda;
         }
         self.inbox.borrow_mut()[i] = inbox;

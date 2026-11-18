@@ -18,7 +18,7 @@ use unsup_protocol::{
     Pos, RealmId, ResidentId, Tick, VerbInfo, VerbScope, ZoneId,
 };
 
-use crate::codec;
+use crate::codec::{self, DecodeError};
 use crate::column::{AnyColumn, AnyResource, Component, Resource, new_column, new_resource};
 use crate::config::WorldConfig;
 use crate::defs::{
@@ -161,8 +161,13 @@ pub(crate) type FinishFn =
 pub(crate) type GlobalFn =
     Box<dyn Fn(&Realm, &GlobalCtx, &Value) -> Result<Value, ActionError> + Send + Sync>;
 pub(crate) type ValidateFn = Box<dyn Fn(&Value) -> Result<(), ActionError> + Send + Sync>;
-pub(crate) type MessageFn = Box<dyn Fn(&Realm, RealmId, &[u8]) + Send + Sync>;
-pub(crate) type ResidentMessageFn = Box<dyn Fn(&Realm, Idx, RealmId, &[u8]) + Send + Sync>;
+/// A message handler. It returns an error when the payload does not decode
+/// into the type of the handler; the handler of the module did not run then.
+pub(crate) type MessageFn =
+    Box<dyn Fn(&Realm, RealmId, &[u8]) -> Result<(), DecodeError> + Send + Sync>;
+/// A handler of a message for a resident. See [`MessageFn`].
+pub(crate) type ResidentMessageFn =
+    Box<dyn Fn(&Realm, Idx, RealmId, &[u8]) -> Result<(), DecodeError> + Send + Sync>;
 pub(crate) type EventFn = Box<dyn Fn(&Realm, &Event) + Send + Sync>;
 pub(crate) type ObserveFn = Box<dyn Fn(&Realm, Idx, &ObserveOpts) -> Option<Value> + Send + Sync>;
 pub(crate) type ObserveGlobalFn =
@@ -283,6 +288,7 @@ pub(crate) struct KernelIds {
     pub(crate) global_timeout: ParamId,
     pub(crate) routine_backoff: ParamId,
     pub(crate) routine_reports: ParamId,
+    pub(crate) late_reports: ParamId,
     pub(crate) frozen: CondId,
 }
 
@@ -529,6 +535,7 @@ impl Blueprint {
             global_timeout: param("kernel.global_timeout"),
             routine_backoff: param("kernel.routine_backoff"),
             routine_reports: param("kernel.routine_reports"),
+            late_reports: param("kernel.late_reports"),
             frozen: CondId(self.conds.id("frozen").expect("the kernel registers `frozen`")),
         });
     }
@@ -577,6 +584,26 @@ impl Blueprint {
                 type_name::<M>()
             );
         }
+    }
+
+    /// Returns true when a handler of the scope takes messages of this kind
+    /// (`Message::KIND`) that are sent to a realm: `Dest::Global`,
+    /// `Dest::Zone` or `Dest::AllZones`. The handlers are those of
+    /// `Builder::on_message`.
+    ///
+    /// A sender outside the simulation asks this before it sends
+    /// (`Envelope::module`). A message that no handler takes is dropped.
+    #[must_use]
+    pub fn handles_message(&self, kind: &str, scope: Scope) -> bool {
+        self.scope(scope).messages.contains_key(kind)
+    }
+
+    /// Returns true when a handler takes messages of this kind that are
+    /// sent to a resident (`Dest::Resident`). The handlers are those of
+    /// `Builder::on_resident_message`; they run in the zone of the resident.
+    #[must_use]
+    pub fn handles_resident_message(&self, kind: &str) -> bool {
+        self.zone.resident_messages.contains_key(kind)
     }
 
     /// Returns the names behind all numeric ids, for a snapshot.
@@ -1242,6 +1269,11 @@ impl Builder {
     /// Registers a handler for a message type in the realms of the current
     /// scope. The handler gets the realm that sent the message.
     ///
+    /// A payload that does not decode into `M` is a bug of the module that
+    /// sent it, and the delivery panics. The exception is a message that
+    /// came through `Input::Deliver`: the kernel drops it and counts it in
+    /// `World::dropped_messages`, and the handler does not run.
+    ///
     /// # Panics
     ///
     /// Panics when another type uses the same `KIND`.
@@ -1250,11 +1282,10 @@ impl Builder {
         f: impl Fn(&Realm, RealmId, M) + Send + Sync + 'static,
     ) {
         self.note_message_type::<M>();
-        let handler: MessageFn =
-            Box::new(move |realm, from, bytes| match codec::decode::<M>(M::KIND, bytes) {
-                Ok(message) => f(realm, from, message),
-                Err(e) => panic!("message `{}` from {from}: {e}", M::KIND),
-            });
+        let handler: MessageFn = Box::new(move |realm, from, bytes| {
+            f(realm, from, codec::decode::<M>(M::KIND, bytes)?);
+            Ok(())
+        });
         self.scope_mut().messages.entry(M::KIND).or_default().push(handler);
     }
 
@@ -1273,11 +1304,10 @@ impl Builder {
             return;
         }
         self.note_message_type::<M>();
-        let handler: ResidentMessageFn =
-            Box::new(move |realm, idx, from, bytes| match codec::decode::<M>(M::KIND, bytes) {
-                Ok(message) => f(realm, idx, from, message),
-                Err(e) => panic!("message `{}` from {from}: {e}", M::KIND),
-            });
+        let handler: ResidentMessageFn = Box::new(move |realm, idx, from, bytes| {
+            f(realm, idx, from, codec::decode::<M>(M::KIND, bytes)?);
+            Ok(())
+        });
         self.bp.zone.resident_messages.entry(M::KIND).or_default().push(handler);
     }
 

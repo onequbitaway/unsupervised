@@ -8,7 +8,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unsup_runtime::{SimHandle, SimStats};
-use unsup_server::{Server, ServerConfig, WorldShape};
+use unsup_server::{Server, ServerConfig, StoreConfig, WorldShape};
 
 use crate::local::Shape;
 
@@ -31,7 +31,7 @@ pub struct SpawnServer {
 ///
 /// Fails when the server cannot start.
 pub async fn spawn(config: &SpawnServer) -> anyhow::Result<Server> {
-    let server_config = ServerConfig {
+    let mut server_config = ServerConfig {
         bind: SocketAddr::from(([127, 0, 0, 1], 0)),
         tick_interval: Duration::from_millis(config.tick_ms),
         world: WorldShape {
@@ -40,7 +40,19 @@ pub async fn spawn(config: &SpawnServer) -> anyhow::Result<Server> {
             districts: config.shape.districts,
         },
         web_dir: None,
+        store: StoreConfig::Memory,
+        ..ServerConfig::default()
     };
+    // A swarm comes from one address and signs up thousands of residents.
+    // The limits that protect a public server would refuse it, and the
+    // test measures the server, not its limits. Zero turns a limit off.
+    let limits = &mut server_config.gateway.limits;
+    limits.residents_per_owner = 0;
+    limits.key_requests_per_minute = 0;
+    limits.address_requests_per_minute = 0;
+    limits.signups_per_hour = 0;
+    limits.waits_per_resident = 0;
+    server_config.gateway.ws.connections_per_resident = 0;
     unsup_server::start(server_config).await.context("cannot start a server in this process")
 }
 

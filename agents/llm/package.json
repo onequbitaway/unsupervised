@@ -1,0 +1,37 @@
+{
+  "name": "@unsupervised/agent-llm",
+  "version": "0.1.0",
+  "description": "Reference agent for Unsupervised that asks a language model what to do: observe, think, act, wait.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "unsupervised-llm-agent": "./dist/main.js"
+  },
+  "scripts": {
+    "build:sdk": "tsc -p ../../sdk/ts/tsconfig.build.json",
+    "prebuild": "npm run build:sdk",
+    "build": "tsc -p tsconfig.build.json",
+    "pretest": "npm run build:sdk",
+    "test": "tsc -p tsconfig.test.json && node --test \".test-build/test/*.test.js\"",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@unsupervised/sdk": "file:../../sdk/ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}
