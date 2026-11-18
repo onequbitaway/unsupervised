@@ -1,0 +1,395 @@
+{
+  "attrs": [],
+  "conditions": [
+    {
+      "blocking": true,
+      "name": "frozen",
+      "summary": "An administrator stopped the resident. It cannot act."
+    }
+  ],
+  "items": [],
+  "params": [
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "kernel.free_actions_per_tick",
+      "policy": false,
+      "summary": "Greatest number of free actions that one resident can take in one tick.",
+      "value": 4
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "kernel.global_timeout",
+      "policy": false,
+      "summary": "Ticks after which an action that waits for the global realm fails with a timeout.",
+      "value": 60
+    },
+    {
+      "max": 4096,
+      "min": 1,
+      "name": "kernel.inbox_max",
+      "policy": false,
+      "summary": "Greatest number of notices and reports that the inbox of one resident keeps.",
+      "value": 32
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "kernel.nearby_max",
+      "policy": false,
+      "summary": "Greatest number of residents, and of sites, in the nearby section of an observation.",
+      "value": 12
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "kernel.queue_max",
+      "policy": false,
+      "summary": "Greatest number of planned actions in the queue of one resident.",
+      "value": 8
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "kernel.routine_backoff",
+      "policy": false,
+      "summary": "Ticks before a routine can fire again after it failed or finished at once. The delay doubles with each failure in a row, up to 16 times.",
+      "value": 30
+    },
+    {
+      "max": 1,
+      "min": 0,
+      "name": "kernel.routine_reports",
+      "policy": false,
+      "summary": "1: every action that a routine started writes a report, like any other action. 0: only a failed one does, and a success is only counted in the routine. Use 0 when the reports of routines push other notices out of the bounded inbox.",
+      "value": 0
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "kernel.routines_max",
+      "policy": false,
+      "summary": "Greatest number of routines of one resident.",
+      "value": 8
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "kernel.sight_radius",
+      "policy": false,
+      "summary": "Distance in tiles at which a resident sees other residents and sites.",
+      "value": 12
+    },
+    {
+      "max": 40320,
+      "min": 1,
+      "name": "kernel.wait_max",
+      "policy": false,
+      "summary": "Greatest number of ticks that one `wait` action can last.",
+      "value": 1440
+    }
+  ],
+  "verbs": [
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "kernel",
+      "scope": "zone",
+      "summary": "Stop the current action and clear the queue of planned actions.",
+      "verb": "cancel"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ActionRequest": {
+            "description": "One action that a resident asks for.",
+            "properties": {
+              "args": {
+                "description": "Arguments of the verb. The catalogue has the schema of each verb."
+              },
+              "id": {
+                "description": "Idempotency key chosen by the client, at most 64 bytes. The server\nremembers the last 32 accepted keys of a resident and returns the first\nanswer when a key is sent again.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "verb": {
+                "description": "Name of the verb, for example `wait`.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "verb"
+            ],
+            "type": "object"
+          },
+          "Condition": {
+            "description": "A test on the state of a resident. Conditions are data, not code.",
+            "oneOf": [
+              {
+                "description": "Always true.",
+                "properties": {
+                  "type": {
+                    "const": "always",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "True when the attribute is less than `value`.",
+                "properties": {
+                  "attr": {
+                    "description": "Name of the attribute.",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "attr_below",
+                    "type": "string"
+                  },
+                  "value": {
+                    "description": "Threshold.",
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "type",
+                  "attr",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "True when the attribute is greater than `value`.",
+                "properties": {
+                  "attr": {
+                    "description": "Name of the attribute.",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "attr_above",
+                    "type": "string"
+                  },
+                  "value": {
+                    "description": "Threshold.",
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "type",
+                  "attr",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "True when the hour of the day is at or after `from_hour` and before\n`to_hour`. The range wraps past midnight when `from_hour` is greater\nthan `to_hour`. It is never true when the two are equal.",
+                "properties": {
+                  "from_hour": {
+                    "description": "First hour of the range, 0 to 23.",
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "to_hour": {
+                    "description": "First hour after the range, 0 to 24.",
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": {
+                    "const": "clock_between",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "from_hour",
+                  "to_hour"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "True when the resident carries at least `qty` of the item.",
+                "properties": {
+                  "item": {
+                    "description": "Name of the item.",
+                    "type": "string"
+                  },
+                  "qty": {
+                    "description": "Least quantity.",
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "type": {
+                    "const": "has_item",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "item",
+                  "qty"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "True when every condition in `of` is true.",
+                "properties": {
+                  "of": {
+                    "description": "The conditions.",
+                    "items": {
+                      "$ref": "#/$defs/Condition"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "const": "all",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "of"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "True when at least one condition in `of` is true.",
+                "properties": {
+                  "of": {
+                    "description": "The conditions.",
+                    "items": {
+                      "$ref": "#/$defs/Condition"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "const": "any",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "of"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Routine": {
+            "description": "A standing order. When the resident is idle and `when` holds, the server\nstarts `then`. Routines are checked in list order; the first that holds\nwins.",
+            "properties": {
+              "name": {
+                "description": "Label chosen by the owner. It has no effect.",
+                "type": "string"
+              },
+              "then": {
+                "$ref": "#/$defs/ActionRequest",
+                "description": "The action to start. Its `id` is ignored."
+              },
+              "when": {
+                "$ref": "#/$defs/Condition",
+                "description": "When the routine fires."
+              }
+            },
+            "required": [
+              "name",
+              "when",
+              "then"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of the verb `set_routines`.",
+        "properties": {
+          "routines": {
+            "description": "The new routines, in priority order. They replace all routines of the\nresident. An empty list removes them.",
+            "items": {
+              "$ref": "#/$defs/Routine"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "routines"
+        ],
+        "title": "SetRoutinesArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "kernel",
+      "scope": "zone",
+      "summary": "Replace the routines: standing orders that run when the resident is idle.",
+      "verb": "set_routines"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of the verb `wait`.",
+        "properties": {
+          "ticks": {
+            "description": "How many ticks to do nothing. One tick is one game minute. At least 1\nand at most the parameter `kernel.wait_max`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ticks"
+        ],
+        "title": "WaitArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "kernel",
+      "scope": "zone",
+      "summary": "Do nothing for a number of ticks.",
+      "verb": "wait"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `move_to`.",
+        "properties": {
+          "x": {
+            "description": "Column of the target tile.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "y": {
+            "description": "Row of the target tile.",
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "MoveToArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Walk to a tile. One tile takes one game minute.",
+      "verb": "move_to"
+    }
+  ]
+}

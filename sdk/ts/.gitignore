@@ -1,0 +1,2 @@
+# Compiled tests. `dist/` and `node_modules/` are ignored by the root file.
+.test-build/

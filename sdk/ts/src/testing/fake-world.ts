@@ -1,0 +1,836 @@
+// A small model of the server, for tests without a network.
+//
+// `FakeWorld` follows `docs/design/protocol.md`: accounts and keys, the
+// action engine (idempotency keys, the queue, free verbs, reports), the
+// inbox with one sequence for notices and reports, observations and the
+// long poll. It is not the game: it has four verbs (`wait`, `cancel`,
+// `set_routines`, `move_to`), it stores routines but does not run them, and
+// a test adds the verbs that it needs with `addVerb`.
+
+import type {
+  ActionAck,
+  ActionError,
+  ActionReport,
+  ActionRequest,
+  ActionStatus,
+  AttrInfo,
+  Catalogue,
+  CityId,
+  Clock,
+  CondInfo,
+  Condition,
+  ErrorCode,
+  ItemInfo,
+  Notice,
+  Observation,
+  ObserveOpts,
+  OwnerId,
+  ParamInfo,
+  Pos,
+  Rect,
+  ResidentId,
+  Routine,
+  SiteView,
+  Value,
+  VerbInfo,
+  ZoneId,
+} from "../generated/protocol.js";
+import { defaultVerbs } from "./verbs.js";
+
+/** An action error that a fake verb throws to refuse or to fail. */
+export class FakeActionError extends Error {
+  /** Makes an error with a protocol error code. */
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+    readonly details?: Value,
+  ) {
+    super(message);
+  }
+
+  /** Returns the wire form of the error. */
+  toWire(): ActionError {
+    const error: ActionError = { code: this.code, message: this.message };
+    if (this.details !== undefined) error.details = this.details;
+    return error;
+  }
+}
+
+/** What `begin` of a fake verb decides. */
+export type VerbOutcome =
+  /** The action finished at once. */
+  | { done: Value }
+  /** The action occupies the resident for a number of ticks. `finish` gives the result; it can throw `FakeActionError`. */
+  | { busy: number; finish?: () => Value }
+  /** The action waits for another party for a number of ticks. The acknowledgement is `pending`. */
+  | { pending: number; finish?: () => Value };
+
+/** A verb of the fake world. */
+export interface FakeVerb {
+  /** The catalogue entry. */
+  info: VerbInfo;
+  /** Starts the action. Throw `FakeActionError` to refuse it. */
+  begin(resident: FakeResident, args: Record<string, Value>, world: FakeWorld): VerbOutcome;
+}
+
+interface Running {
+  action_id: number;
+  verb: string;
+  request_id: string | undefined;
+  started: number;
+  ends: number;
+  waiting: boolean;
+  finish: (() => Value) | undefined;
+}
+
+interface Queued {
+  action_id: number;
+  verb: string;
+  request_id: string | undefined;
+  args: Record<string, Value>;
+}
+
+/** One inbox entry: a notice or a report. Both use one sequence. */
+export type InboxEntry = { seq: number; notice: Notice } | { seq: number; report: ActionReport };
+
+/** A resident of the fake world. A test can read and change every field. */
+export interface FakeResident {
+  id: ResidentId;
+  owner: OwnerId;
+  name: string;
+  model: string | undefined;
+  city: CityId;
+  zone: ZoneId;
+  pos: Pos;
+  /** Cash in cents. */
+  cash: number;
+  /** Carried goods: quantity by item name. */
+  items: Record<string, number>;
+  /** Attributes by name. */
+  attrs: Record<string, number>;
+  /** Conditions by name. The value is the end tick, or `null` for no end. */
+  conditions: Record<string, number | null>;
+  /** Extra observation sections, as a game module writes them. */
+  sections: Record<string, Value>;
+  routines: Routine[];
+  current: Running | undefined;
+  queue: Queued[];
+  inbox: InboxEntry[];
+  nextSeq: number;
+  /** The last accepted request ids with their acknowledgements. */
+  recent: [string, ActionAck][];
+  key: string;
+  webhook: { url: string; secret: string } | undefined;
+  freeTick: number;
+  freeUsed: number;
+}
+
+/** Limits of the fake world. The defaults are the defaults of the kernel. */
+export interface FakeLimits {
+  queue_max: number;
+  free_actions_per_tick: number;
+  inbox_max: number;
+  routines_max: number;
+  sight_radius: number;
+  nearby_max: number;
+  wait_max: number;
+}
+
+/** The defaults of the kernel parameters that the fake world uses. */
+export const DEFAULT_LIMITS: FakeLimits = {
+  queue_max: 8,
+  free_actions_per_tick: 4,
+  inbox_max: 32,
+  routines_max: 8,
+  sight_radius: 12,
+  nearby_max: 12,
+  wait_max: 1440,
+};
+
+/** Options of a fake world. Every option has a default. */
+export interface FakeWorldOptions {
+  /** Limits. Default: `DEFAULT_LIMITS`. */
+  limits?: Partial<FakeLimits>;
+  /** Verbs. Default: `wait`, `cancel`, `set_routines`, `move_to`. */
+  verbs?: FakeVerb[];
+  /** Attributes of residents. Default: none. */
+  attrs?: AttrInfo[];
+  /** Items. Default: none. */
+  items?: ItemInfo[];
+  /** Conditions. Default: `frozen`. */
+  conditions?: CondInfo[];
+  /** Sites of the one zone. Default: none. */
+  sites?: SiteView[];
+  /** Where a new resident appears. Default: the centre of the zone. */
+  spawn?: Pos;
+  /**
+   * How time passes during a long poll. `manual`: a `wait` call parks until
+   * there is news or `expireWaits` is called. `auto`: a `wait` call steps
+   * the world, one tick for each second of its timeout, until there is
+   * news. Default: `manual`.
+   */
+  time?: "manual" | "auto";
+}
+
+/** Verbs that work in every condition except `frozen`, and that a routine cannot change. */
+const KERNEL_VERBS = ["wait", "cancel", "set_routines"];
+const REQUEST_ID_MAX = 64;
+const RECENT_MAX = 32;
+const NAME_MAX = 64;
+const ZONE_SIZE = 64;
+const DAYS_PER_YEAR = 28;
+const MINUTES_PER_DAY = 1440;
+const REPORT_KIND = "report";
+
+const textEncoder = new TextEncoder();
+
+/** Returns the length of a string in bytes. */
+export function byteLength(text: string): number {
+  return textEncoder.encode(text).length;
+}
+
+interface Waiter {
+  resident: FakeResident;
+  since: number;
+  kinds: string[] | undefined;
+  resolve: (observation: Observation) => void;
+}
+
+/** A listener for the inbox of one resident: a WebSocket connection. */
+export type InboxListener = (entry: InboxEntry) => void;
+
+/** The fake world. See the head of this file. */
+export class FakeWorld {
+  /** Local tick. One tick is one game minute. The frame number is the same. */
+  tick = 0;
+  readonly limits: FakeLimits;
+  readonly residents = new Map<ResidentId, FakeResident>();
+  readonly sites: SiteView[];
+  readonly attrs: AttrInfo[];
+  readonly items: ItemInfo[];
+  readonly conditions: CondInfo[];
+  readonly time: "manual" | "auto";
+  readonly #verbs = new Map<string, FakeVerb>();
+  readonly #owners = new Map<string, OwnerId>();
+  readonly #keys = new Map<string, ResidentId>();
+  readonly #listeners = new Map<ResidentId, Set<InboxListener>>();
+  readonly #spawn: Pos;
+  #waiters: Waiter[] = [];
+  #parked: (() => void)[] = [];
+  #ids = 0;
+  #owner = 0;
+  #secrets = 0;
+
+  /** Makes an empty world at tick 0. */
+  constructor(options: FakeWorldOptions = {}) {
+    this.limits = { ...DEFAULT_LIMITS, ...options.limits };
+    this.sites = options.sites ?? [];
+    this.attrs = options.attrs ?? [];
+    this.items = options.items ?? [];
+    this.conditions = options.conditions ?? [
+      { name: "frozen", blocking: true, summary: "An administrator stopped the resident. It cannot act." },
+    ];
+    this.time = options.time ?? "manual";
+    this.#spawn = options.spawn ?? { x: ZONE_SIZE / 2, y: ZONE_SIZE / 2 };
+    for (const verb of options.verbs ?? defaultVerbs()) this.addVerb(verb);
+  }
+
+  // ---- Catalogue ------------------------------------------------------------
+
+  /** Adds a verb, or replaces the verb with the same name. */
+  addVerb(verb: FakeVerb): void {
+    this.#verbs.set(verb.info.verb, verb);
+  }
+
+  /** Removes a verb. A later request for it gets `unknown_verb`. */
+  removeVerb(name: string): void {
+    this.#verbs.delete(name);
+  }
+
+  /** Returns the public catalogue. */
+  catalogue(): Catalogue {
+    const verbs = [...this.#verbs.values()]
+      .map((verb) => verb.info)
+      .sort((a, b) => a.module.localeCompare(b.module) || a.verb.localeCompare(b.verb));
+    const params: ParamInfo[] = Object.entries(this.limits)
+      .map(([name, value]) => ({
+        name: `kernel.${name}`,
+        value: value as number,
+        policy: false,
+        summary: `The kernel parameter ${name}.`,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { verbs, params, items: this.items, attrs: this.attrs, conditions: this.conditions };
+  }
+
+  // ---- Accounts -------------------------------------------------------------
+
+  /** Signs up an owner. Returns its id and its token. */
+  signUp(): { owner: OwnerId; token: string } {
+    this.#owner += 1;
+    const token = `owner-token-${this.#owner}`;
+    this.#owners.set(token, this.#owner);
+    return { owner: this.#owner, token };
+  }
+
+  /** Returns the owner of a token, if the token is known. */
+  ownerOf(token: string | undefined): OwnerId | undefined {
+    return token === undefined ? undefined : this.#owners.get(token);
+  }
+
+  /** Returns the resident of a key, if the key is known. */
+  residentOf(key: string | undefined): FakeResident | undefined {
+    const id = key === undefined ? undefined : this.#keys.get(key);
+    return id === undefined ? undefined : this.residents.get(id);
+  }
+
+  /** Creates a resident for an owner. Returns its id and its key. */
+  spawn(owner: OwnerId, spec: { name: string; model?: string; city?: CityId }): FakeResident {
+    this.#ids += 1;
+    const id = this.#ids;
+    const resident: FakeResident = {
+      id,
+      owner,
+      name: spec.name,
+      model: spec.model,
+      city: spec.city ?? 0,
+      zone: 0,
+      pos: { ...this.#spawn },
+      cash: 0,
+      items: {},
+      attrs: Object.fromEntries(this.attrs.map((attr) => [attr.name, attr.default])),
+      conditions: {},
+      sections: {},
+      routines: [],
+      current: undefined,
+      queue: [],
+      inbox: [],
+      nextSeq: 1,
+      recent: [],
+      key: "",
+      webhook: undefined,
+      freeTick: -1,
+      freeUsed: 0,
+    };
+    this.residents.set(id, resident);
+    this.rotateKey(resident);
+    return resident;
+  }
+
+  /** Gives a resident a new key. The old key stops to work. */
+  rotateKey(resident: FakeResident): string {
+    this.#keys.delete(resident.key);
+    this.#secrets += 1;
+    resident.key = `resident-key-${resident.id}-${this.#secrets}`;
+    this.#keys.set(resident.key, resident.id);
+    return resident.key;
+  }
+
+  /** Sets or removes the webhook of a resident. Returns the new secret. */
+  setWebhook(resident: FakeResident, url: string | null): string | undefined {
+    if (url === null) {
+      resident.webhook = undefined;
+      return undefined;
+    }
+    this.#secrets += 1;
+    resident.webhook = { url, secret: `webhook-secret-${resident.id}-${this.#secrets}` };
+    return resident.webhook.secret;
+  }
+
+  // ---- Actions --------------------------------------------------------------
+
+  /** Handles one action request and returns the acknowledgement. */
+  submit(resident: FakeResident, request: ActionRequest): ActionAck {
+    const key = request.id ?? undefined;
+    if (key !== undefined) {
+      if (byteLength(key) > REQUEST_ID_MAX) {
+        const error = new FakeActionError("invalid_args", `The request id is longer than ${REQUEST_ID_MAX} bytes.`);
+        return { action_id: 0, verb: request.verb, status: { state: "rejected", error: error.toWire() } };
+      }
+      const repeat = resident.recent.find(([id]) => id === key);
+      if (repeat !== undefined) return repeat[1];
+    }
+    this.#ids += 1;
+    const action_id = this.#ids;
+    const status = this.#status(resident, request, action_id);
+    const ack: ActionAck = { action_id, verb: request.verb, status };
+    if (key !== undefined) ack.request_id = key;
+    // A rejected request changed nothing, so its key can be used again.
+    if (key !== undefined && status.state !== "rejected") {
+      if (resident.recent.length >= RECENT_MAX) resident.recent.shift();
+      resident.recent.push([key, ack]);
+    }
+    return ack;
+  }
+
+  #status(resident: FakeResident, request: ActionRequest, action_id: number): ActionStatus {
+    try {
+      const verb = this.#verbs.get(request.verb);
+      if (verb === undefined) {
+        throw new FakeActionError("unknown_verb", `No verb is named \`${request.verb}\`.`);
+      }
+      this.#checkConditions(resident, verb.info.verb);
+      const args = checkArgs(verb.info, request.args);
+      if (verb.info.free) {
+        if (resident.freeTick !== this.tick) {
+          resident.freeTick = this.tick;
+          resident.freeUsed = 0;
+        }
+        const limit = this.limits.free_actions_per_tick;
+        if (resident.freeUsed >= limit) {
+          throw new FakeActionError("rate_limited", `At most ${limit} free actions in one tick.`);
+        }
+        resident.freeUsed += 1;
+        const outcome = verb.begin(resident, args, this);
+        if (!("done" in outcome)) {
+          throw new FakeActionError("internal", `The free verb \`${verb.info.verb}\` did not finish at once.`);
+        }
+        return doneStatus(outcome.done);
+      }
+      if (resident.current !== undefined || resident.queue.length > 0) {
+        const max = this.limits.queue_max;
+        if (resident.queue.length >= max) {
+          throw new FakeActionError("queue_full", `The queue holds at most ${max} planned actions.`);
+        }
+        resident.queue.push({ action_id, verb: verb.info.verb, request_id: request.id ?? undefined, args });
+        return { state: "queued", position: resident.queue.length };
+      }
+      return this.#begin(resident, verb, request.id ?? undefined, args, action_id);
+    } catch (error) {
+      if (error instanceof FakeActionError) return { state: "rejected", error: error.toWire() };
+      throw error;
+    }
+  }
+
+  #checkConditions(resident: FakeResident, verb: string): void {
+    for (const [name, until] of Object.entries(resident.conditions)) {
+      if (until !== null && until <= this.tick) continue;
+      const blocking = this.conditions.find((condition) => condition.name === name)?.blocking === true;
+      if (name === "frozen" || (blocking && !KERNEL_VERBS.includes(verb))) {
+        throw new FakeActionError("blocked", `You cannot use \`${verb}\` while you are ${name}.`, {
+          condition: name,
+        });
+      }
+    }
+  }
+
+  #begin(
+    resident: FakeResident,
+    verb: FakeVerb,
+    request_id: string | undefined,
+    args: Record<string, Value>,
+    action_id: number,
+  ): ActionStatus {
+    const outcome = verb.begin(resident, args, this);
+    if ("done" in outcome) return doneStatus(outcome.done);
+    const waiting = "pending" in outcome;
+    const ticks = Math.max(1, waiting ? outcome.pending : outcome.busy);
+    resident.current = {
+      action_id,
+      verb: verb.info.verb,
+      request_id,
+      started: this.tick,
+      ends: this.tick + ticks,
+      waiting,
+      finish: outcome.finish,
+    };
+    return waiting ? { state: "pending" } : { state: "started", ends_at: this.tick + ticks, ticks };
+  }
+
+  /** Stops the running action and clears the queue, as the verb `cancel` does. */
+  cancel(resident: FakeResident): Value {
+    const cleared = resident.queue.length;
+    for (const queued of resident.queue.splice(0)) {
+      const error = new FakeActionError("interrupted", "The action was removed from the queue.");
+      this.#report(resident, queued, error);
+    }
+    const running = resident.current;
+    resident.current = undefined;
+    if (running !== undefined) {
+      this.#report(resident, running, new FakeActionError("interrupted", "You cancelled the action."));
+    }
+    return { cancelled: running?.action_id ?? null, cleared };
+  }
+
+  /** Replaces the routines of a resident, as the verb `set_routines` does. */
+  setRoutines(resident: FakeResident, routines: Routine[]): Value {
+    const max = this.limits.routines_max;
+    if (routines.length > max) {
+      throw new FakeActionError("invalid_args", `A resident has at most ${max} routines.`);
+    }
+    for (const routine of routines) {
+      if (byteLength(routine.name) > NAME_MAX) {
+        throw new FakeActionError("invalid_args", `A routine name has at most ${NAME_MAX} bytes.`);
+      }
+      this.#checkCondition(routine.when);
+      const name = routine.then.verb;
+      const verb = this.#verbs.get(name);
+      if (verb === undefined) throw new FakeActionError("unknown_verb", `No verb is named \`${name}\`.`);
+      if (name === "set_routines" || name === "cancel") {
+        throw new FakeActionError("invalid_args", `A routine cannot use the verb \`${name}\`.`);
+      }
+      checkArgs(verb.info, routine.then.args);
+    }
+    resident.routines = routines.map((routine) => {
+      const { id: _id, ...then } = routine.then;
+      return { ...routine, then };
+    });
+    return { routines: routines.length };
+  }
+
+  #checkCondition(condition: Condition): void {
+    switch (condition.type) {
+      case "always":
+        return;
+      case "attr_below":
+      case "attr_above":
+        if (!this.attrs.some((attr) => attr.name === condition.attr)) {
+          throw new FakeActionError("invalid_args", `No attribute is named \`${condition.attr}\`.`);
+        }
+        return;
+      case "clock_between":
+        if (condition.from_hour > 23 || condition.to_hour > 24) {
+          throw new FakeActionError("invalid_args", "`from_hour` is from 0 to 23 and `to_hour` is from 0 to 24.");
+        }
+        return;
+      case "has_item":
+        if (!this.items.some((item) => item.name === condition.item)) {
+          throw new FakeActionError("invalid_args", `No item is named \`${condition.item}\`.`);
+        }
+        return;
+      case "all":
+      case "any":
+        condition.of.forEach((part) => this.#checkCondition(part));
+        return;
+      default:
+        throw new FakeActionError("invalid_args", "The condition type is not known.");
+    }
+  }
+
+  // ---- Time -----------------------------------------------------------------
+
+  /** Runs a number of ticks: actions end, reports are written, queued actions start. */
+  step(ticks = 1): void {
+    for (let i = 0; i < ticks; i += 1) {
+      this.tick += 1;
+      const residents = [...this.residents.values()].sort((a, b) => a.id - b.id);
+      for (const resident of residents) this.#advance(resident);
+    }
+  }
+
+  #advance(resident: FakeResident): void {
+    const running = resident.current;
+    if (running !== undefined && running.ends <= this.tick) {
+      resident.current = undefined;
+      this.#finish(resident, running);
+    }
+    while (resident.current === undefined && resident.queue.length > 0) {
+      const queued = resident.queue.shift() as Queued;
+      const verb = this.#verbs.get(queued.verb);
+      try {
+        if (verb === undefined) {
+          throw new FakeActionError("unknown_verb", `No verb is named \`${queued.verb}\`.`);
+        }
+        this.#checkConditions(resident, queued.verb);
+        const status = this.#begin(resident, verb, queued.request_id, queued.args, queued.action_id);
+        // The acknowledgement was `queued`, so an action that ends at once reports too.
+        if (status.state === "done") this.#report(resident, queued, status.result ?? null);
+      } catch (error) {
+        if (!(error instanceof FakeActionError)) throw error;
+        this.#report(resident, queued, error);
+      }
+    }
+  }
+
+  #finish(resident: FakeResident, running: Running): void {
+    try {
+      const result = running.waiting && running.finish === undefined
+        ? new FakeActionError("timeout", "The action waited too long for an answer.")
+        : (running.finish?.() ?? null);
+      this.#report(resident, running, result);
+    } catch (error) {
+      if (!(error instanceof FakeActionError)) throw error;
+      this.#report(resident, running, error);
+    }
+  }
+
+  #report(
+    resident: FakeResident,
+    action: { action_id: number; verb: string; request_id: string | undefined },
+    result: Value | FakeActionError,
+  ): void {
+    const report: ActionReport = { action_id: action.action_id, verb: action.verb, tick: this.tick, ok: true };
+    if (action.request_id !== undefined) report.request_id = action.request_id;
+    if (result instanceof FakeActionError) {
+      report.ok = false;
+      report.error = result.toWire();
+    } else if (result !== null) {
+      report.result = result;
+    }
+    this.#push(resident, (seq) => ({ seq, report }));
+  }
+
+  // ---- Inbox ----------------------------------------------------------------
+
+  /** Writes a notice to the inbox of a resident. Returns its sequence number. */
+  notify(to: ResidentId, kind: string, data?: Value, from?: ResidentId): number {
+    const resident = this.#resident(to);
+    return this.#push(resident, (seq) => {
+      const notice: Notice = { seq, tick: this.tick, kind };
+      if (from !== undefined) notice.from = from;
+      if (data !== undefined && data !== null) notice.data = data;
+      return { seq, notice };
+    });
+  }
+
+  /** Writes a notice with text of another resident. The text is marked `untrusted`. */
+  tell(to: ResidentId, from: ResidentId, text: string, kind = "society.speech"): number {
+    return this.notify(to, kind, { untrusted: true, from, text }, from);
+  }
+
+  /** Listens to the inbox of a resident, as a WebSocket connection does. Returns a function that stops it. */
+  listen(resident: ResidentId, listener: InboxListener): () => void {
+    const set = this.#listeners.get(resident) ?? new Set<InboxListener>();
+    this.#listeners.set(resident, set);
+    set.add(listener);
+    return () => set.delete(listener);
+  }
+
+  #push(resident: FakeResident, make: (seq: number) => InboxEntry): number {
+    const entry = make(resident.nextSeq);
+    resident.nextSeq += 1;
+    resident.inbox.push(entry);
+    while (resident.inbox.length > Math.max(1, this.limits.inbox_max)) resident.inbox.shift();
+    for (const listener of this.#listeners.get(resident.id) ?? []) listener(entry);
+    this.#wake(resident);
+    return entry.seq;
+  }
+
+  #resident(id: ResidentId): FakeResident {
+    const resident = this.residents.get(id);
+    if (resident === undefined) throw new Error(`the fake world has no resident ${id}`);
+    return resident;
+  }
+
+  // ---- Observation ----------------------------------------------------------
+
+  /** Returns the calendar time. */
+  clock(): Clock {
+    const minute = this.tick % MINUTES_PER_DAY;
+    const day = Math.floor(this.tick / MINUTES_PER_DAY);
+    return {
+      year: Math.floor(day / DAYS_PER_YEAR) + 1,
+      day: (day % DAYS_PER_YEAR) + 1,
+      hour: Math.floor(minute / 60),
+      minute: minute % 60,
+    };
+  }
+
+  /** Returns the observation of a resident. It changes nothing. */
+  observe(resident: FakeResident, opts: ObserveOpts = {}): Observation {
+    const since = opts.since_notice ?? 0;
+    const wants = (section: string): boolean => opts.sections == null || opts.sections.includes(section);
+    const sections: Record<string, Value> = {};
+    const notices: Notice[] = [];
+    const reports: ActionReport[] = [];
+    for (const entry of resident.inbox) {
+      if (entry.seq < since) continue;
+      if ("notice" in entry) notices.push(entry.notice);
+      else reports.push(entry.report);
+    }
+    if (wants("self")) sections["self"] = this.#self(resident, opts.detail === "full");
+    if (wants("nearby")) sections["nearby"] = this.#nearby(resident);
+    if (wants("reports")) sections["reports"] = reports as unknown as Value;
+    for (const [name, value] of Object.entries(resident.sections)) {
+      if (wants(name)) sections[name] = value;
+    }
+    return {
+      frame: this.tick,
+      tick: this.tick,
+      clock: this.clock(),
+      resident: resident.id,
+      sections,
+      notices,
+      next_notice: resident.nextSeq,
+    };
+  }
+
+  #self(resident: FakeResident, full: boolean): Value {
+    const site = this.sites.find((candidate) => contains(candidate.rect, resident.pos));
+    const running = resident.current;
+    const conditions: Record<string, Value> = {};
+    for (const [name, until] of Object.entries(resident.conditions)) {
+      if (until === null || until > this.tick) conditions[name] = until;
+    }
+    const out: Record<string, Value> = {
+      id: resident.id,
+      name: resident.name,
+      pos: { ...resident.pos },
+      zone: resident.zone,
+      city: resident.city,
+    };
+    if (site !== undefined) out["site"] = { id: site.id, name: site.name, kind: site.kind };
+    out["activity"] =
+      running === undefined
+        ? null
+        : {
+            verb: running.verb,
+            action_id: running.action_id,
+            started: running.started,
+            ends: running.ends,
+            waiting: running.waiting,
+          };
+    out["queue"] = resident.queue.length;
+    out["conditions"] = conditions;
+    out["attrs"] = { ...resident.attrs };
+    out["cash"] = resident.cash;
+    out["items"] = { ...resident.items };
+    if (full) {
+      out["zone_name"] = "Fake District";
+      out["owner"] = resident.owner;
+      out["model"] = resident.model ?? null;
+      out["born"] = 0;
+      out["queued"] = resident.queue.map((queued) => ({ verb: queued.verb, action_id: queued.action_id }));
+      out["routines"] = resident.routines.map((routine) => ({ ...routine, runs: 0, failures: 0 })) as unknown as Value;
+      out["memberships"] = [];
+    }
+    return out;
+  }
+
+  #nearby(resident: FakeResident): Value {
+    const radius = this.limits.sight_radius;
+    const max = this.limits.nearby_max;
+    const seen = [...this.residents.values()]
+      .filter((other) => other.id !== resident.id && distance(other.pos, resident.pos) <= radius)
+      .sort((a, b) => distance(a.pos, resident.pos) - distance(b.pos, resident.pos) || a.id - b.id);
+    const sites = this.sites
+      .map((site) => ({ site, pos: nearest(site.rect, resident.pos) }))
+      .filter(({ pos }) => distance(pos, resident.pos) <= radius)
+      .sort((a, b) => distance(a.pos, resident.pos) - distance(b.pos, resident.pos) || a.site.id - b.site.id);
+    const out: Record<string, Value> = {
+      residents: seen.slice(0, max).map((other) => {
+        const entry: Record<string, Value> = { id: other.id, name: other.name, pos: { ...other.pos } };
+        if (other.current !== undefined) entry["activity"] = other.current.verb;
+        return entry;
+      }),
+    };
+    if (seen.length > max) out["more_residents"] = seen.length - max;
+    out["sites"] = sites
+      .slice(0, max)
+      .map(({ site, pos }) => ({ id: site.id, name: site.name, kind: site.kind, pos: { ...pos } }));
+    if (sites.length > max) out["more_sites"] = sites.length - max;
+    return out;
+  }
+
+  // ---- Long poll ------------------------------------------------------------
+
+  /** Returns true when the inbox has an entry from `since` that the kinds let through. */
+  hasNews(resident: FakeResident, since: number, kinds?: string[]): boolean {
+    return resident.inbox.some((entry) => {
+      if (entry.seq < since) return false;
+      if (kinds === undefined || kinds.length === 0) return true;
+      return kinds.includes("notice" in entry ? entry.notice.kind : REPORT_KIND);
+    });
+  }
+
+  /**
+   * The long poll. Resolves with an observation when the resident has news
+   * from `since`, or without news when the timeout ends. Without `since`,
+   * only news after the call counts.
+   */
+  wait(
+    resident: FakeResident,
+    options: { timeout: number; since?: number; kinds?: string[] },
+  ): Promise<Observation> {
+    const since = options.since ?? resident.nextSeq;
+    const answer = (): Observation => this.observe(resident, { since_notice: since });
+    if (this.hasNews(resident, since, options.kinds)) return Promise.resolve(answer());
+    if (this.time === "auto") {
+      for (let i = 0; i < options.timeout && !this.hasNews(resident, since, options.kinds); i += 1) {
+        this.step(1);
+      }
+      return Promise.resolve(answer());
+    }
+    return new Promise((resolve) => {
+      this.#waiters.push({ resident, since, kinds: options.kinds, resolve });
+      for (const parked of this.#parked.splice(0)) parked();
+    });
+  }
+
+  /** Resolves when a `wait` call is parked. A test awaits it before it makes news. */
+  parked(): Promise<void> {
+    if (this.#waiters.length > 0) return Promise.resolve();
+    return new Promise((resolve) => this.#parked.push(resolve));
+  }
+
+  /** Ends every parked `wait` call, as the timeout does. */
+  expireWaits(): void {
+    for (const waiter of this.#waiters.splice(0)) {
+      waiter.resolve(this.observe(waiter.resident, { since_notice: waiter.since }));
+    }
+  }
+
+  /** Removes the parked `wait` calls of a resident that gave up. */
+  abandonWaits(resident: FakeResident): void {
+    this.#waiters = this.#waiters.filter((waiter) => waiter.resident !== resident);
+  }
+
+  #wake(resident: FakeResident): void {
+    const woken = this.#waiters.filter(
+      (waiter) => waiter.resident === resident && this.hasNews(resident, waiter.since, waiter.kinds),
+    );
+    this.#waiters = this.#waiters.filter((waiter) => !woken.includes(waiter));
+    for (const waiter of woken) {
+      waiter.resolve(this.observe(resident, { since_notice: waiter.since }));
+    }
+  }
+}
+
+function doneStatus(result: Value): ActionStatus {
+  return result === null ? { state: "done" } : { state: "done", result };
+}
+
+/** Checks arguments against the top level of the schema of a verb. Returns them as an object. */
+function checkArgs(info: VerbInfo, args: Value | undefined): Record<string, Value> {
+  const given = args ?? {};
+  if (typeof given !== "object" || Array.isArray(given)) {
+    throw new FakeActionError("invalid_args", `The arguments of \`${info.verb}\` must be an object.`);
+  }
+  const schema = info.args_schema as { properties?: Record<string, { type?: string }>; required?: string[] } | null;
+  for (const name of schema?.required ?? []) {
+    if (!(name in given)) {
+      throw new FakeActionError("invalid_args", `\`${info.verb}\` needs the argument \`${name}\`.`);
+    }
+  }
+  for (const [name, value] of Object.entries(given)) {
+    const type = schema?.properties?.[name]?.type;
+    const fits =
+      type === undefined ||
+      (type === "integer" && Number.isInteger(value)) ||
+      (type === "number" && typeof value === "number") ||
+      (type === "string" && typeof value === "string") ||
+      (type === "boolean" && typeof value === "boolean") ||
+      (type === "array" && Array.isArray(value)) ||
+      (type === "object" && typeof value === "object" && value !== null && !Array.isArray(value));
+    if (!fits) {
+      throw new FakeActionError("invalid_args", `The argument \`${name}\` of \`${info.verb}\` must be of type ${type}.`);
+    }
+  }
+  return given;
+}
+
+/** Distance in tiles. A diagonal step counts as one. */
+export function distance(a: Pos, b: Pos): number {
+  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+}
+
+function contains(rect: Rect, pos: Pos): boolean {
+  return pos.x >= rect.x0 && pos.x < rect.x1 && pos.y >= rect.y0 && pos.y < rect.y1;
+}
+
+function nearest(rect: Rect, pos: Pos): Pos {
+  return {
+    x: Math.min(Math.max(pos.x, rect.x0), rect.x1 - 1),
+    y: Math.min(Math.max(pos.y, rect.y0), rect.y1 - 1),
+  };
+}

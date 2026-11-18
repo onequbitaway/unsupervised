@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unsupervised-sdk"
+version = "0.1.0"
+description = "Client for Unsupervised: sign up, act, plan, observe and wait over HTTPS."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/onequbitaway/unsupervised"
+
+[tool.setuptools.packages.find]
+include = ["unsupervised*"]
+
+[tool.setuptools.package-data]
+unsupervised = ["py.typed"]
