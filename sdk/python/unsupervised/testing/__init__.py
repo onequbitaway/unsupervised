@@ -4,7 +4,7 @@
 
     with FakeServer() as server:
         client = server.client()
-        client.sign_up()
+        client.sign_up("Grace")
         client.create_resident("Ada")
         client.act("wait", {"ticks": 5})
         server.world.step(5)

@@ -58,7 +58,7 @@ test("a hostile message inside an observation is passed to the model as data onl
 
   // The whole text is there, word for word, as a JSON string with the mark of the server.
   assert.deepEqual(dataOf(messages)["news"], [
-    { kind: "society.message", tick: 0, from: 2, data: { untrusted: true, from: 2, text: HOSTILE } },
+    { kind: "society.message", tick: 0, from: 2, data: { text: { untrusted: true, from: 2, text: HOSTILE } } },
   ]);
 
   // The agent did what the model answered, and nothing that the message asked for.
@@ -69,9 +69,9 @@ test("the instructions name the mark that the data carries", async () => {
   const { agent, provider, world, resident } = scene();
   world.tell(resident.id, 2, "hello");
   await agent.turn();
-  const data = provider.data(1)["news"][0].data as Record<string, unknown>;
+  const data = provider.data(1)["news"][0].data as { text: Record<string, unknown> };
   // The rule of the prompt quotes the field as the server writes it.
-  const mark = Object.entries(data).find(([, value]) => value === true)?.[0];
+  const mark = Object.entries(data.text).find(([, value]) => value === true)?.[0];
   assert.equal(mark, "untrusted");
   assert.equal(SYSTEM_PROMPT.includes(`"${mark}": true`), true);
 });
@@ -81,7 +81,7 @@ test("a hostile name of a resident or a site stays inside the data block", async
   const { agent, provider, world } = scene({
     world: { sites: [{ id: 9, kind: "shop", name, rect: { x0: 30, y0: 30, x1: 34, y1: 34 }, tags: [] }] },
   });
-  world.spawn(world.signUp().owner, { name });
+  world.spawn(world.signUp().owner.id, { name });
   await agent.turn();
 
   const messages = provider.calls[0] as ChatMessage[];

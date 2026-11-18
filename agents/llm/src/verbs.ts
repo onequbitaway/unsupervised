@@ -21,6 +21,7 @@ export const CORE_VERBS: readonly string[] = [
   "say",
   "message",
   "inspect",
+  "gather",
   "rest",
   "sell",
   "travel",

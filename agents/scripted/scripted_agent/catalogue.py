@@ -1,8 +1,8 @@
 """What the agent knows about the verbs, items and attributes of the server.
 
-The game modules are still being built, so the agent does not assume that a
-verb exists or which arguments it takes. It reads the catalogue, and it
-fills the arguments of a verb from the argument schema.
+The agent does not assume that a verb exists or which arguments it takes:
+a server can run a part of the game, and the game changes. It reads the
+catalogue, and it fills the arguments of a verb from the argument schema.
 """
 
 import logging
@@ -15,6 +15,8 @@ ALIASES: Dict[str, Sequence[str]] = {
     "item": ("item", "good", "product", "food", "thing"),
     "qty": ("qty", "quantity", "amount", "count", "units"),
     "ticks": ("ticks", "minutes", "duration"),
+    "amount": ("amount",),
+    "text": ("text",),
     "hours": ("hours",),
     "x": ("x",),
     "y": ("y",),
@@ -55,6 +57,7 @@ class Catalogue:
         self.items: Dict[str, Dict[str, Any]] = {item["name"]: item for item in raw.get("items", [])}
         self.attrs: Set[str] = {attr["name"] for attr in raw.get("attrs", [])}
         self.blocking: Set[str] = {cond["name"] for cond in raw.get("conditions", []) if cond.get("blocking")}
+        self.params: Dict[str, int] = {param["name"]: param["value"] for param in raw.get("params", [])}
         #: Verbs that the agent gave up on: the server refused the arguments that the agent built.
         self.unusable: Set[str] = set()
         self._warned: Set[str] = set()
@@ -88,6 +91,19 @@ class Catalogue:
             if "food" in item.get("tags", []) and item.get("attrs", {}).get("nutrition", 0) > 0
         ]
         return sorted(edible, key=lambda item: (-item["attrs"]["nutrition"], item["name"]))
+
+    def depot_price(self, item: str) -> Optional[int]:
+        """Returns what one unit of an item costs at the depot, in cents, when the game says it.
+
+        The depot sells each basic good at its ceiling price. The price is
+        the parameter `economy.depot_ceiling.<item>`.
+        """
+        price = self.params.get("economy.depot_ceiling.%s" % item)
+        return price if isinstance(price, int) and price > 0 else None
+
+    def raw_food(self) -> List[Dict[str, Any]]:
+        """Returns the food that grows on a farm: items with the tags `food` and `raw`."""
+        return [item for item in self.food() if "raw" in item.get("tags", [])]
 
     def args_for(self, verb: str, values: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Builds the arguments of a verb from values that the agent knows.

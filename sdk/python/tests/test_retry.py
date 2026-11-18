@@ -55,16 +55,16 @@ class RetryTest(ServerCase):
         client = self.server.client()
         self.server.lose_responses(1)
         with self.assertRaises(TransportError):
-            client.sign_up()
+            client.sign_up("Grace")
         self.assertEqual(len(self.gateway.requests_to("/v1/owners")), 1)
         self.assertEqual(self.sleeps, [])
 
         # A refusal for load is safe to repeat: the server did nothing.
         self.gateway.fail_next(503, "overloaded")
-        signup = client.sign_up()
+        signup = client.sign_up("Grace")
         self.assertEqual(len(self.gateway.requests_to("/v1/owners")), 3)
         # The lost sign-up made owner 2 on the server; this one is owner 3.
-        self.assertEqual(signup["owner"], 3)
+        self.assertEqual(signup["owner"]["id"], 3)
         self.assertEqual(self.world.owner_of(signup["token"]), 3)
 
     def test_the_default_delay_doubles_stays_below_its_ceiling_and_follows_retry_after(self) -> None:

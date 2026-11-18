@@ -3,7 +3,8 @@
 // The schema in `schema/protocol.schema.json` holds the wire types of the
 // Rust crate `unsup-protocol`. It does not hold the request and answer bodies
 // of the account routes, or the WebSocket frames. This file writes them by
-// hand from `docs/design/protocol.md`, section 2.
+// hand from `docs/design/protocol.md`, section 2. The end-to-end tests in
+// `crates/e2e` run the SDK against the real server.
 
 import type {
   ActionAck,
@@ -18,11 +19,21 @@ import type {
   Value,
 } from "./generated/protocol.js";
 
-/** Answer of `POST /v1/owners`: the new owner and its token. */
-export interface OwnerSignup {
+/** An owner account, as the server shows it. */
+export interface Owner {
   /** Id of the owner. */
-  owner: OwnerId;
-  /** The owner token. It creates residents and rotates keys. Keep it secret. */
+  id: OwnerId;
+  /** Display name of the owner. */
+  name: string;
+  /** Time of the sign-up, in seconds since 1970. */
+  created_at: number;
+}
+
+/** Answer of `POST /v1/owners`: the owner and its token. */
+export interface OwnerSignup {
+  /** The owner account. */
+  owner: Owner;
+  /** The owner token. It creates residents and rotates keys. The server shows it once. Keep it secret. */
   token: string;
 }
 
@@ -36,22 +47,44 @@ export interface NewResident {
   city?: CityId;
 }
 
-/** Answer of `POST /v1/residents` and of `POST /v1/residents/{id}/keys`. */
-export interface ResidentKey {
-  /** Id of the resident. */
-  resident: ResidentId;
-  /** The resident key. The server shows it once. Keep it secret. */
-  key: string;
-}
-
-/** One entry of `GET /v1/residents`. */
-export interface ResidentSummary {
+/** A resident of an owner, as `POST /v1/residents` and `GET /v1/residents` show it. */
+export interface ResidentRecord {
   /** Id of the resident. */
   id: ResidentId;
   /** Display name. */
   name: string;
-  /** Name of the model that controls the resident. */
-  model?: string | null;
+  /** Name of the model that controls the resident, or `null`. */
+  model: string | null;
+  /** Time of the creation, in seconds since 1970. */
+  created_at: number;
+  /** The start of the resident key, to tell keys apart. It is not a secret. */
+  key_hint: string;
+}
+
+/** Answer of `POST /v1/residents`: the resident and its key. */
+export interface ResidentCreated {
+  /** The new resident. */
+  resident: ResidentRecord;
+  /** The resident key. The server shows it once. Keep it secret. */
+  key: string;
+}
+
+/** Answer of `GET /v1/residents`. */
+export interface ResidentList {
+  /** The residents of the owner that are in the world. */
+  residents: ResidentRecord[];
+  /** Greatest number of residents that the owner can have in the world. 0: no limit. */
+  limit: number;
+}
+
+/** Answer of `POST /v1/residents/{id}/keys`. */
+export interface RotatedKey {
+  /** Id of the resident. */
+  resident: ResidentId;
+  /** The new resident key. The old key stopped. The server shows the new key once. */
+  key: string;
+  /** The start of the new key. */
+  key_hint: string;
 }
 
 /** Answer of `GET /v1/me`. */
@@ -60,22 +93,48 @@ export interface Me {
   resident: ResidentId;
   /** Display name of the resident. */
   name: string;
+  /** Name of the model that controls the resident, or `null`. */
+  model: string | null;
+  /** Id of the owner of the resident. */
+  owner: OwnerId;
 }
 
 /** Answer of `POST /v1/act`. */
 export interface ActResponse {
-  /** One acknowledgement for each request, in the order of the requests. */
+  /**
+   * One acknowledgement for each request that the server sent to the
+   * simulation, in the order of the requests. The server stops a plan
+   * after the first request that the simulation rejects.
+   */
   acks: ActionAck[];
   /** The observation after the requests. */
   observation: Observation;
+}
+
+/** Answer of `PUT /v1/routines`. */
+export interface RoutinesSet {
+  /** Number of routines that the resident has now. */
+  routines: number;
 }
 
 /** Answer of `PUT /v1/webhook`. */
 export interface WebhookInfo {
   /** The address that receives notices, or `null` when there is none. */
   url: string | null;
-  /** The secret that signs each delivery. The server shows it when the address is set. */
+  /** The secret that signs each delivery (`unsup_whs_...`). The server shows it once, when the address is set. */
   secret?: string;
+}
+
+/** The JSON body of one webhook delivery. */
+export interface WebhookDelivery {
+  /** Id of the resident that the news is for. */
+  resident: ResidentId;
+  /** The notices since the last delivery that the receiver accepted. */
+  notices: Notice[];
+  /** The action reports since the last delivery that the receiver accepted. */
+  reports: ActionReport[];
+  /** The sequence number after the last entry of this delivery. */
+  next_notice: number;
 }
 
 /** The `error` object of an error answer. */
@@ -93,7 +152,7 @@ export type ClientFrame =
   | { op: "act"; request: ActionRequest }
   | { op: "plan"; requests: ActionRequest[] }
   | { op: "observe"; opts?: ObserveOpts }
-  | { op: "subscribe"; kinds: string[] }
+  | { op: "subscribe"; kinds?: string[] }
   | { op: "ping" };
 
 /** A WebSocket frame from the server to the client. The tag is `op`. */

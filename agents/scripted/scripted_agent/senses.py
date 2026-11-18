@@ -15,7 +15,8 @@ class Senses:
         sections = observation.get("sections", {})
         me = sections.get("self") or {}
         self.tick: int = observation.get("tick", 0)
-        self.hour: int = observation.get("clock", {}).get("hour", 0)
+        self.clock: Dict[str, int] = observation.get("clock") or {}
+        self.hour: int = self.clock.get("hour", 0)
         self.attrs: Dict[str, int] = me.get("attrs") or {}
         self.cash: int = me.get("cash") or 0
         self.items: Dict[str, int] = me.get("items") or {}
@@ -28,9 +29,21 @@ class Senses:
         self.nearby_sites: List[Dict[str, Any]] = (sections.get("nearby") or {}).get("sites") or []
         reports = sections.get("reports")
         self.reports: List[Dict[str, Any]] = reports if isinstance(reports, list) else []
-        job = sections.get("job")
+        self.nearby_residents: List[Dict[str, Any]] = (sections.get("nearby") or {}).get("residents") or []
+        self.city: Optional[int] = me.get("city")
+
+        def section(name: str) -> Optional[Dict[str, Any]]:
+            value = sections.get(name)
+            return value if isinstance(value, dict) and value else None
+
         #: The section `job` of the economy module. Present when the resident has a job.
-        self.job: Optional[Dict[str, Any]] = job if isinstance(job, dict) and job else None
+        self.job = section("job")
+        #: The section `home` of the life module: the place where the resident sleeps.
+        self.home = section("home")
+        #: The section `bank` of the finance module. Present when the resident has an account.
+        self.bank = section("bank")
+        #: The section `business` of the economy module: what the site of the resident offers.
+        self.business = section("business")
         self._catalogue = catalogue
 
     @property

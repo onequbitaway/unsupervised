@@ -36,7 +36,7 @@ class SectionsTest(unittest.TestCase):
         world = FakeWorld(
             sites=[{"id": 9, "kind": "shop", "name": "Corner Shop", "rect": {"x0": 30, "y0": 30, "x1": 36, "y1": 36}, "tags": []}]
         )
-        owner = world.sign_up()["owner"]
+        owner = world.sign_up()["owner"]["id"]
         ada = world.spawn(owner, "Ada")
         bob = world.spawn(owner, "Bob")
         bob.pos = {"x": 35, "y": 36}

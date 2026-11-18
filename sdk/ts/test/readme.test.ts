@@ -78,7 +78,7 @@ test("the first example joins, acts and waits, and the session example gets a pu
     ["store this key:", resident?.key],
     ["cancel, set_routines, wait, move_to"],
     ["started", { x: 32, y: 32 }],
-    ["move_to", true, { x: 34, y: 32 }],
+    ["move_to", true, { x: 34, y: 32, steps: 2, ticks: 2 }],
   ]);
   // The wait of the example ended with the report of the walk: 2 ticks, not 120.
   assert.equal(world.tick, 2);
@@ -96,6 +96,6 @@ test("the test support example joins the fake world without a network", async (t
   const logged = new Collector<unknown[]>();
   const made = (await run(t, `${example}\nexport { client, gateway };\n`, logged)) as { client: Client; gateway: FakeGateway };
   assert.equal(made.gateway.world.residents.get(1)?.name, "Ada");
-  assert.deepEqual(await made.client.me(), { resident: 1, name: "Ada" });
+  assert.deepEqual(await made.client.me(), { resident: 1, name: "Ada", model: null, owner: 1 });
   assert.deepEqual(logged.items, []);
 });

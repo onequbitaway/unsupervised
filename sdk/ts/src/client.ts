@@ -15,26 +15,25 @@ import type {
   ZoneId,
 } from "./generated/protocol.js";
 import { Transport, type TransportOptions } from "./http.js";
-import { hasNews, reportKey, reportsOf } from "./observation.js";
+import { hasNews, reportsOf } from "./observation.js";
 import { Session, type SessionOptions } from "./session.js";
 import type {
   ActResponse,
   Me,
   NewResident,
   OwnerSignup,
-  ResidentKey,
-  ResidentSummary,
+  ResidentCreated,
+  ResidentList,
+  RotatedKey,
+  RoutinesSet,
   WebhookInfo,
 } from "./types.js";
 
 /** Greatest `timeout` of one `GET /v1/wait` call, in seconds. */
 export const WAIT_MAX_SECONDS = 60;
 
-/**
- * How many reports the client remembers to drop repeats. It is the greatest
- * value of the parameter `kernel.inbox_max`: a server cannot repeat more.
- */
-const REPORT_MEMORY = 4096;
+/** Greatest number of requests in one plan. */
+export const PLAN_MAX = 16;
 
 /** Options of a client. Only `baseUrl` is necessary. */
 export interface ClientOptions extends TransportOptions {
@@ -97,10 +96,20 @@ export interface ActResult {
   observation: Observation;
 }
 
-/** The answer of `plan`: one acknowledgement for each step, and the observation after them. */
+/** The answer of `plan`: the acknowledgements, and the observation after them. */
 export interface PlanResult {
-  /** One acknowledgement for each step, in the order of the steps. */
+  /**
+   * One acknowledgement for each step that the server sent to the
+   * simulation, in the order of the steps. The server stops after the
+   * first step that the simulation rejects: that step is the last entry,
+   * and the steps after it have no entry. They did not run.
+   */
   acks: ActionAck[];
+  /**
+   * Number of steps at the end of the plan that the server did not send,
+   * because a step before them was rejected. 0 when every step was sent.
+   */
+  notSent: number;
   /** The observation after the steps, with the news since the last observation. */
   observation: Observation;
 }
@@ -121,7 +130,7 @@ export interface Joined {
 
 /** Options of `Client.join`. */
 export interface JoinOptions extends TransportOptions, NewResident {
-  /** Display name of the owner account. */
+  /** Display name of the owner account, 1 to 64 bytes. Default: the name of the resident. */
   ownerName?: string;
   /** An existing owner token. A new owner signs up when it is absent. */
   ownerToken?: string;
@@ -151,8 +160,6 @@ export class Client {
   readonly #transport: Transport;
   readonly #options: ClientOptions;
   readonly #requestId: () => string;
-  /** Keys of the reports that the client returned, oldest first. */
-  readonly #seenReports = new Set<string>();
 
   /** Makes a client. It sends nothing until a method is called. */
   constructor(options: ClientOptions) {
@@ -173,7 +180,8 @@ export class Client {
     const client = new Client({ baseUrl, ...transport, ...(ownerToken === undefined ? {} : { ownerToken }) });
     let owner: OwnerId | undefined;
     if (client.ownerToken === undefined) {
-      owner = (await client.signUp(ownerName === undefined ? {} : { name: ownerName })).owner;
+      // The server needs a name for the owner. The name of the resident serves.
+      owner = (await client.signUp({ name: ownerName ?? name })).owner.id;
     }
     const created = await client.createResident({
       name,
@@ -184,7 +192,7 @@ export class Client {
       client,
       owner,
       ownerToken: client.#owner(),
-      resident: created.resident,
+      resident: created.resident.id,
       residentKey: created.key,
     };
   }
@@ -232,25 +240,35 @@ export class Client {
     return this.#transport.request({ method: "GET", path: "/v1/world", idempotent: true });
   }
 
-  /** Returns the public view of one zone: tiles, sites and residents. */
-  zone(zone: ZoneId): Promise<Extract<WorldView, { type: "zone" }>> {
-    return this.#transport.request({ method: "GET", path: `/v1/world/zones/${zone}`, idempotent: true });
+  /**
+   * Returns the public view of one zone: tiles, sites and residents.
+   * `residents: false` leaves the residents out, for a caller that wants
+   * only the map.
+   */
+  zone(zone: ZoneId, options: { residents?: boolean } = {}): Promise<Extract<WorldView, { type: "zone" }>> {
+    return this.#transport.request({
+      method: "GET",
+      path: `/v1/world/zones/${zone}`,
+      ...(options.residents === false ? { query: { residents: "false" } } : {}),
+      idempotent: true,
+    });
   }
 
   // ---- Owner routes ---------------------------------------------------------
 
   /**
-   * Signs up a new owner: `POST /v1/owners`. The client keeps the owner
-   * token. Store the token: the server does not show it again.
+   * Signs up a new owner: `POST /v1/owners`. `name` has 1 to 64 bytes. The
+   * client keeps the owner token. Store the token: the server does not
+   * show it again.
    */
-  async signUp(input: { name?: string } = {}): Promise<OwnerSignup> {
+  async signUp(input: { name: string }): Promise<OwnerSignup> {
     const answer = await this.#transport.request<OwnerSignup>({
       method: "POST",
       path: "/v1/owners",
       body: input,
       idempotent: false,
     });
-    if (typeof answer?.token !== "string" || typeof answer.owner !== "number") {
+    if (typeof answer?.token !== "string" || typeof answer.owner?.id !== "number") {
       throw new ProtocolError("POST /v1/owners did not return `owner` and `token`");
     }
     this.ownerToken = answer.token;
@@ -261,22 +279,34 @@ export class Client {
    * Creates a resident: `POST /v1/residents`. The client keeps the key and
    * acts as the new resident from now on. Store the key: the server shows
    * it once.
+   *
+   * @throws ApiError with the code `resident_limit` when the owner has its
+   * greatest number of residents, and `text_refused` when a filter
+   * refuses the name or the model.
    */
-  async createResident(input: NewResident): Promise<ResidentKey> {
-    const answer = await this.#transport.request<ResidentKey>({
+  async createResident(input: NewResident): Promise<ResidentCreated> {
+    const answer = await this.#transport.request<ResidentCreated>({
       method: "POST",
       path: "/v1/residents",
       body: input,
       token: this.#owner(),
       idempotent: false,
     });
-    this.#useKey(answer, "POST /v1/residents");
+    if (typeof answer?.key !== "string" || typeof answer.resident?.id !== "number") {
+      throw new ProtocolError("POST /v1/residents did not return `resident` and `key`");
+    }
+    this.residentKey = answer.key;
+    this.resident = answer.resident.id;
+    this.cursor = 0;
     return answer;
   }
 
-  /** Lists the residents of the owner: `GET /v1/residents`. */
-  async listResidents(): Promise<ResidentSummary[]> {
-    const answer = await this.#transport.request<{ residents: ResidentSummary[] }>({
+  /**
+   * Lists the residents of the owner that are in the world, and the limit
+   * of residents of one owner: `GET /v1/residents`.
+   */
+  async listResidents(): Promise<ResidentList> {
+    const answer = await this.#transport.request<ResidentList>({
       method: "GET",
       path: "/v1/residents",
       token: this.#owner(),
@@ -285,7 +315,7 @@ export class Client {
     if (!Array.isArray(answer?.residents)) {
       throw new ProtocolError("GET /v1/residents did not return `residents`");
     }
-    return answer.residents;
+    return answer;
   }
 
   /**
@@ -293,8 +323,8 @@ export class Client {
    * key stops to work. When the resident is the one of this client, the
    * client keeps the new key.
    */
-  async rotateKey(resident: ResidentId): Promise<ResidentKey> {
-    const answer = await this.#transport.request<ResidentKey>({
+  async rotateKey(resident: ResidentId): Promise<RotatedKey> {
+    const answer = await this.#transport.request<RotatedKey>({
       method: "POST",
       path: `/v1/residents/${resident}/keys`,
       token: this.#owner(),
@@ -312,7 +342,7 @@ export class Client {
 
   // ---- Resident routes ------------------------------------------------------
 
-  /** Checks the resident key: `GET /v1/me`. Returns the id and the name of the resident. */
+  /** Checks the resident key: `GET /v1/me`. Returns the resident, its name, its model and its owner. */
   async me(): Promise<Me> {
     const answer = await this.#transport.request<Me>({
       method: "GET",
@@ -336,17 +366,22 @@ export class Client {
   async act(verb: string, args?: Value, options: ActOptions = {}): Promise<ActResult> {
     const request = this.#request({ verb, ...(args === undefined ? {} : { args }), ...options });
     const { acks, observation } = await this.#act(request, 1);
+    if (acks.length !== 1) throw new ProtocolError("POST /v1/act did not return one acknowledgement");
     return { ack: acks[0] as ActionAck, observation };
   }
 
   /**
-   * Asks for several actions in order: `POST /v1/act` with a plan. The
-   * first step starts and the others go to the queue of the resident. Each
-   * step gets its own acknowledgement; one refusal does not stop the others.
-   * An empty plan only observes.
+   * Asks for several actions in order: `POST /v1/act` with a plan of at
+   * most 16 steps. The first step starts and the others go to the queue of
+   * the resident. The server stops after the first step that the
+   * simulation rejects: `acks` then ends with that refusal, and `notSent`
+   * counts the steps after it. An empty plan only observes.
+   *
+   * @throws ApiError with the code `text_refused` when a filter refuses a
+   * text of one step. Then no step was sent.
    */
   async plan(steps: PlanStep[]): Promise<PlanResult> {
-    if (steps.length === 0) return { acks: [], observation: await this.observe() };
+    if (steps.length === 0) return { acks: [], notSent: 0, observation: await this.observe() };
     return this.#act({ plan: steps.map((step) => this.#request(step)) }, steps.length);
   }
 
@@ -409,10 +444,13 @@ export class Client {
    * standing orders that run when the resident is idle. An empty list
    * removes them.
    *
-   * @throws ApiError when a routine is not valid, for example `unknown_verb`.
+   * Returns the number of routines that the resident has now.
+   *
+   * @throws ApiError when the simulation refuses the list, for example with
+   * the code `unknown_verb` or `invalid_args`. The old routines stay.
    */
-  async setRoutines(routines: Routine[]): Promise<Value> {
-    return this.#transport.request<Value>({
+  async setRoutines(routines: Routine[]): Promise<RoutinesSet> {
+    return this.#transport.request<RoutinesSet>({
       method: "PUT",
       path: "/v1/routines",
       body: { routines },
@@ -424,7 +462,8 @@ export class Client {
   /**
    * Sets the address that receives the notices of the resident:
    * `PUT /v1/webhook`. `null` removes it. The answer has the secret that
-   * signs each delivery; check deliveries with `verifyWebhook`.
+   * signs each delivery; the server shows it once. Check deliveries with
+   * `verifyWebhook`. Each call makes a new secret.
    */
   async setWebhook(url: string | null): Promise<WebhookInfo> {
     return this.#transport.request<WebhookInfo>({
@@ -442,27 +481,17 @@ export class Client {
   }
 
   /**
-   * Records an observation: checks its form, drops notices before `since`
-   * (a server that did not get the cursor repeats them) and moves the
-   * cursor. Returns the observation.
-   *
-   * With `dropSeenReports`, it also drops the reports that the client
-   * returned before. `act` and `plan` use this: the protocol document gives
-   * `POST /v1/act` no cursor, so a server can answer with the whole inbox.
+   * Records an observation: checks its form, drops the notices and the
+   * reports before `since` (a server that did not get the cursor repeats
+   * them) and moves the cursor. Returns the observation.
    */
-  track(observation: Observation, since: number, source: string, dropSeenReports = false): Observation {
+  track(observation: Observation, since: number, source: string): Observation {
     this.#isObservation(observation, source);
     observation.notices = observation.notices.filter((notice) => notice.seq >= since);
-    let reports = reportsOf(observation);
-    if (dropSeenReports && reports.some((report) => this.#seenReports.has(reportKey(report)))) {
-      reports = reports.filter((report) => !this.#seenReports.has(reportKey(report)));
-      observation.sections["reports"] = reports as unknown as Value;
-    }
-    for (const report of reports) {
-      this.#seenReports.add(reportKey(report));
-      if (this.#seenReports.size > REPORT_MEMORY) {
-        this.#seenReports.delete(this.#seenReports.values().next().value as string);
-      }
+    const reports = reportsOf(observation);
+    // A report of an old server has no `seq`. It cannot be a repeat that the client can tell.
+    if (reports.some((report) => (report.seq ?? since) < since)) {
+      observation.sections["reports"] = reports.filter((report) => (report.seq ?? since) >= since) as unknown as Value;
     }
     this.cursor = observation.next_notice;
     this.resident = observation.resident;
@@ -495,25 +524,24 @@ export class Client {
       // Every request has an idempotency key, so a repeat is safe.
       idempotent: true,
     });
-    if (!Array.isArray(answer?.acks) || answer.acks.length !== count) {
-      throw new ProtocolError(`POST /v1/act did not return ${count} acknowledgement(s)`);
+    const acks = answer?.acks;
+    // The server stops a plan after the first refusal, so the list can be
+    // shorter than the plan. Then its last entry is that refusal.
+    const stopped = Array.isArray(acks) && acks.length < count && acks.at(-1)?.status.state === "rejected";
+    if (!Array.isArray(acks) || acks.length < 1 || acks.length > count || (acks.length < count && !stopped)) {
+      throw new ProtocolError(`POST /v1/act did not return the acknowledgements of ${count} request(s)`);
     }
-    return { acks: answer.acks, observation: this.track(answer.observation, since, "POST /v1/act", true) };
+    return {
+      acks,
+      notSent: count - acks.length,
+      observation: this.track(answer.observation, since, "POST /v1/act"),
+    };
   }
 
   #request(step: PlanStep): ActionRequest {
     const request: ActionRequest = { id: step.id ?? this.#requestId(), verb: step.verb };
     if (step.args !== undefined && step.args !== null) request.args = step.args;
     return request;
-  }
-
-  #useKey(answer: ResidentKey, source: string): void {
-    if (typeof answer?.key !== "string" || typeof answer.resident !== "number") {
-      throw new ProtocolError(`${source} did not return \`resident\` and \`key\``);
-    }
-    this.residentKey = answer.key;
-    this.resident = answer.resident;
-    this.cursor = 0;
   }
 
   #key(): string {

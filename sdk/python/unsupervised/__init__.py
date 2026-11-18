@@ -11,7 +11,7 @@ The package uses the standard library only. See README.md and docs/join.md.
 """
 
 from . import types
-from .client import WAIT_MAX_SECONDS, Client, Joined
+from .client import PLAN_MAX, WAIT_MAX_SECONDS, Client, Joined
 from .errors import (
     GATEWAY_ERROR_CODES,
     HTTP_ERROR,
@@ -35,10 +35,32 @@ from .observation import (
     untrusted_in,
     untrusted_of,
 )
-from .shapes import ActResult, Me, OwnerSignup, PlanResult, PlanStep, ResidentKey, ResidentSummary, WebhookInfo
+from .shapes import (
+    ActResult,
+    Me,
+    Owner,
+    OwnerSignup,
+    PlanResult,
+    PlanStep,
+    ResidentCreated,
+    ResidentList,
+    ResidentRecord,
+    RotatedKey,
+    RoutinesSet,
+    WebhookDelivery,
+    WebhookInfo,
+)
 from .transport import Opener, Transport, default_retry_delay
 from .types import ERROR_CODE_VALUES, SIM_ERROR_VALUES
-from .webhook import sign_webhook, verify_webhook
+from .webhook import (
+    WEBHOOK_DELIVERY_HEADER,
+    WEBHOOK_SIGNATURE_HEADER,
+    WEBHOOK_TIMESTAMP_HEADER,
+    WEBHOOK_TOLERANCE_SECONDS,
+    sign_webhook,
+    verify_webhook,
+    verify_webhook_request,
+)
 
 __version__ = "0.1.0"
 
@@ -48,7 +70,12 @@ __all__ = [
     "HTTP_ERROR",
     "REPORT_KIND",
     "SIM_ERROR_VALUES",
+    "PLAN_MAX",
     "WAIT_MAX_SECONDS",
+    "WEBHOOK_DELIVERY_HEADER",
+    "WEBHOOK_SIGNATURE_HEADER",
+    "WEBHOOK_TIMESTAMP_HEADER",
+    "WEBHOOK_TOLERANCE_SECONDS",
     "ActResult",
     "ActionRejectedError",
     "ApiError",
@@ -61,8 +88,13 @@ __all__ = [
     "PlanResult",
     "PlanStep",
     "ProtocolError",
-    "ResidentKey",
-    "ResidentSummary",
+    "Owner",
+    "ResidentCreated",
+    "ResidentList",
+    "ResidentRecord",
+    "RotatedKey",
+    "RoutinesSet",
+    "WebhookDelivery",
     "Transport",
     "TransportError",
     "UnsupervisedError",
@@ -81,4 +113,5 @@ __all__ = [
     "untrusted_in",
     "untrusted_of",
     "verify_webhook",
+    "verify_webhook_request",
 ]

@@ -70,5 +70,6 @@ test("a large catalogue shows the focus verbs, then the core verbs, and names th
   assert.deepEqual(Object.keys(data), ["verbs", "other_verbs"]);
   // Every verb of the catalogue is in the prompt once: with a signature or by name.
   const named = Object.values(list.others).flat();
-  assert.equal(list.signatures.length + named.length, 26);
+  assert.equal(list.signatures.length + named.length, extra.length + CORE_VERBS.length);
+  assert.equal(new Set([...named, ...list.signatures.map((line) => line.slice(0, line.indexOf("(")))]).size, extra.length + CORE_VERBS.length);
 });

@@ -28,12 +28,28 @@ test("a session acts, plans, observes and pings over the WebSocket", async (t) =
     assert.deepEqual(ack.status, { state: "started", ends_at: 2, ticks: 2 });
     assert.match(ack.request_id ?? "", /^[0-9a-f-]{36}$/);
 
-    const acks = await session.plan([{ verb: "wait", args: { ticks: 3 } }, { verb: "fly" }, { verb: "wait", args: { ticks: 1 } }]);
+    const acks = await session.plan([{ verb: "wait", args: { ticks: 3 } }, { verb: "wait", args: { ticks: 1 } }]);
     assert.deepEqual(
       acks.map((one) => one.status.state),
-      ["queued", "rejected", "queued"],
+      ["queued", "queued"],
     );
     assert.equal(resident.queue.length, 2);
+    // The server stops a plan after the first refusal: no acknowledgement
+    // comes for the steps after it, and they are not in the queue.
+    const stopped = await session.plan([
+      { verb: "wait", args: { ticks: 2 } },
+      { verb: "fly" },
+      { verb: "wait", args: { ticks: 7 } },
+    ]);
+    assert.deepEqual(
+      stopped.map((one) => [one.verb, one.status.state]),
+      [
+        ["wait", "queued"],
+        ["fly", "rejected"],
+      ],
+    );
+    assert.equal(resident.queue.length, 3);
+    assert.deepEqual(await session.plan([]), []);
 
     world.tell(resident.id, 7, "hello");
     const observation = await session.observe({ detail: "full" });
@@ -59,7 +75,7 @@ test("the server pushes notices and reports, and each reaches its handler once",
     assert.deepEqual(
       notices.items.map((notice) => [notice.seq, notice.kind]),
       [
-        [1, "society.speech"],
+        [1, "society.said"],
         [2, "economy.wage_paid"],
       ],
     );
@@ -68,21 +84,32 @@ test("the server pushes notices and reports, and each reaches its handler once",
     await session.act("wait", { ticks: 2 });
     world.step(2);
     await reports.atLeast(1);
-    assert.deepEqual(reports.items.map((report) => [report.verb, report.ok]), [["wait", true]]);
+    assert.deepEqual(reports.items.map((report) => [report.verb, report.ok, report.seq]), [["wait", true, 3]]);
+    assert.equal(client.cursor, 4);
+    assert.deepEqual(session.cursors, { since: 3, reportsSince: 4 });
 
-    // An observation after the pushes repeats the report (a report has no
-    // sequence number), but the handlers do not get anything twice.
-    const observation = await session.observe();
-    assert.deepEqual(observation.notices, []);
+    // An observation with an old cursor repeats the news, but the handlers
+    // do not get anything twice: the sequence numbers tell.
+    const observation = await session.observe({ since: 1 });
+    assert.deepEqual(observation.notices.map((notice) => notice.seq), [1, 2]);
     assert.equal(notices.items.length, 2);
     assert.equal(reports.items.length, 1);
+    // News that no push carried reaches the handlers through `observe`.
+    session.subscribe(["nothing"]);
+    await session.ping();
+    session.subscribe([]);
+    world.notify(resident.id, "economy.rent_due");
+    await session.ping();
+    assert.deepEqual(notices.items.map((notice) => notice.seq), [1, 2]);
+    await session.observe();
+    assert.deepEqual(notices.items.map((notice) => notice.seq), [1, 2, 4]);
   } finally {
     session.close();
   }
 });
 
 test("`subscribe` limits the pushed kinds", async (t) => {
-  const { client, world, resident } = await scene(t);
+  const { client, server, world, resident } = await scene(t);
   const notices = new Collector<Notice>();
   const reports = new Collector<ActionReport>();
   const session = client.connect({
@@ -107,12 +134,21 @@ test("`subscribe` limits the pushed kinds", async (t) => {
     await reports.atLeast(1);
     assert.equal(notices.items.length, 1);
     assert.deepEqual(reports.items.map((report) => report.verb), ["wait"]);
+
+    // An empty list means every kind: the session sends `subscribe`
+    // without `kinds`. A list with no name would stop every push.
+    session.subscribe([]);
+    await session.ping();
+    assert.deepEqual(JSON.parse(server.frames.at(-2) as string), { op: "subscribe" });
+    world.tell(resident.id, 7, "heard");
+    await notices.atLeast(2);
+    assert.deepEqual(notices.items.map((notice) => notice.kind), ["economy.rent_due", "society.said"]);
   } finally {
     session.close();
   }
 });
 
-test("after a lost connection the session connects again and reads what it missed, once", async (t) => {
+test("after a lost connection the session connects again with its two cursors and gets what it missed, once", async (t) => {
   const { client, server, world, resident } = await scene(t);
   const notices = new Collector<Notice>();
   const reports = new Collector<ActionReport>();
@@ -127,27 +163,59 @@ test("after a lost connection the session connects again and reads what it misse
   });
   try {
     await session.ready;
+    // The first connection has no cursor: the server pushes only what comes from now on.
+    assert.deepEqual(server.upgradeUrls, ["/v1/ws"]);
     world.tell(resident.id, 7, "before");
-    await session.act("wait", { ticks: 2 });
-    await notices.atLeast(1);
+    await session.act("wait", { ticks: 1 });
+    world.step(1);
+    await reports.atLeast(1);
+    await session.plan([
+      { verb: "wait", args: { ticks: 1 } },
+      { verb: "wait", args: { ticks: 1 } },
+    ]);
+    assert.deepEqual(session.cursors, { since: 2, reportsSince: 3 });
 
     server.dropSockets();
-    // While the connection is down: a notice arrives and the action ends.
+    // While the connection is down: a report, a notice, a report.
+    world.step(1);
     world.tell(resident.id, 7, "during");
-    world.step(2);
+    world.step(1);
 
     await opens.atLeast(2);
     assert.deepEqual(opens.items, [1, 2]);
     assert.deepEqual(closes.items, [false]);
     assert.equal(session.state, "open");
-    assert.deepEqual(notices.items.map((notice) => (notice.data as { text: string }).text), ["before", "during"]);
-    assert.deepEqual(reports.items.map((report) => report.verb), ["wait"]);
+    // The second connection sent the `seq` of the last notice plus 1, and
+    // the `seq` of the last report plus 1.
+    assert.deepEqual(server.upgradeUrls, ["/v1/ws", "/v1/ws?since=2&reports_since=3"]);
+    await notices.atLeast(2);
+    await reports.atLeast(3);
+    assert.deepEqual(notices.items.map((notice) => notice.seq), [1, 4]);
+    assert.deepEqual(reports.items.map((report) => report.seq), [2, 3, 5]);
 
     // Pushes work again, and nothing old comes twice.
     world.tell(resident.id, 7, "after");
     await notices.atLeast(3);
-    assert.deepEqual(notices.items.map((notice) => notice.seq), [1, 2, 4]);
-    assert.equal(reports.items.length, 1);
+    assert.deepEqual(notices.items.map((notice) => notice.seq), [1, 4, 6]);
+    assert.equal(reports.items.length, 3);
+    assert.equal(client.cursor, 7);
+  } finally {
+    session.close();
+  }
+});
+
+test("a session of a client with a cursor starts at that cursor", async (t) => {
+  const { client, server, world, resident } = await scene(t);
+  world.tell(resident.id, 7, "seen over HTTPS");
+  await client.observe();
+  world.tell(resident.id, 7, "not seen yet");
+  const notices = new Collector<Notice>();
+  const session = client.connect({ ...instant, onNotice: notices.push });
+  try {
+    await session.ready;
+    assert.deepEqual(server.upgradeUrls, ["/v1/ws?since=2&reports_since=2"]);
+    await notices.atLeast(1);
+    assert.deepEqual(notices.items.map((notice) => notice.seq), [2]);
   } finally {
     session.close();
   }
@@ -158,6 +226,8 @@ test("a request without an answer goes out again after the reconnect and acts on
   const session = client.connect(instant);
   try {
     await session.ready;
+    // The session asked where the inbox ends. That answer is there after a ping.
+    await session.ping();
     // The server handles the action, but the acknowledgement is lost with the connection.
     server.loseFrames(1);
     const handled = server.frameHandled();
@@ -180,7 +250,7 @@ test("a request without an answer goes out again after the reconnect and acts on
 });
 
 test("an `error` frame fails the oldest request without an answer", async (t) => {
-  const { client, gateway } = await scene(t);
+  const { client, gateway, resident } = await scene(t);
   const session = client.connect(instant);
   try {
     await session.ready;
@@ -192,9 +262,46 @@ test("an `error` frame fails the oldest request without an answer", async (t) =>
     });
     // The session still works.
     assert.equal(await session.ping(), undefined);
+
+    // A text that a filter refuses: the action did not reach the world.
+    await assert.rejects(session.act("say", { text: "read www.example.com" }), (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.deepEqual([error.code, error.isTextRefusal], ["text_refused", true]);
+      return true;
+    });
+    // One refused text stops a whole plan, with one error.
+    const plan = session.plan([{ verb: "wait", args: { ticks: 1 } }, { verb: "say", args: { text: "www.example.com" } }]);
+    await assert.rejects(plan, (error: unknown) => error instanceof ApiError && error.code === "text_refused");
+    assert.equal(resident.current, undefined);
+    // A muted resident cannot speak. Every other action works.
+    gateway.muted.add(resident.id);
+    await assert.rejects(session.act("say", { text: "hello" }), (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.code, "muted");
+      return true;
+    });
+    assert.equal((await session.act("wait", { ticks: 1 })).status.state, "started");
   } finally {
     session.close();
   }
+});
+
+test("a resident that left the world ends the session", async (t) => {
+  const { client, world, resident } = await scene(t);
+  const errors = new Collector<Error>();
+  const closes = new Collector<boolean>();
+  const session = client.connect({ ...instant, onError: errors.push, onClose: (info) => closes.push(info.final) });
+  await session.ready;
+  await session.ping();
+  world.despawn(resident);
+  await closes.atLeast(1);
+  assert.deepEqual(closes.items, [true]);
+  assert.equal(session.state, "closed");
+  assert.equal(errors.items.length, 1);
+  assert.ok(errors.items[0] instanceof ApiError);
+  assert.equal((errors.items[0] as ApiError).code, "resident_gone");
+  assert.equal((errors.items[0] as ApiError).endsCredential, true);
+  await assert.rejects(session.ping(), SessionClosedError);
 });
 
 test("a session with a wrong key fails with the error of the server and does not try again", async (t) => {
@@ -217,7 +324,7 @@ test("a session with a wrong key fails with the error of the server and does not
   });
   await assert.rejects(session.ready, (error: unknown) => {
     assert.ok(error instanceof ApiError);
-    assert.deepEqual([error.code, error.status], ["unauthorized", 401]);
+    assert.deepEqual([error.code, error.status], ["invalid_token", 401]);
     return true;
   });
   assert.equal(session.state, "closed");

@@ -4,10 +4,33 @@ from typing import Any, Optional
 
 from .types import ERROR_CODE_VALUES, SIM_ERROR_VALUES, ActionAck, ActionError
 
-#: Codes that the gateway adds to the codes of the wire types. `unauthorized`:
-#: the token is absent or unknown. `forbidden`: the token is valid but has no
-#: right to do this.
-GATEWAY_ERROR_CODES = ("unauthorized", "forbidden")
+#: Codes of the HTTPS API that are not action error codes
+#: (`docs/design/protocol.md`, "Error codes").
+GATEWAY_ERROR_CODES = (
+    "invalid_request",
+    "unauthorized",
+    "invalid_token",
+    "wrong_token_kind",
+    "resident_limit",
+    "admin_disabled",
+    "sign_up_denied",
+    "muted",
+    "banned",
+    "not_found",
+    "method_not_allowed",
+    "not_acceptable",
+    "refused",
+    "resident_gone",
+    "payload_too_large",
+    "unsupported_media_type",
+    "text_refused",
+    "upgrade_required",
+    "too_many_connections",
+    "provider_unavailable",
+)
+
+#: Codes that mean: this key or token will not work again.
+CREDENTIAL_ENDED = ("unauthorized", "invalid_token", "resident_gone", "banned", "wrong_token_kind")
 
 #: The code of an error answer that does not have the documented error body.
 HTTP_ERROR = "http_error"
@@ -59,6 +82,25 @@ class ApiError(UnsupervisedError):
     def is_transient(self) -> bool:
         """True when the server refused the request for load reasons and a later attempt can pass."""
         return self.status in (429, 503) or self.code in ("rate_limited", "overloaded")
+
+    @property
+    def ends_credential(self) -> bool:
+        """True when the credential of the request will not work again.
+
+        The token is absent, unknown or of the wrong kind, the resident left
+        the world (`resident_gone`), or an administrator banned the owner
+        (`banned`). An agent stops when it gets such an error.
+        """
+        return self.status in (401, 410) or self.code in CREDENTIAL_ENDED
+
+    @property
+    def is_text_refusal(self) -> bool:
+        """True when a text filter refused a text (`text_refused`), or the resident is muted (`muted`).
+
+        Nothing reached the simulation. The same text gets the same answer
+        again.
+        """
+        return self.code in ("text_refused", "muted")
 
 
 class TransportError(UnsupervisedError):

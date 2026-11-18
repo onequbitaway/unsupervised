@@ -2319,8 +2319,19 @@ dependencies = [
 name = "unsup-e2e"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "futures",
+ "hex",
+ "reqwest",
+ "rmp-serde",
+ "serde",
  "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "unsup-gateway",
  "unsup-protocol",
+ "unsup-runtime",
  "unsup-server",
 ]
 

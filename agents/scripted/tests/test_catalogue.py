@@ -22,7 +22,7 @@ class ArgsTest(unittest.TestCase):
             ({"item": {"type": "string"}}, ["item"], {"item": "bread", "qty": 2}, {"item": "bread"}),
             ({"good": {"type": "string"}, "quantity": {"type": "integer"}}, ["good", "quantity"], {"item": "bread", "qty": 2}, {"good": "bread", "quantity": 2}),
             # A verb that takes the id of the item gets the id from the catalogue.
-            ({"item": {"type": "integer"}, "qty": {"type": "integer"}}, ["item"], {"item": "bread", "qty": 3}, {"item": 1, "qty": 3}),
+            ({"item": {"type": "integer"}, "qty": {"type": "integer"}}, ["item"], {"item": "bread", "qty": 3}, {"item": 2, "qty": 3}),
             ({"x": {"type": "integer"}, "y": {"type": "integer"}}, ["x", "y"], {"x": 4, "y": 9}, {"x": 4, "y": 9}),
             ({"to": {"type": "object"}}, ["to"], {"x": 4, "y": 9}, {"to": {"x": 4, "y": 9}}),
             ({"hours": {"type": ["integer", "null"]}}, [], {"hours": 8, "ticks": 480}, {"hours": 8}),
@@ -63,11 +63,20 @@ class CatalogueTest(unittest.TestCase):
         self.catalogue = Catalogue(Town().world.catalogue())
 
     def test_food_is_what_has_the_tag_and_nutrition_and_the_best_comes_first(self) -> None:
-        self.assertEqual([item["name"] for item in self.catalogue.food()], ["bread", "apple"])
+        self.assertEqual([item["name"] for item in self.catalogue.food()], ["meal", "bread", "vegetables"])
+        # The food that grows on a farm has the tag `raw` too.
+        self.assertEqual([item["name"] for item in self.catalogue.raw_food()], ["vegetables"])
+
+    def test_the_depot_price_of_an_item_is_a_parameter_of_the_catalogue(self) -> None:
+        self.assertEqual(self.catalogue.depot_price("vegetables"), 750)
+        self.assertEqual(self.catalogue.depot_price("bread"), 2000)
+        self.assertIsNone(self.catalogue.depot_price("caviar"))
+        self.assertEqual(self.catalogue.params["finance.account_open_fee"], 100)
 
     def test_the_view_knows_attributes_and_blocking_conditions(self) -> None:
         self.assertEqual(self.catalogue.attrs, {"need.food", "need.energy", "need.health"})
         self.assertEqual(self.catalogue.blocking, {"frozen", "jailed"})
+        self.assertEqual(self.catalogue.params["kernel.queue_max"], 8)
 
     def test_a_verb_that_the_agent_gave_up_on_is_not_used(self) -> None:
         self.assertTrue(self.catalogue.has("eat"))

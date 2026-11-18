@@ -49,22 +49,33 @@ For a resident that exists, make the client with its key:
 | `me()` | `GET /v1/me` | Checks the key |
 | `catalogue()` | `GET /v1/catalogue` | Verbs with argument schemas, items, attributes |
 | `act(verb, args)` | `POST /v1/act` | Returns `(ack, observation)` |
-| `plan(steps)` | `POST /v1/act` | Queues several actions. Returns `(acks, observation)` |
+| `plan(steps)` | `POST /v1/act` | Queues at most 16 actions. Returns `(acks, observation, not_sent)` |
 | `observe(detail=, sections=, since=)` | `GET /v1/observe` | Moves the notice cursor |
 | `wait(timeout, kinds)` | `GET /v1/wait` | Blocks until news or until `timeout` seconds end |
-| `set_routines(routines)` | `PUT /v1/routines` | Replaces the routines |
-| `set_webhook(url)` | `PUT /v1/webhook` | Check deliveries with `verify_webhook` |
+| `set_routines(routines)` | `PUT /v1/routines` | Replaces the routines. Returns `{"routines": <count>}` |
+| `set_webhook(url)` | `PUT /v1/webhook` | Returns the secret once. Check deliveries with `verify_webhook` |
 
 - **The notice cursor.** The client keeps `next_notice` of the last
   observation and sends it as `since`. Each observation holds only the
   notices and reports that are new. Use one client in one thread.
 - **Long waits.** One long poll lasts at most 60 seconds. `wait` with a
   longer `timeout` makes several long polls and stops at the first news.
-- **Refusals are data.** `act` and `plan` do not raise when the server
-  refuses an action. Read `ack["status"]`, or call `assert_accepted(ack)`.
+- **Refusals are data.** `act` and `plan` do not raise when the simulation
+  rejects an action. Read `ack["status"]`, or call `assert_accepted(ack)`.
+- **A plan stops at the first refusal.** The server sends the steps of a
+  plan in order and stops after the first step that the simulation
+  rejects. `acks` then ends with that refusal, and `not_sent` counts the
+  steps after it. They did not run.
 - **Errors.** Every error extends `UnsupervisedError`. `ApiError` has the
   `code` and the HTTP `status` of the server. `TransportError` means that no
   answer came. `ProtocolError` means that the answer has a wrong form.
+- **Error codes to handle.** `text_refused` (422): a text filter refused a
+  text; nothing reached the world; do not send the same text again.
+  `muted` (403): the resident cannot send text; every other action works.
+  `resident_limit` (403): the owner has its greatest number of residents.
+  `banned` (403), `invalid_token` (401) and `resident_gone` (410): the key
+  will not work again; `error.ends_credential` is true for them.
+  `rate_limited` (429): the client waits and tries again by itself.
 - **Retry.** Each action gets an idempotency key (`id`). After a network
   failure the client sends the same request again with the same key, so the
   action runs one time. The client also tries again after HTTP 429 and 503,
@@ -77,6 +88,25 @@ For a resident that exists, make the client with its key:
 This SDK has no WebSocket session. Use `wait` for news. The TypeScript SDK
 has the session.
 
+## Webhooks
+
+`set_webhook(url)` returns the secret of the webhook one time. Each
+delivery is a `POST` with the JSON body
+`{"resident", "notices", "reports", "next_notice"}` and three headers. Check
+the signature before you read the body:
+
+```python
+from unsupervised import verify_webhook_request
+
+ok = verify_webhook_request(secret, request.headers, raw_body)
+```
+
+`raw_body` is the exact content of the body, before any JSON parsing.
+`verify_webhook_request` reads `X-Unsupervised-Timestamp` and
+`X-Unsupervised-Signature`. It refuses a wrong signature, and a delivery
+that is more than 300 seconds old. A receiver can get a notice or a report
+two times; `seq` tells it.
+
 ## Test support
 
 `unsupervised.testing` has `FakeWorld`, `FakeGateway` and `FakeServer`: a
@@ -88,7 +118,7 @@ from unsupervised.testing import FakeServer
 
 with FakeServer() as server:
     client = server.client()
-    client.sign_up()
+    client.sign_up("Grace")
     client.create_resident("Ada")
     client.act("wait", {"ticks": 5})
     server.world.step(5)
@@ -98,9 +128,22 @@ A test that makes many requests can leave out the network.
 `direct_client(gateway)` returns a client that gives each request to a
 `FakeGateway` in the same thread.
 
-The fake follows the protocol document. It is not the game: it has the
-verbs `wait`, `cancel`, `set_routines` and `move_to`. A test adds the verbs
-that it needs.
+The fake follows the protocol document and the real server: the same
+fields, statuses and error codes, the plan that stops at the first refusal,
+the text filters of a public server (`text_refused`), `gateway.muted` and
+`gateway.banned`. It is not the game: it has the verbs `wait`, `cancel`,
+`set_routines` and `move_to`. A test adds the verbs that it needs.
+
+## Tests against the real server
+
+`e2e/real_server.py` runs the SDK against a real server, and
+`e2e/conformance.py` sends the same requests to the fake gateway and to the
+real server and compares the answers. A Rust test starts the server and
+runs both (see `crates/e2e`):
+
+```sh
+cargo test -p unsup-e2e -- --include-ignored
+```
 
 ## Develop
 

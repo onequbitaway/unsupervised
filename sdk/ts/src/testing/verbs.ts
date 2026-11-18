@@ -62,25 +62,38 @@ export function defaultVerbs(): FakeVerb[] {
       info: {
         verb: "move_to",
         module: "life",
-        summary: "Walk to a tile. One tile takes one game minute.",
+        summary: "Walk to a tile or a site. One tile takes one game minute.",
         free: false,
         scope: "zone",
         args_schema: {
           type: "object",
           properties: {
-            x: { type: "integer", description: "Column of the target tile." },
-            y: { type: "integer", description: "Row of the target tile." },
+            x: { type: ["integer", "null"], description: "Column of the target tile." },
+            y: { type: ["integer", "null"], description: "Row of the target tile." },
+            site: { type: ["integer", "null"], description: "Id of a site. The walk ends inside the site." },
           },
-          required: ["x", "y"],
         },
       },
-      begin(resident, args) {
-        const target = { x: args["x"] as number, y: args["y"] as number };
+      begin(resident, args, world) {
+        const x = args["x"] ?? null;
+        const y = args["y"] ?? null;
+        const site = args["site"] ?? null;
+        if ((site === null) === (x === null && y === null) || (x === null) !== (y === null)) {
+          throw new FakeActionError("invalid_args", "Give `x` and `y`, or `site`.");
+        }
+        let target = { x: x as number, y: y as number };
+        if (site !== null) {
+          const found = world.sites.find((one) => one.id === site);
+          if (found === undefined) throw new FakeActionError("not_found", "No site of your city has this id.");
+          const { rect } = found;
+          target = { x: Math.floor((rect.x0 + rect.x1) / 2), y: Math.floor((rect.y0 + rect.y1) / 2) };
+        }
+        const steps = distance(resident.pos, target);
         const finish = (): Value => {
           resident.pos = target;
-          return { ...target };
+          return { ...target, steps, ticks: Math.max(1, steps), ...(site === null ? {} : { site }) };
         };
-        return { busy: Math.max(1, distance(resident.pos, target)), finish };
+        return { busy: Math.max(1, steps), finish };
       },
     },
   ];

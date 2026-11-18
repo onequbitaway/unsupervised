@@ -26,7 +26,7 @@ class ServerCase(unittest.TestCase):
         self.server = FakeServer(self.gateway)
         self.addCleanup(self.server.close)
         self.owner = self.world.sign_up()
-        self.resident: FakeResident = self.world.spawn(self.owner["owner"], "Ada")
+        self.resident: FakeResident = self.world.spawn(self.owner["owner"]["id"], "Ada")
         self.sleeps: List[float] = self.server.sleeps
         self.client: Client = self.server.client(self.resident.key, self.owner["token"], **self.client_options)
 

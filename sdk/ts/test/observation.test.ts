@@ -47,7 +47,7 @@ test("the helpers read the sections of an observation", () => {
   const world = new FakeWorld({
     sites: [{ id: 9, kind: "shop", name: "Corner Shop", rect: { x0: 30, y0: 30, x1: 36, y1: 36 }, tags: [] }],
   });
-  const owner = world.signUp().owner;
+  const owner = world.signUp().owner.id;
   const ada = world.spawn(owner, { name: "Ada" });
   const bob = world.spawn(owner, { name: "Bob" });
   bob.pos = { x: 35, y: 36 };

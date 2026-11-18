@@ -18,11 +18,13 @@ export function reportsOf(observation: Observation): ActionReport[] {
 export const REPORT_KIND = "report";
 
 /**
- * Returns a key that tells two reports apart: the action, the tick of its
- * end and its outcome. A report has no sequence number, so a client that
- * must drop repeated reports compares these keys.
+ * Returns a key that tells two reports apart: the sequence number that the
+ * report shares with the notices of the resident. A report of an old
+ * server has no `seq`; then the key is the action, the tick of its end and
+ * its outcome.
  */
 export function reportKey(report: ActionReport): string {
+  if (typeof report.seq === "number" && report.seq > 0) return `seq:${report.seq}`;
   return `${report.action_id}:${report.tick}:${report.ok}`;
 }
 

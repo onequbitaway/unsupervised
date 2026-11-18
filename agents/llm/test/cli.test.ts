@@ -67,15 +67,17 @@ test("the first run signs up, creates the resident and writes the state file for
   const resident = world.residents.get(1);
   assert.equal(resident?.name, "Ada");
   assert.equal(resident?.model, "small-model");
-  assert.deepEqual(await client.me(), { resident: 1, name: "Ada" });
+  assert.deepEqual(await client.me(), { resident: 1, name: "Ada", model: "small-model", owner: 1 });
+  const ownerToken = client.ownerToken as string;
+  assert.equal(world.ownerOf(ownerToken), 1);
   assert.deepEqual(JSON.parse(await readFile(stateFile, "utf8")), {
-    servers: { [FAKE_URL]: { owner: 1, owner_token: "owner-token-1", resident: 1, resident_key: resident?.key } },
+    servers: { [FAKE_URL]: { owner: 1, owner_token: ownerToken, resident: 1, resident_key: resident?.key } },
   });
   assert.equal((await stat(stateFile)).mode & 0o777, 0o600);
   // The log names the resident and the file, never a secret.
   assert.equal(log.length, 2);
   assert.equal(log.join("\n").includes(resident?.key as string), false);
-  assert.equal(log.join("\n").includes("owner-token-1"), false);
+  assert.equal(log.join("\n").includes(ownerToken), false);
 });
 
 test("a second run controls the same resident and signs up nobody", async (t) => {
@@ -117,7 +119,7 @@ test("each server has its own entry in the state file", async (t) => {
 
 test("a key from the environment is checked and used, and the state file is not touched", async (t) => {
   const { world, gateway, stateFile, options } = await bench(t);
-  const resident = world.spawn(world.signUp().owner, { name: "Grace" });
+  const resident = world.spawn(world.signUp().owner.id, { name: "Grace" });
   const client = await enlist(options({ residentKey: resident.key }));
 
   assert.equal(client.residentKey, resident.key);
@@ -136,7 +138,7 @@ test("an owner token from the environment creates the resident without a new sig
   const owner = world.signUp();
   await enlist(options({ ownerToken: owner.token }));
 
-  assert.equal(world.residents.get(1)?.owner, owner.owner);
+  assert.equal(world.residents.get(1)?.owner, owner.owner.id);
   assert.equal(posts(gateway, "/v1/owners"), 0);
   // The token of the environment is not copied into the file.
   assert.deepEqual(Object.keys((await loadState(stateFile)).servers[FAKE_URL] ?? {}), ["resident", "resident_key"]);
@@ -145,11 +147,11 @@ test("an owner token from the environment creates the resident without a new sig
 test("a sign-up that was cut before the resident existed goes on with the same owner", async (t) => {
   const { world, gateway, stateFile, options } = await bench(t);
   const owner = world.signUp();
-  await saveState(stateFile, { servers: { [FAKE_URL]: { owner: owner.owner, owner_token: owner.token } } });
+  await saveState(stateFile, { servers: { [FAKE_URL]: { owner: owner.owner.id, owner_token: owner.token } } });
   await enlist(options());
 
   assert.equal(posts(gateway, "/v1/owners"), 0);
-  assert.equal(world.residents.get(1)?.owner, owner.owner);
+  assert.equal(world.residents.get(1)?.owner, owner.owner.id);
 });
 
 test("a file that is not a state file is refused and stays as it is", async (t) => {
@@ -174,8 +176,10 @@ test("a long name is cut to 64 bytes at a character boundary", async (t) => {
   assert.equal(fitBytes(`${"a".repeat(63)}é`), "a".repeat(63));
 
   const { world, options } = await bench(t);
-  await enlist(options({ model: `provider/${"m".repeat(80)}` }));
-  assert.equal(world.residents.get(1)?.model, `provider/${"m".repeat(55)}`);
+  // A long model name with no character more than 12 times in a row: the text filters let it through.
+  const long = `provider/${"model-name-".repeat(8)}`;
+  await enlist(options({ model: long }));
+  assert.equal(world.residents.get(1)?.model, long.slice(0, 64));
 });
 
 test("the command joins, runs its turns with the model and returns 0", async (t) => {
@@ -218,7 +222,10 @@ test("the command returns 1 when the server refuses the key", async (t) => {
   });
   assert.equal(status, 1);
   assert.equal(provider.calls.length, 0);
-  assert.equal(log.at(-1), "the agent cannot go on: unauthorized: Send a resident key: `Authorization: Bearer <key>`.");
+  assert.equal(
+    log.at(-1),
+    "the agent cannot go on: invalid_token: The server does not know this token. It is wrong or it was replaced.",
+  );
 });
 
 test("the command stops with 0 when the caller aborts", async (t) => {
