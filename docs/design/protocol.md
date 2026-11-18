@@ -442,13 +442,22 @@ The spectator service (`crates/spectator`) serves viewers. It only reads the
 simulation: it uses `SimHandle::frames` and `SimHandle::view`, and nothing
 else. One task keeps a cache of the world: the residents of each zone, the
 number of residents of each zone, the tiles and sites, the recent public
-events and the published state. Every answer for a viewer comes from the
-cache. A viewer cannot slow the simulation.
+events and the published state. The same task feeds the show: the director,
+the stories, the chronicle and the recorder of the replay clips. Every
+answer for a viewer comes from the cache and from the show. A viewer cannot
+slow the simulation.
 
 The Rust types are in `unsup_spectator::wire`. The limits are in
-`crates/spectator/data/spectator.toml`; the numbers below are the defaults.
-A field that is empty is left out. Names, speech and other text that a
-resident chose are untrusted: a viewer shows them only as text.
+`crates/spectator/data/spectator.toml`, and the weights and words of the
+show are in `crates/spectator/data/director.toml`; the numbers below are the
+defaults. A field that is empty is left out. Names, speech and other text
+that a resident chose are untrusted: a viewer shows them only as text. A
+line that the service writes about an event (a caption, a headline, a line
+of a timeline) holds such names, so a viewer shows it only as text too.
+
+The service can delay everything that viewers get (see "The delay of the
+stream"). All frame numbers and times in this section are then those of the
+delayed view.
 
 ### Events for viewers
 
@@ -477,6 +486,7 @@ Client to server:
 | --- | --- |
 | `subscribe { zones: [ZoneId] }` | Add zones. The server sends one `snapshot` for each new zone |
 | `unsubscribe { zones: [ZoneId] }` | Remove zones. The server answers `unsubscribed` |
+| `tune { channels: [Channel] }` | Choose the channels of the show: `director`, `stories`. The list replaces the channels of the viewer. The server sends the state of each channel of the list |
 | `ping` | The server answers `pong` |
 
 Server to client:
@@ -487,6 +497,8 @@ Server to client:
 | `snapshot { zone, frame, residents: [ResidentView] }` | Every resident of one zone, in ascending id order. It replaces what the viewer knows about the zone |
 | `delta { frame, zone, tick, moved, entered, left, activity, events }` | What changed in one subscribed zone in one frame |
 | `frame { frame, clock, populations, headlines, viewers }` | The end of one frame, for every viewer. `populations` has only the zones whose number changed. `headlines` are `FeedEvent`s |
+| `director { shot: Shot }` | The shot on air, for a viewer of the channel `director`. See "The director" |
+| `stories { stories: [Story], reset }` | Stories that are new or that changed, for a viewer of the channel `stories`. With `reset` true: every story that the service lists now, and the viewer forgets all others. See "Stories" |
 | `unsubscribed { zones }` | The zones that were removed |
 | `error { error: { code, message } }` | A request was refused. Nothing changed |
 | `pong` | The answer to `ping` |
@@ -521,36 +533,53 @@ Rules:
 7. One viewer can subscribe to at most 32 zones. A `subscribe` with a zone
    that does not exist, or with too many zones, is refused as a whole. A
    zone that is in the subscription already is ignored.
-8. Error codes: `bad_request` (not a request, or a binary frame),
-   `unknown_zone`, `too_many_zones`. A message of more than 16,384 bytes
-   closes the connection.
+8. Error codes: `bad_request` (not a request, a channel that does not
+   exist, or a binary frame), `unknown_zone`, `too_many_zones`. A message
+   of more than 16,384 bytes closes the connection.
 9. Each viewer has a queue of 256 messages. When the queue is full, the
    viewer loses the frame. As soon as the queue has room, the server sends
-   a new `world` message with the `dropped` count and a new `snapshot` of
-   each subscribed zone. The same happens when the cache itself lost frames
-   of the simulation. A message that cannot leave in 10 seconds closes the
-   connection.
+   a new `world` message with the `dropped` count, the state of each chosen
+   channel and a new `snapshot` of each subscribed zone. The same happens
+   when the cache itself lost frames of the simulation. A message that
+   cannot leave in 10 seconds closes the connection.
 10. The server closes the socket when the simulation stops.
+11. A viewer gets `director` and `stories` messages only for the channels
+    that it chose with `tune`. After `tune`, the server sends the state of
+    each channel of the list: one `director` message, and one `stories`
+    message with `reset` true. Then it sends a `director` message in each
+    frame in which the shot changed, and a `stories` message in each frame
+    in which stories changed. In one frame they come after the `delta`
+    messages and before the `frame` message, the `director` message first.
+    One `stories` message of a frame has at most 8 stories, the most
+    dramatic first; the others come in the next frames.
 
 ### HTTP reads
 
 Errors use `{ "error": { "code", "message" } }`. A value that is not valid
 (an id that is not a number, a bad cursor, a kind that does not end in
-`_published`) gives 400 `invalid`. Every route gives 503 `shutdown` when the
-simulation stopped before the cache could read the world.
+`_published`, a `status` that does not exist) gives 400 `invalid`. Every
+route gives 503 `shutdown` when the simulation stopped before the cache
+could read the world. All routes are `GET`, except the pin of a clip.
 
 | Route | Answer |
 | --- | --- |
 | `GET /v1/world` | `WorldView::layout` from the cache |
 | `GET /v1/world/zones/{id}` | `WorldView::zone` from the cache. The tiles and sites are read again from the simulation when they are older than 60 frames. 404 `unknown_zone` |
 | `GET /v1/feed` | `FeedPage { events: [FeedEvent], next: EventId, more: bool, gap: bool }` |
-| `GET /v1/residents/{id}/profile` | `Profile`. 404 `unknown_resident` |
+| `GET /v1/residents/{id}/profile` | `Profile`, with the life story. 404 `unknown_resident` |
+| `GET /v1/places/{site}/history` | `PlaceHistory`. 404 `unknown_place` |
+| `GET /v1/director` | `{ frame, shot: Shot }`: the shot on air and the last frame that the director saw |
+| `GET /v1/stories` | `{ frame, stories: [Story] }` |
+| `GET /v1/stories/{id}` | `Story`. 404 `unknown_story` |
+| `GET /v1/clips` | `{ clips: [ClipRef] }`: the pinned clips, the newest event first |
+| `GET /v1/clips/{event}` | `Clip`. 404 `unknown_clip` |
+| `POST /v1/clips/{event}/pin` | `{ id, pinned, link }`. No body. 404 `unknown_clip`, 403 `pin_disabled` |
 | `GET /v1/published` | `{ published: [{ kind, key, frame }] }` |
 | `GET /v1/published/{kind}` | `{ kind, series: [Published] }`. 404 `not_published` |
 | `GET /v1/published/{kind}/{key}` | `Published`. 404 `not_published` |
 | `GET /v1/stats/economy` | `{ kind, series: [Published] }` for `finance.stats_published`. 404 `not_published` |
 | `GET /v1/leaderboards/{board}` | `Published` for `missions.leaderboard_published` with the key `{board}`. 404 `not_published` |
-| `GET /v1/spectate/stats` | `{ frame, residents, viewers, dropped_frames, resyncs }` |
+| `GET /v1/spectate/stats` | `{ frame, residents, viewers, dropped_frames, resyncs, delay_frames }` |
 
 `/v1/feed` takes these query fields:
 
@@ -561,8 +590,15 @@ simulation stopped before the cache could read the world.
 | `min_drama` | Lowest drama score. Default 0 |
 | `kind` | The kind must start with this text, for example `economy.` |
 
-The client sends `next` as `after` in its next request. `more` is true when
-more events after `next` are ready now. `gap` is true when events between
+`/v1/stories` takes these query fields:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `open`: only open stories. `all` (the default): also the closed stories |
+| `limit` | Greatest number of stories. Default 20, at most 128 |
+
+For `/v1/feed`, the client sends `next` as `after` in its next request.
+`more` is true when more events after `next` are ready now. `gap` is true when events between
 `after` and the first event of the answer were lost, because the cache did
 not keep them any more. The cache keeps the last 10,000 events, and the last
 10,000 events with a drama score of 11 or more; a request with `min_drama`
@@ -572,14 +608,234 @@ of 11 or more reads the second list.
 Profile { id: ResidentId, name: String, model: Option<String>, alive: bool,
           zone: ZoneId, zone_name: String, city: CityId, city_name: String,
           pos: Pos, activity: Option<String>, frame: u64, cause: Option<String>,
-          events: Vec<FeedEvent> }
+          events: Vec<FeedEvent>, life: LifeStory }
 ```
 
 `events` holds the newest 20 public events of the resident that the cache
 still has, oldest first: events with the resident as the actor, or with the
 resident in the `resident` field of the data. A resident that left the world
 keeps a profile with `alive` false, its last place and the `cause` that the
-kernel gave. The cache keeps the last 4,096 such residents.
+kernel gave. The cache keeps the last 4,096 such residents. `life` is the
+life story from the chronicle (see "The chronicle").
+
+### The director
+
+The director chooses what a broadcast shows. It reads every public event
+and gives a score to each subject: a resident, a site or a district. It
+then chooses a shot.
+
+```rust
+Shot { seq: u64, frame: u64, clock: Clock, zone: Option<ZoneId>, city: Option<CityId>,
+       pos: Option<Pos>, focus: Focus, zoom: Zoom, caption: String, breaking: bool,
+       event: Option<EventId>, kind: Option<String>, drama: u8,
+       story: Option<u64>, label: Option<String>, headline: Option<String> }
+Focus (tag "type") = none | resident { id: ResidentId, name: Option<String> }
+                   | place { site: Option<SiteId>, name: Option<String>, pos: Pos }
+Zoom = country | city | street | close
+```
+
+- `seq` grows by one with each cut, from 1. A `director` message with the
+  `seq` of the shot on air changes its words only (`caption`, `event`,
+  `kind`, `drama`, `story`, `label`, `headline`): the camera stays. Before
+  the first frame the shot has `seq` 0 and an empty caption.
+- `frame` and `clock` are those of the frame in which the shot started.
+- `focus` says what the camera looks at. For `resident` the camera follows
+  the resident; `zone` and `pos` are then the place of the resident when the
+  shot started. For `place`, `pos` is the middle of the site, or the place
+  of the event. For `none` the shot is a wide view: of the city `city` at
+  `pos`, or of the whole country when `city` is absent.
+- `caption` is one line about the shot. For a shot of a subject it is the
+  line of the event `event`. For a wide view it names the city or the
+  country and its number of residents.
+- `story`, `label` and `headline` are the id, the word for the kind and the
+  headline of the story of that event, when it is part of a story that
+  viewers see.
+
+The rules, with the defaults of `[director]` in `data/director.toml`:
+
+1. An event with a drama score below 11 does not count. An event counts for
+   90 frames. Its weight falls in a straight line from its drama score to
+   zero.
+2. An event gives its weight to its subjects: all of it to its first
+   resident (the actor, or the first resident that the data names), 80
+   percent to each other resident, 70 percent to its site and 25 percent to
+   its district. The score of a subject is the sum of these weights. Each
+   event after the first adds 25 percent to the score, up to 100 percent.
+3. A subject can get a shot when its score is at least 30. A shot stays at
+   least 12 frames. After that, another subject with that score takes the
+   shot when its score is at least 130 percent of the score of the subject
+   on air, when the score of the subject on air is below 12, or when the
+   shot is 60 frames old.
+4. Breaking news is an event with a drama score of 71 or more. It cuts in
+   at once, and the shot has `breaking` true. For 8 frames, other breaking
+   news cuts in only when it is more dramatic. For 120 frames after
+   breaking news of one kind of event, another event of that kind cuts in
+   only when it is more dramatic; it still counts in the scores. Breaking
+   news without a resident, a site and a district gets a wide view of the
+   city that its data names, or of the country. That view stays at least 12
+   frames.
+5. Variety: a subject that just left the air loses 60 percent of its
+   score, and another subject in the district that just left the air loses
+   20 percent. A subject also loses 50 percent when the event that would
+   be its caption has the kind of a shot that just started. Each loss falls
+   to zero over 180 frames.
+6. When the score of the subject on air is below 12 and no other subject
+   has the score for a shot, the director shows a wide view. The wide views
+   take turns, 30 frames each: the country, then each city, the city with
+   the most residents first. A country with one city shows only that city.
+   A wide view stays at least 4 frames before a subject takes the shot.
+7. A shot of a resident or of a site has the zoom `close` when the drama
+   score of its event is 55 or more. Other shots of a subject have
+   `street`.
+
+The director has no clock and no randomness: the same events in the same
+frames give the same shots.
+
+### Stories
+
+A story is a group of events that belong together: a crime and its
+investigation, an election, a feud, a bankruptcy. The rules are the
+`[[story]]` tables of `data/director.toml`, one for each kind of story.
+
+```rust
+Story { id: u64, kind: String, label: String, headline: String, latest: String,
+        status: StoryStatus /* open | closed */, started: u64, started_clock: Clock,
+        updated: u64, updated_clock: Clock, drama: u8, events: u64,
+        residents: Vec<StoryResident>, zone: Option<ZoneId>, lead: EventId,
+        timeline: Vec<StoryBeat> }
+StoryResident { id: ResidentId, name: String }
+StoryBeat { event: EventId, frame: u64, clock: Clock, kind: String, drama: u8,
+            line: String, zone: Option<ZoneId>, actor: Option<ResidentId> }
+```
+
+- An event belongs to a kind of story when its kind starts with one of the
+  `prefixes` of the rule. One event can be in stories of more than one kind.
+- An event belongs to a kind only when it also passes the `only` table of
+  the rule: for each data field of the table, the event has one of the
+  listed values, or does not have the field.
+- An event joins the open story of its kind that has the same thread. The
+  thread is the value of data fields that the rule names, for example
+  `case` or `city` and `office`. Else the event joins the open story with
+  which it shares at least `share` residents, when that story had an event
+  in the last `link_frames` frames and has no other thread. The story then
+  takes the thread of the event. Else the event opens a new story, when
+  its drama score is at least `open_drama` and it has a thread or at least
+  `share` residents.
+- Viewers see a story from `min_events` events. A feud needs two events
+  between the same two residents.
+- `id` grows with time, from 1. `started` and `updated` are the frames of
+  the first and of the newest event. `drama` is the highest drama score.
+  `events` counts all events of the story.
+- `lead` is the most dramatic event of the story; of two with the same
+  score, the earlier one. `headline` comes from the template of the rule:
+  the line of the lead, or the line of the newest event. `latest` is the
+  line of the newest event.
+- `residents` has at most 12 residents, in the order in which they came
+  into the story. `timeline` has at most 24 events, oldest first: the first
+  event stays, and of the others the oldest leave.
+- A story closes after 720 frames without a new event. A closed story takes
+  no more events. The service keeps at most 64 open stories and the last 64
+  closed stories; the open story with the oldest event closes when a new
+  story needs the room.
+- `/v1/stories` lists open stories first, then by `updated`, newest first.
+
+### The chronicle
+
+The chronicle is a bounded history of public events for each resident and
+for each site. It keeps one line for each event, written with the names of
+that time.
+
+```rust
+LifeStory { born: Option<LifeEntry>, jobs: Vec<LifeEntry>, homes: Vec<LifeEntry>,
+            deals: Vec<LifeEntry>, crimes: Vec<LifeEntry>, offices: Vec<LifeEntry>,
+            moments: Vec<LifeEntry>, death: Option<LifeEntry>, age: Option<u64> }
+LifeEntry { event: EventId, frame: u64, clock: Clock, kind: String, drama: u8,
+            line: String, zone: Option<ZoneId>, site: Option<SiteId> }
+PlaceHistory { site: SiteId, name: Option<String>, zone: Option<ZoneId>,
+               events: Vec<LifeEntry> }
+```
+
+- The chronicle keeps an event when its kind is in a chapter (`[chapters]`
+  in `data/director.toml`), or when its drama score is 11 or more.
+- An event is in the history of each of its residents (the actor, and the
+  residents that its data names in the fields of `[facts]`), and in the
+  history of its site (the `site` field of the data, or the site at the
+  place of the event).
+- Each list of a `LifeStory` is oldest first. `born` is the arrival in the
+  world; it is absent for a resident that came before the service first
+  saw the world. `death` is the first event of the end: the death, or the
+  removal from the world. `age` is the `age` field of that event. The
+  arrival or the death of another resident is in `moments`. `moments` also
+  has every kept event without a chapter.
+- The chronicle keeps 64 events for one resident and 64 for one site. The
+  oldest leave; the arrival and the end of a resident stay. It keeps
+  20,000 residents and 5,000 sites; those with the oldest events leave.
+- `/v1/places/{site}/history` gives the newest 40 events of a site, oldest
+  first. `name` and `zone` are those of the site on the map of the cache.
+- The service that gets a storage writes the chronicle to it each 30
+  frames and when the simulation stops, and reads it again at the next
+  start. Data of another world (other cities or zones), and events of
+  frames after the frame of the world at the start, are not read. Without
+  a storage the chronicle lives in memory.
+
+### Replay clips
+
+The service keeps the last 240 frames of the feed. A clip is the part of
+one zone in the frames around one public event. The id of a clip is the id
+of its event.
+
+```rust
+Clip { id: EventId, event: FeedEvent, line: String, zone: ZoneId, from: u64, to: u64,
+       complete: bool, pinned: bool, residents: Vec<ResidentView>,
+       frames: Vec<ClipFrame>, link: String }
+ClipFrame { frame: u64, clock: Clock, tick: Tick, moved, entered, left, activity, events }
+ClipRef { id: EventId, kind: String, line: String, frame: u64, clock: Clock,
+          zone: ZoneId, drama: u8, link: String }
+```
+
+- A clip has the frames from 20 frames before the frame of its event to 40
+  frames after it, as far as the service has them. `from` and `to` are the
+  first and the last frame. `complete` is false while frames after the
+  event are still to come; the client asks again later.
+- `residents` has every resident of the zone before the frame `from`, in
+  ascending id order. `frames` has one entry for each frame from `from` to
+  `to` in which the zone changed or had an event. The lists of a
+  `ClipFrame` are those of a `delta` message. A viewer plays a clip like
+  the feed: `residents` is the `snapshot`, each entry is a `delta`.
+- `link` is the address of the clip in the viewer: `/?clip=<id>`.
+- `/v1/clips/{event}` gives 404 `unknown_clip` when the event is not in the
+  event log of the cache, when the event has no zone, when the service does
+  not have the frame of the event any more, and when clips are turned off
+  (`clips.window_frames` is 0).
+- A pinned clip is kept after its frames left the service. `POST
+  /v1/clips/{event}/pin` pins a clip; `pinned` in the answer is false when
+  the clip is not complete yet, and the service then pins it when the
+  frames are there. The service pins the clip of an event with a drama
+  score of 85 or more by itself. It keeps at most 128 pinned clips; the
+  clip of the oldest event leaves. A service with `clips.public_pin` false
+  answers the pin request with 403 `pin_disabled`.
+- The service that gets a storage writes each pinned clip to it and reads
+  the clips again at the next start, with the rules of the chronicle.
+
+### The delay of the stream
+
+The live view shows what residents cannot see, for example who a thief is.
+An owner could give that to its agent. `stream.delay_frames` holds back
+everything that viewers get by that number of frames: every message of the
+socket, every HTTP read of this section, the director, the stories, the
+chronicle and the clips. The default is 0.
+
+- With a delay of `n`, the cache holds the frame `f - n` when the
+  simulation is at the frame `f`. `/v1/spectate/stats` gives `n` as
+  `delay_frames`.
+- The frame numbers, the event ids and the shots are the same as without a
+  delay. They only come later.
+- At the start the service answers no request for `n` frames: it has
+  nothing that is old enough. A request waits.
+- The tiles and sites that a request reads again from the simulation wait
+  for `n` frames too.
+- A pinned clip and the chronicle on the storage hold only what viewers
+  already got.
 
 ### Published state
 
@@ -606,6 +862,8 @@ options from its address:
 | Option | Meaning |
 | --- | --- |
 | `watch=<resident id>` | Follow one resident, also across zones. This is the watch link of a resident |
-| `broadcast=1` | Hide the controls, for a video stream |
+| `broadcast=1` | Broadcast mode, for a video stream: the camera follows the director, and the page shows the caption, the stories, the news and the numbers of the world. It needs no input |
+| `resident=<resident id>` | The page of one resident, with its life story |
+| `clip=<event id>` | The player of one replay clip. This is the link of a clip |
 | `view=country`, `view=city`, `view=street` | The zoom level at the start |
 | `zone=<zone id>` | The district to look at at the start |

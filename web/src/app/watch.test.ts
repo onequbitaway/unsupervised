@@ -4,7 +4,19 @@ import type { Profile } from '../state/types';
 import { ProfileWatch } from './watch';
 
 function profile(id: number, x: number, alive = true): Profile {
-  return { id, name: `r${id}`, alive, zone: 0, zone_name: 'z', city: 0, city_name: 'c', pos: { x, y: 1 }, frame: 1, events: [] };
+  return {
+    id,
+    name: `r${id}`,
+    alive,
+    zone: 0,
+    zone_name: 'z',
+    city: 0,
+    city_name: 'c',
+    pos: { x, y: 1 },
+    frame: 1,
+    events: [],
+    life: { jobs: [], homes: [], deals: [], crimes: [], offices: [], moments: [] },
+  };
 }
 
 class FakeServer {

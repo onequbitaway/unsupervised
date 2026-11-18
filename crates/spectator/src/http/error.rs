@@ -25,6 +25,11 @@ impl ApiError {
         ApiError::new(StatusCode::NOT_FOUND, code, message)
     }
 
+    /// The server does not do this for viewers.
+    pub fn forbidden(code: &str, message: impl Into<String>) -> ApiError {
+        ApiError::new(StatusCode::FORBIDDEN, code, message)
+    }
+
     /// The request is not valid.
     pub fn invalid(message: impl Into<String>) -> ApiError {
         ApiError::new(StatusCode::BAD_REQUEST, "invalid", message)

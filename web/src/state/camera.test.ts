@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   approach,
   clampToWorld,
+  clampView,
   fitRect,
   fits,
   levelOf,
@@ -145,5 +146,28 @@ describe('zones', () => {
   it('finds the zone with the most residents', () => {
     expect(id(busiestZone(world, new Map()))).toBe(17);
     expect(id(busiestZone(world, new Map([[3, 500]])))).toBe(3);
+  });
+});
+
+describe('clampView', () => {
+  const city = { x0: 100, y0: 0, x1: 228, y1: 128 };
+  const view = { width: 640, height: 320 };
+
+  it('keeps the picture inside the rectangle', () => {
+    // 10 pixels for one tile: the screen shows 64 by 32 tiles.
+    expect(clampView({ x: 105, y: 5, scale: 10 }, view, city)).toEqual({ x: 132, y: 16, scale: 10 });
+    expect(clampView({ x: 226, y: 127, scale: 10 }, view, city)).toEqual({ x: 196, y: 112, scale: 10 });
+  });
+
+  it('does not move a camera whose picture is inside already', () => {
+    const inside = { x: 160, y: 60, scale: 10 };
+    expect(clampView(inside, view, city)).toEqual(inside);
+  });
+
+  it('looks at the middle on an axis where the rectangle is smaller than the screen', () => {
+    // 2 pixels for one tile: the screen shows 320 by 160 tiles, more than the city.
+    expect(clampView({ x: 110, y: 20, scale: 2 }, view, city)).toEqual({ x: 164, y: 64, scale: 2 });
+    // 4 pixels: 160 by 80 tiles. The city is narrower than the screen and higher.
+    expect(clampView({ x: 110, y: 20, scale: 4 }, view, city)).toEqual({ x: 164, y: 40, scale: 4 });
   });
 });

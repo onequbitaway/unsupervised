@@ -49,8 +49,8 @@ pub(crate) async fn feed(
     Ok(Json(page))
 }
 
-/// Answers `/v1/residents/{id}/profile`: who a resident is, where it is
-/// and what it did.
+/// Answers `/v1/residents/{id}/profile`: who a resident is, where it is,
+/// what it did, and its life story.
 pub(crate) async fn profile(
     State(hub): State<Arc<Hub>>,
     Path(id): Path<String>,
@@ -60,7 +60,11 @@ pub(crate) async fn profile(
         .parse::<u64>()
         .map(ResidentId)
         .map_err(|_| ApiError::invalid("A resident id is a number."))?;
-    let profile = hub.cache().profile(id, hub.config.profile.events);
+    let profile = {
+        let cache = hub.cache();
+        let life = hub.studio().chronicle.life(id);
+        cache.profile(id, hub.config.profile.events, life)
+    };
     profile.map(Json).ok_or_else(|| {
         ApiError::not_found("unknown_resident", format!("No resident with the id {id} is known."))
     })

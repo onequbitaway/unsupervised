@@ -9,6 +9,7 @@ use serde::Deserialize;
 use unsup_protocol::{ViewQuery, WorldView, ZoneId};
 
 use super::error::ApiError;
+use crate::delay::Held;
 use crate::hub::Hub;
 use crate::wire::FeedStats;
 
@@ -39,6 +40,13 @@ impl Drop for Refresh<'_> {
     }
 }
 
+impl Refresh<'_> {
+    /// Leaves the refresh open. The cache ends it when it gets the map.
+    fn leave_open(self) {
+        std::mem::forget(self);
+    }
+}
+
 /// Reads the tiles and sites of a zone again when the copy of the cache is
 /// old. One request at a time does this for a zone, so viewers cannot load
 /// the simulation with it.
@@ -46,9 +54,15 @@ async fn refresh_map(hub: &Hub, zone: ZoneId) {
     if !hub.cache().claim_refresh(zone, hub.config.map.refresh_frames) {
         return;
     }
-    let _refresh = Refresh { hub, zone };
+    let refresh = Refresh { hub, zone };
     match hub.sim.view(ViewQuery::Zone { zone }).await {
-        Ok(view) => hub.cache_mut().set_map(view),
+        Ok(view) if hub.config.stream.delay_frames == 0 => hub.cache_mut().set_map(view),
+        // The map waits like everything else for viewers. No other request
+        // reads the map again until the cache has this one.
+        Ok(view) => {
+            hub.delay().push(hub.live(), Held::Map(view));
+            refresh.leave_open();
+        }
         // The old map stays. A later request tries again.
         Err(error) => tracing::debug!(%zone, %error, "the map of a zone could not be read again"),
     }

@@ -46,6 +46,56 @@ pub struct OtherArgs {
     pub other: ResidentId,
 }
 
+/// Arguments of `win_election`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct CityArgs {
+    /// The city of the election.
+    pub city: u16,
+}
+
+/// Arguments of `happen` and `declare`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct HappenArgs {
+    /// Kind of the event. It must be one of [`PLOT_KINDS`].
+    pub kind: String,
+    /// Drama score of the event.
+    pub drama: u8,
+    /// Data of the event.
+    #[serde(default)]
+    pub data: Value,
+}
+
+/// The kinds of events that the stories of the driver use. The kernel
+/// takes the kind of an event as static text.
+pub const PLOT_KINDS: [&str; 13] = [
+    "crime.arrest_made",
+    "crime.heist_committed",
+    "crime.investigation_opened",
+    "crime.trial_ended",
+    "economy.lease_started",
+    "economy.property_foreclosed",
+    "economy.tenant_evicted",
+    "economy.worker_hired",
+    "finance.loan_defaulted",
+    "finance.stats_published",
+    "missions.leaderboard_published",
+    "politics.candidate_registered",
+    "society.contract_breached",
+];
+
+/// The kinds that `happen` and `declare` also take, outside the list
+/// above.
+const MORE_KINDS: [&str; 2] = ["society.opinion_given", "politics.election_decided"];
+
+fn plot_kind(kind: &str) -> Result<&'static str, ActionError> {
+    PLOT_KINDS
+        .iter()
+        .chain(MORE_KINDS.iter())
+        .find(|known| **known == kind)
+        .copied()
+        .ok_or_else(|| ActionError::invalid_args("The showcase does not know this kind of event."))
+}
+
 /// Arguments of verbs that take none.
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Nothing {}
@@ -245,8 +295,34 @@ impl Plugin for Town {
                     EventMeta::public("crime.theft_committed", theft)
                         .actor(ctx.resident)
                         .at(realm.pos(ctx.idx)),
-                    &json!({ "thief": ctx.resident, "victim": args.other, "amount": 4_500 }),
+                    &json!({
+                        "thief": ctx.resident, "victim": args.other, "amount": 4_500,
+                        "case": ctx.action_id,
+                    }),
                 );
+                Ok(json!({ "case": ctx.action_id }))
+            },
+        );
+        // The events of the stories that the driver plays: with a place
+        // (`happen`) and without one (`declare`).
+        b.instant_verb::<HappenArgs>(
+            spec("happen", "Make a public event here."),
+            |realm, ctx, args| {
+                let meta = EventMeta::public(plot_kind(&args.kind)?, args.drama)
+                    .actor(ctx.resident)
+                    .at(realm.pos(ctx.idx));
+                realm.emit(meta, &args.data);
+                Ok(Value::Null)
+            },
+        );
+        b.global_verb::<HappenArgs>(
+            spec("declare", "Make a public event without a place."),
+            |realm, ctx, args| {
+                let meta = EventMeta::public(plot_kind(&args.kind)?, args.drama);
+                // Published state has no actor.
+                let meta =
+                    if args.kind.ends_with("_published") { meta } else { meta.actor(ctx.resident) };
+                realm.emit(meta, &args.data);
                 Ok(Value::Null)
             },
         );
@@ -299,13 +375,12 @@ impl Plugin for Town {
             Ok(Value::Null)
         });
         let election = drama.election_decided;
-        b.global_verb::<Nothing>(
-            spec("win_election", "Win the election for mayor."),
-            move |realm, ctx, _| {
-                let city = realm.layout().zone(ctx.zone).map(|zone| zone.city);
+        b.global_verb::<CityArgs>(
+            spec("win_election", "Win the election for mayor of a city."),
+            move |realm, ctx, args| {
                 realm.emit(
                     EventMeta::public("politics.election_decided", election).actor(ctx.resident),
-                    &json!({ "city": city, "office": "mayor", "winner": ctx.resident }),
+                    &json!({ "city": args.city, "office": "mayor", "winner": ctx.resident }),
                 );
                 Ok(Value::Null)
             },

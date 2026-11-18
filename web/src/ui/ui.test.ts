@@ -3,11 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { panelFacts } from '../state/profile';
 import { addItems, advance, emptyTicker } from '../state/ticker';
 import type { Profile } from '../state/types';
+import { lifePage } from '../state/life';
+import { lowerThird } from '../state/lowerthird';
+import { BreakingBanner, Curtain, LowerThirdBar, SidePanel } from './broadcast';
+import { ClipBar } from './clipbar';
 import { Controls } from './controls';
 import { button, el, setShown, setText } from './dom';
 import { Hud } from './hud';
 import { keyAction, wheelFactor } from './input';
 import { cssColor, Legend } from './legend';
+import { LifePageView } from './lifepage';
 import { ResidentPanel } from './panel';
 import { tagOf, TickerBar } from './tickerbar';
 
@@ -123,6 +128,7 @@ describe('ResidentPanel', () => {
         data: { text: { untrusted: true, from: 7, text: HOSTILE } },
       },
     ],
+    life: { jobs: [], homes: [], deals: [], crimes: [], offices: [], moments: [] },
   };
 
   function view(following = false) {
@@ -242,5 +248,199 @@ describe('keys and wheel', () => {
     expect(wheelFactor(-100_000, false)).toBe(wheelFactor(-240, false));
     // A pinch gives small numbers and zooms more for each of them.
     expect(wheelFactor(-10, true)).toBeGreaterThan(wheelFactor(-10, false));
+  });
+});
+
+describe('the page of a broadcast', () => {
+  const clock = { year: 1, day: 1, hour: 2, minute: 3 };
+  const layout = {
+    frame: 0,
+    clock,
+    cities: [{ id: 0, name: HOSTILE, bounds: { x0: 0, y0: 0, x1: 64, y1: 64 }, zones: [0] }],
+    zones: [{ id: 0, city: 0, name: 'Downtown', bounds: { x0: 0, y0: 0, x1: 64, y1: 64 }, residents: 0 }],
+  };
+  const shot = {
+    seq: 2,
+    frame: 9,
+    clock,
+    zone: 0,
+    focus: { type: 'resident' as const, id: 7, name: HOSTILE },
+    zoom: 'close' as const,
+    caption: HOSTILE,
+    breaking: true,
+    drama: 80,
+    story: 1,
+    label: HOSTILE,
+    headline: `story ${HOSTILE}`,
+  };
+
+  it('shows the lower third as text and hides it without a shot', () => {
+    const bar = new LowerThirdBar();
+    expect(bar.root.hidden).toBe(true);
+    bar.update(lowerThird(shot, layout));
+    expect(bar.root.hidden).toBe(false);
+    expect(bar.root.classList.contains('breaking')).toBe(true);
+    expect(bar.root.querySelector('.lower-caption')?.textContent).toBe(HOSTILE);
+    expect(bar.root.querySelector('.lower-headline')?.textContent).toBe(`story ${HOSTILE}`);
+    expect(bar.root.querySelector('.lower-place')?.textContent).toContain('Downtown');
+    expect(injected(bar.root)).toBe(0);
+    // A shot whose headline repeats the caption shows no second line.
+    bar.update(lowerThird({ ...shot, headline: HOSTILE, breaking: false }, layout));
+    expect((bar.root.querySelector('.lower-headline') as HTMLElement).hidden).toBe(true);
+    expect(bar.root.classList.contains('breaking')).toBe(false);
+    bar.update(lowerThird(null, layout));
+    expect(bar.root.hidden).toBe(true);
+  });
+
+  it('shows the breaking-news banner only with a line', () => {
+    const banner = new BreakingBanner();
+    expect(banner.root.hidden).toBe(true);
+    banner.update(HOSTILE);
+    expect(banner.root.hidden).toBe(false);
+    expect(banner.root.querySelector('.breaking-line')?.textContent).toBe(HOSTILE);
+    expect(banner.root.querySelector('.breaking-tag')?.textContent).toBe('BREAKING NEWS');
+    expect(injected(banner.root)).toBe(0);
+    banner.update('');
+    expect(banner.root.hidden).toBe(true);
+  });
+
+  it('shows one card with its rows, and nothing without a card', () => {
+    const panel = new SidePanel();
+    expect(panel.root.hidden).toBe(true);
+    const card = {
+      id: 'board:wealth',
+      title: HOSTILE,
+      rows: [
+        { rank: '1', label: HOSTILE, value: '$9.00' },
+        { rank: '', label: 'No rank', value: '' },
+      ],
+    };
+    panel.update(card, 1, 3);
+    expect(panel.root.hidden).toBe(false);
+    expect(panel.root.dataset.card).toBe('board');
+    expect(panel.root.querySelector('.side-title')?.textContent).toBe(HOSTILE);
+    const rows = [...panel.root.querySelectorAll('.side-row')];
+    expect(rows.map((row) => row.children.length)).toEqual([3, 1]);
+    expect(rows[0]?.querySelector('.side-label')?.textContent).toBe(HOSTILE);
+    expect(rows[0]?.querySelector('.side-value')?.textContent).toBe('$9.00');
+    // Three cards in the rotation: three dots, the second one on.
+    const dots = [...panel.root.querySelectorAll('.side-dot')];
+    expect(dots.map((dot) => dot.classList.contains('on'))).toEqual([false, true, false]);
+    expect(injected(panel.root)).toBe(0);
+    // One card alone has no dots.
+    panel.update(card, 0, 1);
+    expect(panel.root.querySelectorAll('.side-dot')).toHaveLength(0);
+    panel.update(null, 0, 0);
+    expect(panel.root.hidden).toBe(true);
+  });
+
+  it('makes the picture as dark as the cut says', () => {
+    const curtain = new Curtain();
+    curtain.update(0.5);
+    expect(curtain.root.style.opacity).toBe('0.5');
+    curtain.update(1);
+    expect(curtain.root.style.opacity).toBe('1');
+    curtain.update(0);
+    expect(curtain.root.style.opacity).toBe('0');
+  });
+});
+
+describe('LifePageView', () => {
+  const clock = { year: 1, day: 1, hour: 2, minute: 3 };
+  const entry = (frame: number, line: string) => ({ event: `${frame}-0`, frame, clock, kind: 'x.y', drama: 20, line });
+  const profile: Profile = {
+    id: 7,
+    name: HOSTILE,
+    model: HOSTILE,
+    alive: true,
+    zone: 3,
+    zone_name: HOSTILE,
+    city: 1,
+    city_name: 'Tokentown',
+    pos: { x: 1, y: 1 },
+    frame: 9,
+    events: [],
+    life: {
+      born: entry(1, 'Ada arrived in Plaza'),
+      jobs: [entry(5, HOSTILE)],
+      homes: [],
+      deals: [],
+      crimes: [entry(8, 'Bo stole $45.00 from Ada')],
+      offices: [],
+      moments: [],
+    },
+  };
+  const links = { watch: 'http://host/?watch=7', live: 'http://host/', clip: (event: string) => `http://host/?clip=${event}` };
+
+  it('shows the life story by chapter, as text, with a link to each clip', () => {
+    const view = new LifePageView();
+    view.update(lifePage(profile), links);
+    expect(view.root.querySelector('.life-name')?.textContent).toBe(lifePage(profile).name);
+    const chapters = [...view.root.querySelectorAll('.life-chapter')] as HTMLElement[];
+    expect(chapters.map((chapter) => chapter.dataset.chapter)).toEqual(['born', 'jobs', 'crimes']);
+    expect(chapters[1]?.querySelector('.life-text')?.textContent).toBe(HOSTILE);
+    expect(chapters[2]?.querySelector('.life-replay')?.getAttribute('href')).toBe('http://host/?clip=8-0');
+    expect(view.root.querySelector('.life-link.primary')?.getAttribute('href')).toBe('http://host/?watch=7');
+    expect((view.root.querySelector('.life-note') as HTMLElement).hidden).toBe(true);
+    expect(injected(view.root)).toBe(0);
+  });
+
+  it('says that the chronicle has nothing, and gives no watch link for a resident that left', () => {
+    const view = new LifePageView();
+    const empty = { jobs: [], homes: [], deals: [], crimes: [], offices: [], moments: [] };
+    view.update(lifePage({ ...profile, alive: false, life: empty }), links);
+    expect(view.root.querySelector('.life-note')?.textContent).toBe('The chronicle has no event of this resident yet.');
+    expect(view.root.querySelector('.life-link.primary')).toBeNull();
+    expect(view.root.querySelector('.life-status')?.classList.contains('gone')).toBe(true);
+    view.showNote('No resident with the id 7 is known.');
+    expect(view.root.querySelector('.life-note')?.textContent).toBe('No resident with the id 7 is known.');
+  });
+});
+
+describe('ClipBar', () => {
+  const model = {
+    line: HOSTILE,
+    when: 'Year 1 · Day 1 · 02:03',
+    place: 'Tokentown · Downtown',
+    progress: 0.25,
+    playing: true,
+    pin: 'open' as const,
+    note: '',
+  };
+
+  it('shows the line of the clip as text, and how far the clip is', () => {
+    const bar = new ClipBar({ toggle: () => {}, restart: () => {}, pin: () => {} }, 'http://host/?clip=5-0', 'http://host/');
+    bar.update(model);
+    expect(bar.root.querySelector('.clip-line')?.textContent).toBe(HOSTILE);
+    expect((bar.root.querySelector('.clip-fill') as HTMLElement).style.width).toBe('25%');
+    expect((bar.root.querySelector('.clip-note') as HTMLElement).hidden).toBe(true);
+    expect(bar.root.querySelector('.clip-live')?.getAttribute('href')).toBe('http://host/');
+    expect(injected(bar.root)).toBe(0);
+    bar.update({ ...model, progress: 7, note: 'The end of this clip is still to come.' });
+    expect((bar.root.querySelector('.clip-fill') as HTMLElement).style.width).toBe('100%');
+    expect((bar.root.querySelector('.clip-note') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('calls its handlers, and shows the state of the pin', () => {
+    const calls: string[] = [];
+    const bar = new ClipBar(
+      { toggle: () => calls.push('toggle'), restart: () => calls.push('restart'), pin: () => calls.push('pin') },
+      'http://host/?clip=5-0',
+      'http://host/',
+    );
+    bar.update(model);
+    const buttons = [...bar.root.querySelectorAll('button')];
+    const byText = (text: string) => buttons.find((node) => node.textContent === text);
+    byText('Pause')?.click();
+    byText('Restart')?.click();
+    byText('Keep this clip')?.click();
+    expect(calls).toEqual(['toggle', 'restart', 'pin']);
+    bar.update({ ...model, playing: false, pin: 'pinned' });
+    expect(byText('Play')).toBeDefined();
+    const kept = buttons.find((node) => node.textContent === 'Kept');
+    expect(kept?.disabled).toBe(true);
+    // A server that pins for nobody: no button.
+    bar.update({ ...model, pin: 'off' });
+    expect(kept?.hidden).toBe(true);
   });
 });

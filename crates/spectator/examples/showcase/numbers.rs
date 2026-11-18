@@ -12,6 +12,74 @@ pub struct Numbers {
     pub driver: Driver,
     /// Drama scores of the events.
     pub drama: Drama,
+    /// The stories that the driver plays.
+    pub plots: Plots,
+    /// Drama scores of the events of the stories.
+    pub plot_drama: PlotDrama,
+}
+
+/// The stories that the driver plays: how often, and how fast.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Plots {
+    /// Frames between two crimes with an investigation.
+    pub crime_every: u64,
+    /// Frames from the crime to the investigation.
+    pub investigation_after: u64,
+    /// Frames from the crime to the arrest.
+    pub arrest_after: u64,
+    /// Frames from the crime to the trial.
+    pub trial_after: u64,
+    /// Frames between two feuds.
+    pub feud_every: u64,
+    /// Frames between the events of one feud.
+    pub feud_step: u64,
+    /// Frames between two bankruptcies.
+    pub bankruptcy_every: u64,
+    /// Frames between the events of one bankruptcy.
+    pub bankruptcy_step: u64,
+    /// Frames between two residents that get a job or a home.
+    pub career_every: u64,
+    /// Frames before an election in which the candidates register.
+    pub campaign_frames: u64,
+    /// Candidates of one election.
+    pub candidates: u64,
+    /// Frames between two publications of the statistics.
+    pub stats_every: u64,
+    /// Frames between two publications of the boards.
+    pub boards_every: u64,
+    /// Rows of one board.
+    pub board_rows: u64,
+}
+
+/// Drama scores of the events of the stories.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlotDrama {
+    /// `crime.investigation_opened`.
+    pub investigation_opened: u8,
+    /// `crime.arrest_made`.
+    pub arrest_made: u8,
+    /// `crime.trial_ended`.
+    pub trial_ended: u8,
+    /// `crime.heist_committed`.
+    pub heist_committed: u8,
+    /// `society.opinion_given`.
+    pub opinion_given: u8,
+    /// `society.contract_breached`.
+    pub contract_breached: u8,
+    /// `finance.loan_defaulted`.
+    pub loan_defaulted: u8,
+    /// `economy.property_foreclosed`.
+    pub property_foreclosed: u8,
+    /// `economy.tenant_evicted`.
+    pub tenant_evicted: u8,
+    /// `economy.worker_hired`.
+    pub worker_hired: u8,
+    /// `economy.lease_started`.
+    pub lease_started: u8,
+    /// `politics.candidate_registered`.
+    pub candidate_registered: u8,
 }
 
 /// How residents walk.

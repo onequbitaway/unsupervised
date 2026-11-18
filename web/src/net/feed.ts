@@ -2,7 +2,7 @@
 // breaks, and that keeps the subscription of the viewer on the server.
 
 import { CONFIG } from '../config';
-import type { ClientMessage, ServerMessage } from '../state/types';
+import type { Channel, ClientMessage, ServerMessage } from '../state/types';
 import { reconnectDelay } from './backoff';
 import { parseServerMessage } from './messages';
 
@@ -58,6 +58,10 @@ export class FeedClient {
   private wanted = new Set<number>();
   /** The zones that the server was asked for on this connection. */
   private asked = new Set<number>();
+  /** The channels of the show that the viewer wants. */
+  private channels: readonly Channel[] = [];
+  /** True when the server knows the channels on this connection. */
+  private tuned = false;
 
   constructor(
     private readonly url: string,
@@ -89,6 +93,17 @@ export class FeedClient {
     this.sync();
   }
 
+  /**
+   * Sets the channels of the show that the viewer wants: the shots of the
+   * director, the stories. The server then sends the state of each channel
+   * and every change, on this connection and on every later one.
+   */
+  setChannels(channels: readonly Channel[]): void {
+    this.channels = [...channels];
+    this.tuned = false;
+    this.sync();
+  }
+
   private connect(): void {
     this.hooks.onStatus('connecting');
     const socket = this.env.createSocket(this.url);
@@ -98,6 +113,7 @@ export class FeedClient {
       this.open = true;
       this.attempt = 0;
       this.asked = new Set();
+      this.tuned = false;
       this.hooks.onStatus('open');
       this.sync();
       this.watch();
@@ -155,6 +171,9 @@ export class FeedClient {
     if (remove.length > 0) this.send({ op: 'unsubscribe', zones: remove });
     if (add.length > 0) this.send({ op: 'subscribe', zones: add });
     this.asked = new Set(this.wanted);
+    // A viewer without channels sends nothing: the server has none either.
+    if (!this.tuned && this.channels.length > 0) this.send({ op: 'tune', channels: [...this.channels] });
+    this.tuned = true;
   }
 
   /**

@@ -7,6 +7,7 @@ import {
   type Camera,
   clampScale,
   clampToWorld,
+  clampView,
   type Fits,
   fitRect,
   fits,
@@ -25,6 +26,14 @@ export class CameraRig {
   /** Where the camera goes. */
   target: Camera;
   size: Size;
+  /** Time in which the camera covers half of the way to its target. A broadcast moves slower. */
+  halfLifeMs: number = CONFIG.view.easeHalfLifeMs;
+  /**
+   * A rectangle that the picture stays inside, or null. A broadcast sets
+   * the city of its shot, so that the screen shows the city and not the
+   * empty land around it.
+   */
+  frame: Rect | null = null;
   private scales: Fits;
   private readonly bounds: Rect;
 
@@ -37,6 +46,16 @@ export class CameraRig {
     this.scales = fits(layout, size);
     this.camera = fitRect(this.bounds, size, CONFIG.view.countryFill);
     this.target = { ...this.camera };
+  }
+
+  /** The scales at which the country, a city and a district fill the screen. */
+  get fits(): Fits {
+    return this.scales;
+  }
+
+  /** The camera that shows the whole country. */
+  get countryCamera(): Camera {
+    return fitRect(this.bounds, this.size, CONFIG.view.countryFill);
   }
 
   /** The level of what the screen shows now. */
@@ -72,7 +91,7 @@ export class CameraRig {
 
   /** Moves the camera towards its target. `dtMs` is the time since the last call. */
   step(dtMs: number): void {
-    this.camera = approach(this.camera, this.target, dtMs, CONFIG.view.easeHalfLifeMs);
+    this.camera = approach(this.camera, this.target, dtMs, this.halfLifeMs);
   }
 
   /** The camera is at its target at once. */
@@ -81,7 +100,8 @@ export class CameraRig {
   }
 
   private aim(next: Camera): void {
-    this.target = clampToWorld({ ...next, scale: clampScale(next.scale, this.scales) }, this.bounds);
+    const inWorld = clampToWorld({ ...next, scale: clampScale(next.scale, this.scales) }, this.bounds);
+    this.target = this.frame === null ? inWorld : clampView(inWorld, this.size, this.frame);
   }
 
   /** Moves the picture by pixels, at once: the pointer holds it. */

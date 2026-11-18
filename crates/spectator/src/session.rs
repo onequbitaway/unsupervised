@@ -7,7 +7,7 @@
 //! the writing task tells the task of the viewer after every message that
 //! left.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,7 +20,7 @@ use unsup_protocol::ZoneId;
 
 use crate::digest::{Digest, to_text};
 use crate::hub::{Hub, Pulse};
-use crate::wire::{ClientMessage, ErrorBody, ServerMessage};
+use crate::wire::{Channel, ClientMessage, ErrorBody, ServerMessage};
 
 /// The state of one subscribed zone.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -41,11 +41,24 @@ struct Viewer {
     world_from: Option<u64>,
     /// Frames that the viewer lost since its last `world` message.
     dropped: u64,
+    /// The channels of the show that the viewer chose.
+    channels: BTreeSet<Channel>,
+    /// The channels whose state the viewer needs: after `tune`, and after
+    /// the viewer lost frames.
+    stale: BTreeSet<Channel>,
 }
 
 impl Viewer {
     fn new(hub: Arc<Hub>, queue: mpsc::Sender<Message>) -> Viewer {
-        Viewer { hub, queue, zones: BTreeMap::new(), world_from: None, dropped: 0 }
+        Viewer {
+            hub,
+            queue,
+            zones: BTreeMap::new(),
+            world_from: None,
+            dropped: 0,
+            channels: BTreeSet::new(),
+            stale: BTreeSet::new(),
+        }
     }
 
     /// Puts a message in the queue when there is room. Answers to requests
@@ -58,15 +71,18 @@ impl Viewer {
         self.reply(&ServerMessage::Error { error: ErrorBody { code: code.to_string(), message } });
     }
 
-    /// Returns true when the viewer waits for a `world` message or for a
-    /// snapshot.
+    /// Returns true when the viewer waits for a `world` message, for a
+    /// snapshot or for the state of a channel.
     fn waits(&self) -> bool {
-        self.world_from.is_none() || self.zones.values().any(|state| *state == ZoneState::Pending)
+        self.world_from.is_none()
+            || !self.stale.is_empty()
+            || self.zones.values().any(|state| *state == ZoneState::Pending)
     }
 
     /// Sends what the viewer waits for, as far as the queue has room: the
-    /// `world` message, then one snapshot for each pending zone. All of
-    /// them come from one state of the cache.
+    /// `world` message, then the state of each channel that needs it, then
+    /// one snapshot for each pending zone. All of them come from one state
+    /// of the cache.
     fn sync(&mut self) {
         if !self.waits() {
             return;
@@ -80,6 +96,24 @@ impl Viewer {
             permit.send(Message::Text(cache.world_message(self.dropped, self.hub.viewers())));
             self.world_from = Some(next);
             self.dropped = 0;
+        }
+        while let Some(channel) = self.stale.first().copied() {
+            let Ok(permit) = self.queue.try_reserve() else {
+                return;
+            };
+            let studio = self.hub.studio();
+            let message = match channel {
+                Channel::Director => {
+                    ServerMessage::Director { shot: studio.director.shot().clone() }
+                }
+                Channel::Stories => ServerMessage::Stories {
+                    stories: studio.stories.list(self.hub.config.stories.page_max, false),
+                    reset: true,
+                },
+            };
+            drop(studio);
+            permit.send(Message::Text(to_text(&message)));
+            self.stale.remove(&channel);
         }
         for (zone, state) in &mut self.zones {
             if *state != ZoneState::Pending {
@@ -111,15 +145,21 @@ impl Viewer {
             // The `world` message already holds this frame.
             return;
         }
-        let deltas: Vec<Utf8Bytes> = self
+        let mut messages: Vec<Utf8Bytes> = self
             .zones
             .iter()
             .filter(|(_, state)| matches!(state, ZoneState::Live { from } if *from <= digest.frame))
             .filter_map(|(zone, _)| digest.zone_text(*zone))
             .collect();
-        let sent = match self.queue.try_reserve_many(deltas.len() + 1) {
+        // The show of the frame comes after the deltas. A channel that
+        // still waits for its state gets the state, which is newer.
+        let tuned =
+            |channel: Channel| self.channels.contains(&channel) && !self.stale.contains(&channel);
+        messages.extend(digest.director_text().filter(|_| tuned(Channel::Director)));
+        messages.extend(digest.stories_text().filter(|_| tuned(Channel::Stories)));
+        messages.push(digest.frame_text());
+        let sent = match self.queue.try_reserve_many(messages.len()) {
             Ok(permits) => {
-                let messages = deltas.into_iter().chain(std::iter::once(digest.frame_text()));
                 for (permit, text) in permits.zip(messages) {
                     permit.send(Message::Text(text));
                 }
@@ -142,6 +182,7 @@ impl Viewer {
         for state in self.zones.values_mut() {
             *state = ZoneState::Pending;
         }
+        self.stale.clone_from(&self.channels);
         self.sync();
     }
 
@@ -149,6 +190,7 @@ impl Viewer {
         match serde_json::from_str::<ClientMessage>(text) {
             Ok(ClientMessage::Subscribe { zones }) => self.subscribe(&zones),
             Ok(ClientMessage::Unsubscribe { zones }) => self.unsubscribe(&zones),
+            Ok(ClientMessage::Tune { channels }) => self.tune(&channels),
             Ok(ClientMessage::Ping) => self.reply(&ServerMessage::Pong),
             Err(error) => {
                 self.refuse("bad_request", format!("The message is not a request: {error}."));
@@ -184,6 +226,14 @@ impl Viewer {
         for zone in new {
             self.zones.insert(zone, ZoneState::Pending);
         }
+        self.sync();
+    }
+
+    /// Replaces the channels of the show. The viewer gets the state of
+    /// every channel of the list.
+    fn tune(&mut self, channels: &[Channel]) {
+        self.channels = channels.iter().copied().collect();
+        self.stale.clone_from(&self.channels);
         self.sync();
     }
 

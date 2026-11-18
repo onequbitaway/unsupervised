@@ -92,6 +92,12 @@ impl Ring {
         page
     }
 
+    /// Returns the event with an id, when the ring has it.
+    fn get(&self, id: EventId) -> Option<&Arc<FeedEvent>> {
+        let at = self.events.binary_search_by_key(&id, |event| event.id).ok()?;
+        self.events.get(at)
+    }
+
     /// Returns the newest `limit` events about a resident, newest first.
     fn about(&self, resident: ResidentId, limit: usize) -> Vec<&Arc<FeedEvent>> {
         self.events.iter().rev().filter(|event| is_about(event, resident)).take(limit).collect()
@@ -136,6 +142,11 @@ impl EventLog {
         } else {
             self.recent.page(query)
         }
+    }
+
+    /// Returns the event with an id, when the log still has it.
+    pub fn get(&self, id: EventId) -> Option<Arc<FeedEvent>> {
+        self.recent.get(id).or_else(|| self.notable.get(id)).cloned()
     }
 
     /// Returns the newest `limit` events about a resident, in ascending id
@@ -249,6 +260,23 @@ mod tests {
         assert!(!page.gap);
         let page = log.page(&FeedQuery { min_drama: 60, ..query(None, 10) });
         assert_eq!(ids(&page), ["3-1"]);
+    }
+
+    #[test]
+    fn an_event_is_found_by_its_id_while_a_list_has_it() {
+        let log = log();
+        // `1-1` left the recent list. The notable list still has it.
+        assert_eq!(
+            log.get(EventId { frame: 1, index: 1 }).map(|e| e.kind.clone()),
+            Some("a.stole".into())
+        );
+        assert_eq!(
+            log.get(EventId { frame: 4, index: 0 }).map(|e| e.kind.clone()),
+            Some("a.walked".into())
+        );
+        // `1-0` left the recent list and is not notable.
+        assert_eq!(log.get(EventId { frame: 1, index: 0 }), None);
+        assert_eq!(log.get(EventId { frame: 9, index: 0 }), None);
     }
 
     #[test]

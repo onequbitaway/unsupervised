@@ -178,6 +178,48 @@ describe('FeedClient', () => {
     expect(env.sockets).toHaveLength(2);
   });
 
+  it('chooses the channels of the show one time on each connection', () => {
+    const { env, feed } = client();
+    feed.setChannels(['director', 'stories']);
+    feed.setZones([4]);
+    feed.start();
+    env.last.onopen?.(null);
+    expect(env.last.sent).toEqual([
+      { op: 'subscribe', zones: [4] },
+      { op: 'tune', channels: ['director', 'stories'] },
+    ]);
+    // A change of the zones does not send the channels again.
+    feed.setZones([4, 5]);
+    expect(env.last.sent.slice(2)).toEqual([{ op: 'subscribe', zones: [5] }]);
+    // Other channels are sent at once.
+    feed.setChannels(['director']);
+    expect(env.last.sent.at(-1)).toEqual({ op: 'tune', channels: ['director'] });
+    // A new connection knows nothing: the client sends its channels again.
+    env.last.onclose?.(null);
+    env.advance(500);
+    env.last.onopen?.(null);
+    expect(env.last.sent).toEqual([
+      { op: 'subscribe', zones: [4, 5] },
+      { op: 'tune', channels: ['director'] },
+    ]);
+  });
+
+  it('sends no channels for a viewer that wants none', () => {
+    const { env, feed } = client();
+    feed.start();
+    env.last.onopen?.(null);
+    feed.setZones([1]);
+    expect(env.last.sent).toEqual([{ op: 'subscribe', zones: [1] }]);
+  });
+
+  it('gives the messages of the show to the viewer', () => {
+    const { env, feed, messages } = client();
+    feed.start();
+    env.last.onopen?.(null);
+    env.last.onmessage?.({ data: '{"op":"stories","stories":[],"reset":true}' });
+    expect(messages).toEqual([{ op: 'stories', stories: [], reset: true }]);
+  });
+
   it('stop ends the connection and every timer', () => {
     const { env, feed } = client();
     feed.start();

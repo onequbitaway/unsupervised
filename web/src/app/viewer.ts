@@ -10,6 +10,7 @@ import { Scene } from '../render/scene';
 import { sizeOf, type Stage } from '../render/stage';
 import { drawsDots, figureHeight } from '../render/view';
 import { type Level, screenToWorld, type Size } from '../state/camera';
+import type { ShotTarget } from '../state/cut';
 import { followTarget } from '../state/follow';
 import { type PageOptions, watchLink } from '../state/params';
 import { pickResident } from '../state/pick';
@@ -26,6 +27,7 @@ import { attachInput, type KeyAction } from '../ui/input';
 import { cssColor, Legend } from '../ui/legend';
 import { ResidentPanel } from '../ui/panel';
 import { TickerBar } from '../ui/tickerbar';
+import { Broadcast, type BroadcastStats } from './broadcast';
 import { MapLoader } from './maps';
 import { NewsDesk } from './news';
 import { CameraRig } from './rig';
@@ -51,6 +53,8 @@ export interface ViewerStats {
   zones: number;
   selected: number | null;
   following: boolean;
+  /** What the broadcast shows, or null outside broadcast mode. */
+  broadcast: BroadcastStats | null;
 }
 
 /** Returns a text that changes when the cities or the zones of a world change. */
@@ -74,6 +78,10 @@ export class Viewer {
   private readonly controls: Controls;
   private readonly panel: ResidentPanel;
   private readonly ticker: TickerBar;
+  /** The broadcast, in broadcast mode. */
+  private readonly broadcast: Broadcast | null;
+  /** The scale that the director wants for the resident that the camera follows, or null. */
+  private directedScale: number | null = null;
   private readonly frameMs = new Samples(CONFIG.stats.samples);
   private readonly workMs = new Samples(CONFIG.stats.samples);
   private selected: number | null = null;
@@ -94,7 +102,7 @@ export class Viewer {
     surface: HTMLElement,
     private readonly stage: Stage,
     private readonly layout: Layout,
-    options: PageOptions,
+    private readonly options: PageOptions,
   ) {
     this.size = sizeOf(stage);
     this.state = {
@@ -119,6 +127,7 @@ export class Viewer {
     const corner = el('div', 'corner');
     corner.append(this.hud.root, this.legend.root);
     root.append(corner, this.controls.root, this.panel.root, this.ticker.root);
+    this.broadcast = options.broadcast ? this.startBroadcast(root, surface) : null;
 
     attachInput(surface, {
       pan: (dx, dy) => {
@@ -135,10 +144,70 @@ export class Viewer {
       onMessage: (message) => this.onMessage(message),
       onStatus: (status) => this.onStatus(status),
     });
+    if (this.broadcast !== null) this.feed.setChannels(['director', 'stories']);
     this.feed.start();
     stage.app.ticker.add(() => this.frame(), undefined, UPDATE_PRIORITY.HIGH);
     // The renderer draws between these two calls.
     stage.app.ticker.add(() => this.afterDraw(), undefined, UPDATE_PRIORITY.UTILITY);
+  }
+
+  /** Makes the broadcast: the director moves the camera, and the page gets its words. */
+  private startBroadcast(root: HTMLElement, surface: HTMLElement): Broadcast {
+    this.rig.halfLifeMs = CONFIG.broadcast.easeHalfLifeMs;
+    const broadcast = new Broadcast(this.layout, {
+      camera: () => this.rig.camera,
+      size: () => this.size,
+      fits: () => this.rig.fits,
+      countryCamera: () => this.rig.countryCamera,
+      direct: (target, jump) => this.direct(target, jump),
+      ready: () => this.ready(),
+      nameOf: (id) => findMover(this.state, id)?.mover.name ?? null,
+    });
+    // The black of a cut is over the picture and under the words.
+    surface.after(broadcast.curtain.root);
+    root.append(broadcast.side.root, broadcast.lower.root, broadcast.banner.root);
+    return broadcast;
+  }
+
+  /** Points the camera at the target of a shot of the director. */
+  private direct(target: ShotTarget, jump: boolean): void {
+    this.directedScale = null;
+    // A shot of a resident or of a place stays inside its city.
+    const at = target.kind === 'resident' || target.kind === 'point' ? target : null;
+    const zone = at === null || at.x === null || at.y === null ? null : zoneAt(this.layout, at.x, at.y);
+    const city = zone === null ? undefined : this.layout.cities.find((candidate) => candidate.id === zone.city);
+    this.rig.frame = city?.bounds ?? null;
+    switch (target.kind) {
+      case 'resident':
+        this.select(target.id);
+        this.setFollow(true);
+        this.directedScale = target.scale;
+        // The camera starts for the place of the shot. The feed then shows the resident.
+        if (target.x !== null && target.y !== null) this.rig.lookAt(target.x, target.y, target.scale);
+        break;
+      case 'point':
+        this.select(null);
+        this.rig.lookAt(target.x, target.y, target.scale);
+        break;
+      case 'city': {
+        this.select(null);
+        const city = this.layout.cities.find((candidate) => candidate.id === target.city);
+        if (city) this.rig.showCity(city);
+        break;
+      }
+      case 'country':
+        this.select(null);
+        this.rig.showCountry();
+        break;
+    }
+    if (jump) this.rig.arrive();
+    // The zones of the new place are asked for at once.
+    this.slowAt = -Infinity;
+  }
+
+  /** Returns true when the picture has the maps and the residents of the place that the camera looks at. */
+  private ready(): boolean {
+    return !this.maps.busy && this.followed.every((zone) => this.state.zones.has(zone));
   }
 
   /** Chooses what the screen shows at the start. */
@@ -251,6 +320,8 @@ export class Viewer {
     this.following = next;
     this.closeUp = next;
     this.slowAt = -Infinity;
+    // The address of a broadcast stays: the director chooses, not a link.
+    if (this.options.broadcast) return;
     const address = watchLink(globalThis.location.href, next ? this.selected : null);
     globalThis.history.replaceState(null, '', address);
   }
@@ -276,6 +347,7 @@ export class Viewer {
   private onMessage(message: ServerMessage): void {
     const now = performance.now();
     this.state = reduce(this.state, message, now);
+    this.broadcast?.onMessage(message, now);
     switch (message.op) {
       case 'world':
         this.gotWorld = true;
@@ -319,8 +391,15 @@ export class Viewer {
     const gone = this.watch.profile !== null && !this.watch.profile.alive;
     const target = followTarget(this.state, this.selected, this.watch.lastKnown, now);
     if (target === null) return true;
+    if (this.broadcast !== null) {
+      // The picture of a broadcast stays inside the city of the resident, also after a journey.
+      const zone = zoneAt(this.layout, target.x, target.y);
+      const city = zone === null ? undefined : this.layout.cities.find((candidate) => candidate.id === zone.city);
+      this.rig.frame = city?.bounds ?? null;
+    }
     if (this.closeUp) {
-      this.rig.lookAt(target.x, target.y, Math.max(this.rig.target.scale, this.rig.followScale));
+      const scale = this.directedScale ?? Math.max(this.rig.target.scale, this.rig.followScale);
+      this.rig.lookAt(target.x, target.y, scale);
       this.closeUp = false;
     } else {
       this.rig.lookAt(target.x, target.y);
@@ -397,6 +476,7 @@ export class Viewer {
       this.rig.resize(size);
     }
 
+    this.broadcast?.frame({ now, clock: this.state.clock, populations: this.state.populations });
     const searching = this.follow(now);
     this.rig.step(elapsed);
     const level = this.rig.level;
@@ -450,6 +530,7 @@ export class Viewer {
       zones: this.followed.length,
       selected: this.selected,
       following: this.following,
+      broadcast: this.broadcast?.stats() ?? null,
     };
   }
 

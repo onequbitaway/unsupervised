@@ -7,10 +7,10 @@
 use std::sync::{Arc, OnceLock};
 
 use axum::extract::ws::Utf8Bytes;
-use unsup_protocol::{FrameOutput, Tick, ZoneId};
+use unsup_protocol::{Clock, FrameOutput, Tick, ZoneId};
 
 use crate::cache::Resolved;
-use crate::wire::{FeedEvent, ServerMessage};
+use crate::wire::{ClipFrame, FeedEvent, ServerMessage, Shot, Story};
 
 /// Writes a message as JSON text. A message that cannot be written gives
 /// an empty text; every message of this crate is plain data, so this does
@@ -61,10 +61,17 @@ pub(crate) struct Digest {
     /// Number of the frame.
     pub frame: u64,
     source: Arc<FrameOutput>,
+    /// Every public event of the frame for the feed, in the order of the
+    /// feed.
+    pub events: Vec<Arc<FeedEvent>>,
     /// The zones that changed or had an event, in ascending id order.
     zones: Vec<ZoneBeat>,
     /// The `frame` message, the same for every viewer.
     frame_text: Utf8Bytes,
+    /// The `director` message, when the shot changed in this frame.
+    director_text: Option<Utf8Bytes>,
+    /// The `stories` message, when stories changed in this frame.
+    stories_text: Option<Utf8Bytes>,
 }
 
 impl Digest {
@@ -74,6 +81,7 @@ impl Digest {
         zones: Vec<ZoneBeat>,
         populations: Vec<(ZoneId, u32)>,
         headlines: &[Arc<FeedEvent>],
+        events: Vec<Arc<FeedEvent>>,
         viewers: u32,
     ) -> Digest {
         let frame_text = to_text(&ServerMessage::Frame {
@@ -83,7 +91,65 @@ impl Digest {
             headlines: headlines.iter().map(|event| (**event).clone()).collect(),
             viewers,
         });
-        Digest { frame: source.frame, source, zones, frame_text }
+        Digest {
+            frame: source.frame,
+            source,
+            events,
+            zones,
+            frame_text,
+            director_text: None,
+            stories_text: None,
+        }
+    }
+
+    /// Adds what the show has for viewers in this frame: the shot of the
+    /// director when it changed, and the stories that changed.
+    pub fn set_show(&mut self, shot: Option<Shot>, stories: Vec<Story>) {
+        self.director_text = shot.map(|shot| to_text(&ServerMessage::Director { shot }));
+        self.stories_text = (!stories.is_empty())
+            .then(|| to_text(&ServerMessage::Stories { stories, reset: false }));
+    }
+
+    /// Returns the `director` message, when the shot changed in this frame.
+    pub fn director_text(&self) -> Option<Utf8Bytes> {
+        self.director_text.clone()
+    }
+
+    /// Returns the `stories` message, when stories changed in this frame.
+    pub fn stories_text(&self) -> Option<Utf8Bytes> {
+        self.stories_text.clone()
+    }
+
+    /// Returns the calendar time of the frame.
+    pub fn clock(&self) -> Clock {
+        self.source.clock
+    }
+
+    /// Returns the zones that changed or had an event, in ascending id
+    /// order.
+    pub fn zones(&self) -> impl Iterator<Item = ZoneId> + '_ {
+        self.zones.iter().map(|beat| beat.zone)
+    }
+
+    /// Returns what a zone has in this frame as a frame of a clip, or
+    /// `None` when the zone has nothing.
+    pub fn zone_frame(&self, zone: ZoneId) -> Option<ClipFrame> {
+        let at = self.zones.binary_search_by_key(&zone, |beat| beat.zone).ok()?;
+        match self.delta_message(&self.zones[at]) {
+            ServerMessage::Delta {
+                frame, tick, moved, entered, left, activity, events, ..
+            } => Some(ClipFrame {
+                frame,
+                clock: self.source.clock,
+                tick,
+                moved,
+                entered,
+                left,
+                activity,
+                events,
+            }),
+            _ => None,
+        }
     }
 
     /// Returns the `frame` message.

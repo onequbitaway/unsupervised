@@ -97,7 +97,10 @@ async fn the_world_routes_answer_from_the_cache() {
     let stats = harness.get_ok("/v1/spectate/stats").await;
     assert_eq!(
         stats,
-        json!({ "frame": 1, "residents": 2, "viewers": 1, "dropped_frames": 0, "resyncs": 0 })
+        json!({
+            "frame": 1, "residents": 2, "viewers": 1, "dropped_frames": 0, "resyncs": 0,
+            "delay_frames": 0,
+        })
     );
     harness.stop().await;
 }
@@ -272,6 +275,9 @@ async fn a_profile_says_who_where_and_what() {
     let events = profile["events"].clone();
     let mut rest = profile.clone();
     rest.as_object_mut().expect("an object").remove("events");
+    // The life story has its own test (`tests/show.rs`).
+    let life = rest.as_object_mut().expect("an object").remove("life").expect("a life story");
+    assert_eq!(life["born"]["line"], "Ada arrived in Plaza");
     assert_eq!(
         rest,
         json!({

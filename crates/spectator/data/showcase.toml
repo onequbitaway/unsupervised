@@ -39,3 +39,43 @@ married = 30
 theft_committed = 55
 resident_died = 75
 election_decided = 85
+
+[plots]
+# Frames between two crimes with an investigation, an arrest and a trial.
+crime_every = 70
+# Frames from the crime to the investigation, the arrest and the trial.
+investigation_after = 10
+arrest_after = 30
+trial_after = 55
+# Frames between two feuds, and between the three events of one feud.
+feud_every = 110
+feud_step = 18
+# Frames between two bankruptcies, and between their three events.
+bankruptcy_every = 150
+bankruptcy_step = 14
+# Frames between two residents that get a job or a home.
+career_every = 9
+# Frames before an election in which the candidates register.
+campaign_frames = 80
+# Candidates of one election.
+candidates = 3
+# Frames between two publications of the statistics and of the boards.
+stats_every = 30
+boards_every = 45
+# Rows of one board.
+board_rows = 8
+
+[plot_drama]
+# Drama scores of the events of the plots.
+investigation_opened = 30
+arrest_made = 50
+trial_ended = 60
+heist_committed = 80
+opinion_given = 14
+contract_breached = 40
+loan_defaulted = 60
+property_foreclosed = 55
+tenant_evicted = 45
+worker_hired = 12
+lease_started = 12
+candidate_registered = 20
