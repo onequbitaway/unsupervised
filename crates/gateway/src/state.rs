@@ -15,6 +15,7 @@ use unsup_store::{IdentityProvider, LocalSignUp, ResidentRecord, Store, StoreErr
 use crate::config::{ConfigError, GatewayConfig};
 use crate::error::ApiError;
 use crate::gauge::Gauge;
+use crate::host::OwnerRoute;
 use crate::identity::GitHubSignIn;
 use crate::limit::RateLimiter;
 use crate::mcp::session::Sessions;
@@ -90,6 +91,8 @@ pub(crate) struct Inner {
     /// Counts the rollbacks of the world. An open connection watches it:
     /// its cursors must go back with the world.
     pub(crate) rollbacks: watch::Sender<u64>,
+    /// The routes for owners that the host added, each with its path.
+    pub(crate) owner_routes: Vec<(String, Arc<dyn OwnerRoute>)>,
 }
 
 /// The gateway could not start.
@@ -122,13 +125,16 @@ pub struct GatewayBuilder {
     config: GatewayConfig,
     providers: Vec<Arc<dyn IdentityProvider>>,
     filters: Vec<Arc<dyn TextFilter>>,
+    owner_routes: Vec<(String, Arc<dyn OwnerRoute>)>,
 }
 
 impl std::fmt::Debug for GatewayBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let paths: Vec<&str> = self.owner_routes.iter().map(|(path, _)| path.as_str()).collect();
         f.debug_struct("GatewayBuilder")
             .field("providers", &self.providers.len())
             .field("filters", &self.filters.len())
+            .field("owner_routes", &paths)
             .finish_non_exhaustive()
     }
 }
@@ -153,15 +159,34 @@ impl GatewayBuilder {
         self
     }
 
+    /// Adds a route for owners that the host answers: `POST path` with an
+    /// owner token and a JSON body. The gateway authenticates the owner
+    /// and applies its limits, then it calls `route` (see
+    /// [`OwnerRoute`]). A game module needs such a route when a human
+    /// sends something to it; the gateway itself knows no module.
+    ///
+    /// `path` is a whole path without a parameter, for example
+    /// `/v1/missions`. [`GatewayBuilder::start`] refuses another form of
+    /// path and a path that was added before. A path that the gateway
+    /// serves itself makes [`Gateway::router`] panic: the host is a
+    /// program, and two routes for one path are an error in it.
+    #[must_use]
+    pub fn owner_route(mut self, path: &str, route: Arc<dyn OwnerRoute>) -> GatewayBuilder {
+        self.owner_routes.push((path.to_string(), route));
+        self
+    }
+
     /// Starts the gateway. Call it inside a Tokio runtime: it starts the
     /// tasks that push notices, deliver webhooks and watch the frames.
     ///
     /// # Errors
     ///
     /// Fails when the configuration has a rule or an endpoint that cannot
-    /// be used, and when the store cannot be read.
+    /// be used, when the path of a route of the host has a wrong form or
+    /// is there two times, and when the store cannot be read.
     pub async fn start(self) -> Result<Gateway, StartError> {
-        let GatewayBuilder { sim, store, config, mut providers, filters } = self;
+        let GatewayBuilder { sim, store, config, mut providers, filters, owner_routes } = self;
+        check_owner_paths(&owner_routes)?;
         let rules: Arc<dyn TextFilter> = Arc::new(RuleFilter::new(&config.moderation)?);
         let filters = std::iter::once(rules).chain(filters).collect();
         if config.github.is_on() && providers.iter().all(|p| p.name() != GitHubSignIn::NAME) {
@@ -219,6 +244,7 @@ impl GatewayBuilder {
                 sanctions: Sanctions::load(&sanctions),
                 ops: Ops::new(&config.ops, config.abuse.funnel.clone()),
                 rollbacks: watch::channel(0).0,
+                owner_routes,
                 providers,
                 sim,
                 store,
@@ -240,6 +266,30 @@ impl GatewayBuilder {
     }
 }
 
+/// Checks the paths of the routes that the host added: each is a plain
+/// path (`/` and then parts of letters, digits, `_`, `-` and `.`, with `/`
+/// between them), and no path is there two times.
+fn check_owner_paths(routes: &[(String, Arc<dyn OwnerRoute>)]) -> Result<(), ConfigError> {
+    for (index, (path, _)) in routes.iter().enumerate() {
+        let plain = path.strip_prefix('/').is_some_and(|rest| {
+            rest.split('/').all(|part| {
+                !part.is_empty()
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+            })
+        });
+        if !plain {
+            return Err(ConfigError(format!(
+                "the path `{path}` of a route of the host is not a plain path such as \
+                 `/v1/missions`"
+            )));
+        }
+        if routes[..index].iter().any(|(other, _)| other == path) {
+            return Err(ConfigError(format!("the path `{path}` has two routes of the host")));
+        }
+    }
+    Ok(())
+}
+
 impl std::fmt::Debug for Gateway {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Gateway").finish_non_exhaustive()
@@ -257,6 +307,7 @@ impl Gateway {
             config,
             providers: vec![Arc::new(LocalSignUp)],
             filters: Vec::new(),
+            owner_routes: Vec::new(),
         }
     }
 

@@ -48,6 +48,8 @@
 //!   [`Alerts`], the admin dashboard, and the rollback of the world with
 //!   [`Gateway::reconcile`].
 //! - [`identity`] has the sign-in with GitHub.
+//! - [`host`] is the hook for a route that the host adds for owners
+//!   ([`OwnerRoute`]), for example a route that speaks to a game module.
 
 mod actions;
 mod auth;
@@ -56,6 +58,7 @@ mod config;
 mod error;
 mod extract;
 mod gauge;
+pub mod host;
 pub mod identity;
 mod limit;
 pub mod mcp;
@@ -75,6 +78,7 @@ pub use config::{
     merge_tables,
 };
 pub use error::ApiError;
+pub use host::{OwnerCall, OwnerRoute, OwnerRouteFuture};
 pub use identity::{ClientSecret, GitHubConfig, GitHubSignIn};
 pub use limit::{RateLimiter, limit_address, retry_after_secs};
 pub use moderation::{

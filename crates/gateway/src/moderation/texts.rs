@@ -26,9 +26,26 @@ pub(crate) struct Found<'a> {
 /// and each name of a field inside a value. The names of the arguments
 /// themselves are not text of the resident: the verb defines them.
 pub(crate) fn collect<'a>(config: &ModerationConfig, request: &'a ActionRequest) -> Vec<Found<'a>> {
+    collect_at(config, &request.verb, &request.args, "args")
+}
+
+/// Returns every text in the arguments `args` of `verb`, as [`collect`]
+/// does. `root` is the start of each path: `args` for an action request,
+/// or nothing for arguments that are a whole request body.
+pub(crate) fn collect_at<'a>(
+    config: &ModerationConfig,
+    verb: &'a str,
+    args: &'a Value,
+    root: &str,
+) -> Vec<Found<'a>> {
     let mut out = Vec::new();
-    arguments(config, &request.verb, &request.args, "args", &mut out);
+    arguments(config, verb, args, root, &mut out);
     out
+}
+
+/// Returns the path of a field in the value at `path`.
+fn field(path: &str, name: &str) -> String {
+    if path.is_empty() { name.to_string() } else { format!("{path}.{name}") }
 }
 
 /// Walks the arguments of one verb.
@@ -43,7 +60,7 @@ fn arguments<'a>(
         return;
     };
     for (name, value) in fields {
-        let here = format!("{path}.{name}");
+        let here = field(path, name);
         if verb == SET_ROUTINES
             && name == "routines"
             && let Value::Array(routines) = value

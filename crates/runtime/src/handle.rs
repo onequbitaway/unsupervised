@@ -94,6 +94,12 @@ impl SimHandle {
     }
 
     /// Builds what a resident can see now.
+    ///
+    /// The simulation thread takes calls from the mailbox in batches. It
+    /// builds the observations of all `observe` calls of one batch in one
+    /// step, after it applied the inputs of that batch. So the observation
+    /// shows the world at a moment between the call and its answer, also
+    /// with an input that another caller sent a little later.
     pub async fn observe(&self, r: ResidentId, opts: ObserveOpts) -> Result<Observation, SimError> {
         self.call(|reply| Command::Observe { resident: r, opts, reply }).await
     }

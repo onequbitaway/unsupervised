@@ -275,6 +275,82 @@ async fn a_plan_runs_in_order_and_stops_at_a_rejected_request() {
 }
 
 #[tokio::test]
+async fn act_without_an_observation_returns_only_the_acknowledgements() {
+    let h = Harness::start().await;
+    let (resident, key) = h.agent("Ada").await;
+    let observations = || async { h.sim.stats().await.expect("stats").observations };
+    let work = json!({ "verb": "work", "args": { "ticks": 2 }, "id": "w1" });
+
+    // The default: the acknowledgements and a fresh observation.
+    let built = observations().await;
+    let (status, answer) = send(h.post("/v1/act", &key, &work)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let fields: Vec<&String> = answer.as_object().expect("an object").keys().collect();
+    assert_eq!(fields, ["acks", "observation"]);
+    assert_eq!(answer["observation"]["sections"]["self"]["activity"]["verb"], "work");
+    assert_eq!(observations().await, built + 1);
+    // `observe=true` is the default.
+    let tell = json!({ "verb": "tell", "args": { "to": resident, "text": "hello" } });
+    let (_, answer) = send(h.post("/v1/act?observe=true", &key, &tell)).await;
+    assert_eq!(answer["observation"]["resident"], resident);
+    assert_eq!(observations().await, built + 2);
+
+    // `observe=false`: only the acknowledgements, and the simulation
+    // builds no observation.
+    let built = observations().await;
+    let queued = json!({ "verb": "work", "args": { "ticks": 1 }, "id": "w2" });
+    let (status, answer) = send(h.post("/v1/act?observe=false", &key, &queued)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "acks": [{
+            "request_id": "w2", "action_id": answer["acks"][0]["action_id"], "verb": "work",
+            "status": { "state": "queued", "position": 1 },
+        }] })
+    );
+    // A plan: one acknowledgement for each request that was sent.
+    let plan = json!({ "plan": [
+        { "verb": "tell", "args": { "to": resident, "text": "one" } },
+        { "verb": "fly" },
+        { "verb": "tell", "args": { "to": resident, "text": "never sent" } },
+    ] });
+    let (status, answer) = send(h.post("/v1/act?observe=false", &key, &plan)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let fields: Vec<&String> = answer.as_object().expect("an object").keys().collect();
+    assert_eq!(fields, ["acks"]);
+    let states: Vec<&Value> = answer["acks"]
+        .as_array()
+        .expect("acks")
+        .iter()
+        .map(|ack| &ack["status"]["state"])
+        .collect();
+    assert_eq!(states, ["done", "rejected"]);
+    assert_eq!(observations().await, built, "no observation was built");
+    // The actions were taken: a later observation shows them.
+    let (_, seen) = send(h.get("/v1/observe", &key)).await;
+    assert_eq!(seen["sections"]["self"]["queue"], 1);
+
+    // The checks of the request are the same: the query, the body, the
+    // text filters.
+    for query in ["observe=no", "observe=", "observe=false&detail=huge", "observe=false&x=1"] {
+        let (status, answer) = send(h.post(&format!("/v1/act?{query}"), &key, &work)).await;
+        assert_eq!(
+            (status, code(&answer)),
+            (StatusCode::BAD_REQUEST, "invalid_request"),
+            "{query}"
+        );
+    }
+    let (status, answer) =
+        send(h.post("/v1/act?observe=false", &key, &json!({ "plan": [] }))).await;
+    assert_eq!((status, code(&answer)), (StatusCode::BAD_REQUEST, "invalid_request"));
+    // The options of the observation are read and not used.
+    let (status, answer) =
+        send(h.post("/v1/act?observe=false&detail=full&since=3&sections=self", &key, &tell)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer.get("observation"), None);
+}
+
+#[tokio::test]
 async fn act_refuses_a_body_with_a_wrong_shape() {
     let h = Harness::start().await;
     let (_, key) = h.agent("Ada").await;

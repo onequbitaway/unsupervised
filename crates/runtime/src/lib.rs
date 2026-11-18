@@ -59,7 +59,9 @@
 //!   system or in memory.
 //! - [`log`]: the format of the input log and the one rule that covers a
 //!   crash, a failed write and a rollback.
-//! - [`snapshot`]: the format of a snapshot file.
+//! - [`snapshot`]: the format of a snapshot file, and two reads for a
+//!   host: the list of the snapshots, and the frame and state hash of the
+//!   newest one.
 //! - [`recover`] and [`replay`]: from storage back to a world, and the
 //!   check that a log gives the recorded state hash.
 //! - [`Dilation`]: the pacer that makes overloaded zones skip frames.
@@ -108,6 +110,7 @@ mod join;
 mod journal;
 pub mod log;
 mod mailbox;
+mod observe;
 mod replay;
 mod replier;
 mod settings;
@@ -131,7 +134,7 @@ pub use crate::replay::{
     Checkpoint, RecoverError, RecoverOptions, Recovery, ReplayFrom, ReplayOptions, ReplayReport,
     SkippedSnapshot, recover, recover_with, replay,
 };
-pub use crate::snapshot::SnapshotMeta;
+pub use crate::snapshot::{SnapshotEntry, SnapshotMeta};
 pub use crate::stats::SimStats;
 pub use crate::storage::{
     Fault, FsStorage, MemStorage, Segment, Storage, StorageError, StorageErrorKind,

@@ -7,7 +7,6 @@
 //! the world that the storage holds or makes a new one, and wraps the
 //! journal so that the whole world is audited at an interval.
 
-use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::Context;
@@ -295,17 +294,28 @@ pub(crate) fn open(
 /// Returns the snapshots that the storage holds, oldest first: the frame
 /// of each and the number of inputs in it. A rollback can go to each.
 pub(crate) fn snapshots(storage: &dyn Storage) -> Vec<Value> {
-    // The name of a snapshot is `<sequence number>-<frame>.snap`.
-    let parse = |name: &str| {
-        let stem = Path::new(name).file_name()?.to_str()?.strip_suffix(".snap")?;
-        let (seq, frame) = stem.split_once('-')?;
-        Some((seq.parse::<u64>().ok()?, frame.parse::<u64>().ok()?))
-    };
-    storage
-        .list(SNAPSHOT_DIR)
+    unsup_runtime::snapshot::list(storage)
         .unwrap_or_default()
         .iter()
-        .filter_map(|name| parse(name))
-        .map(|(seq, frame)| json!({ "frame": frame, "inputs": seq }))
+        .map(|entry| json!({ "frame": entry.frame, "inputs": entry.seq }))
         .collect()
+}
+
+/// Returns the newest snapshot that a recovery or a rollback can use: its
+/// frame, the number of inputs in it and the state hash of the world at
+/// that frame. `null` when the storage has none or cannot be read. The
+/// runtime reads only the header of the file.
+pub(crate) fn newest_snapshot(storage: &dyn Storage) -> Value {
+    match unsup_runtime::snapshot::newest(storage) {
+        Ok(Some(meta)) => json!({
+            "frame": meta.frame,
+            "inputs": meta.seq,
+            "state_hash": hash_text(&meta.state_hash),
+        }),
+        Ok(None) => Value::Null,
+        Err(error) => {
+            tracing::warn!(%error, "the newest snapshot cannot be read");
+            Value::Null
+        }
+    }
 }

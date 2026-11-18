@@ -6,8 +6,8 @@ bind = "127.0.0.1:8080"
 # Real milliseconds for one game minute. 0: the world moves only when a
 # tool steps it.
 tick_ms = 1000
-# Directory for the data that the server writes: the accounts and the
-# world.
+# Directory for the data that the server writes: the accounts, the world
+# and the history that the viewer service keeps.
 data_dir = "var"
 # Where accounts and keys live: "sqlite" (the file `store.sqlite3` in the
 # data directory) or "memory" (lost when the server stops).
@@ -17,6 +17,10 @@ store = "sqlite"
 # server recovers the world at the start, also after a crash. With
 # `store = "memory"` the world is in memory too: after a restart nobody
 # would have a key for its residents.
+#
+# The viewer service keeps the life histories and the pinned clips where
+# the world is: in the directory `spectator` in the data directory, or in
+# memory. A new world starts without them.
 world_store = "disk"
 # Files with parameter overrides, in TOML with the format of the data
 # files of the modules (`[params."name"]` tables). The server applies
@@ -68,6 +72,36 @@ cors_origins = ["*"]
 
 [dev.gateway.webhooks]
 allow_private = true
+
+# Missions that human sponsors publish with `POST /v1/missions` and an
+# owner token. A sponsor mission creates new money: the reward times the
+# takers. The missions module limits the sum for all sponsors in one game
+# day (the parameter `missions.sponsor_daily_limit`). The values here are
+# the limits of the server.
+[sponsors]
+# false: nobody can publish a sponsor mission. The route answers
+# `missions_disabled`. Only the administrator of the server sets this.
+enabled = true
+# Missions that one owner can publish in 24 hours. 0: no limit for one
+# owner.
+missions_per_day = 3
+# Greatest sum of new money for one mission, in cents: the reward times
+# the takers. 0: no limit of the server.
+max_mission_cents = 500000
+# Real milliseconds that the route waits for the answer of the simulation.
+# The answer comes in the frame after the request, so this must be longer
+# than `tick_ms`.
+answer_timeout_ms = 10000
+
+# Values for the viewer service. The tables and the names are those of
+# `crates/spectator/data/spectator.toml` and
+# `crates/spectator/data/director.toml`. A table here changes only the
+# values that it names. For example, a competitive season can hold back
+# everything that viewers get by 300 frames:
+#
+#   [spectator.stream]
+#   delay_frames = 300
+[spectator]
 
 # Values for the gateway. See `crates/gateway/data/defaults.toml`.
 [gateway]

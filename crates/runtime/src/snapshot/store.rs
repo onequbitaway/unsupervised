@@ -4,23 +4,34 @@ use super::format::{
     SNAPSHOT_DIR, SNAPSHOT_HEADER, SnapshotMeta, check_payload, decode_header, encode_header, name,
     parse_name,
 };
-use crate::log::LogIndex;
+use crate::log::{LogError, LogIndex};
 use crate::storage::{Storage, StorageError};
 
-/// One snapshot file, from its name.
+/// One snapshot file of a storage, as its name tells it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SnapshotEntry {
-    /// Storage name.
+pub struct SnapshotEntry {
+    /// Storage name of the file.
     pub name: String,
-    /// Number of inputs in the snapshot.
+    /// Number of inputs that the world had applied when the snapshot was
+    /// taken.
     pub seq: u64,
-    /// Frame of the snapshot.
+    /// Number of the last frame of the world in the snapshot.
     pub frame: u64,
 }
 
-/// Lists the snapshot files, oldest first. Other files in the directory are
-/// ignored.
-pub(crate) fn list(storage: &dyn Storage) -> Result<Vec<SnapshotEntry>, StorageError> {
+/// Lists the snapshot files of a storage, oldest first. Other files in the
+/// directory are ignored.
+///
+/// The call reads only the names. A host can call it for the storage of a
+/// world that runs: a snapshot appears in the list when it is whole. The
+/// list is what a rollback can go to. Right after a rollback it can still
+/// hold a later snapshot that could not be deleted; [`newest`] passes over
+/// such a file.
+///
+/// # Errors
+///
+/// Fails when the storage cannot list the directory.
+pub fn list(storage: &dyn Storage) -> Result<Vec<SnapshotEntry>, StorageError> {
     // The names sort like (sequence number, frame).
     Ok(storage
         .list(SNAPSHOT_DIR)?
@@ -66,6 +77,35 @@ pub(crate) fn head(storage: &dyn Storage, entry: &SnapshotEntry) -> Result<Snaps
     let header = decode_header(&bytes)?;
     check_name(entry, &header.meta)?;
     Ok(header.meta)
+}
+
+/// Reads the header of the newest snapshot that a recovery or a rollback
+/// can use: its frame, its sequence number and the state hash of the world
+/// at that moment. `None` when the storage has no such snapshot.
+///
+/// The call is cheap. It lists the names of the snapshots and of the log
+/// segments and reads the header of one file, 112 bytes. It does not read
+/// the state. A host can call it for the storage of a world that runs, for
+/// example for a dashboard.
+///
+/// A file that a rollback made void, and a file whose header cannot be
+/// read, is passed over.
+///
+/// # Errors
+///
+/// Fails when the storage cannot list the snapshots or the log segments,
+/// and when two log segments have the same index.
+pub fn newest(storage: &dyn Storage) -> Result<Option<SnapshotMeta>, LogError> {
+    let index = LogIndex::load(storage)?;
+    for entry in list(storage)?.iter().rev() {
+        match head(storage, entry) {
+            Ok(meta) if !index.voids(meta.seq, meta.segment) => return Ok(Some(meta)),
+            // Void, damaged, or deleted by the rotation since the list
+            // was read.
+            Ok(_) | Err(_) => {}
+        }
+    }
+    Ok(None)
 }
 
 /// Writes a snapshot file. Returns its size in bytes.

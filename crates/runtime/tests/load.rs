@@ -5,13 +5,14 @@ mod common;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 use unsup_kernel::{Input, ResidentId, World, ZoneId, ZoneTiming};
-use unsup_protocol::{FrameOutput, Observation, SimError, WaitFilter};
+use unsup_protocol::{ActionAck, FrameOutput, Observation, ObserveOpts, SimError, WaitFilter};
 use unsup_runtime::{
     DurableConfig, DurableJournal, Journal, JournalError, MemStorage, Pacer, RuntimeConfig,
     SimHandle, SimStats, SyncPolicy, start,
@@ -122,6 +123,149 @@ async fn a_flood_gets_overloaded_at_once_and_nothing_blocks() {
     assert_eq!((stats.residents, stats.inputs_applied), (9, 9));
     assert_eq!((stats.overloaded, stats.mailbox_capacity, stats.mailbox_depth), (13, 8, 0));
     assert_eq!(join.shutdown().expect("a clean stop").residents(), 9);
+}
+
+/// A journal that holds the simulation thread in its next `commit` after
+/// the test armed it, until the test lets go.
+struct Gate {
+    armed: Arc<AtomicBool>,
+    entered: Sender<()>,
+    release: Receiver<()>,
+}
+
+impl Journal for Gate {
+    fn record(&mut self, _input: &Input) -> Result<(), JournalError> {
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), JournalError> {
+        if self.armed.swap(false, Ordering::SeqCst) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+        Ok(())
+    }
+
+    fn frame_done(&mut self, _world: &World, _frame: &FrameOutput) {}
+}
+
+/// Returns the cash of the resident of an observation, in cents.
+fn cash(observation: &Observation) -> Option<i64> {
+    observation.sections.get("self")?.get("cash")?.as_i64()
+}
+
+#[tokio::test]
+async fn the_observations_of_one_batch_are_built_in_one_step_after_its_inputs() {
+    let armed = Arc::new(AtomicBool::new(false));
+    let (entered_tx, entered_rx) = channel();
+    let (release_tx, release_rx) = channel();
+    let gate = Gate { armed: Arc::clone(&armed), entered: entered_tx, release: release_rx };
+    let config = RuntimeConfig { journal: Box::new(gate), ..RuntimeConfig::manual() };
+    let (handle, join) = start(common::world(), config);
+    // This binding is younger than the runtime. When an assertion fails it
+    // is dropped first: the journal lets go, and the runtime can stop.
+    let release_tx = release_tx;
+    let ada = handle.spawn(spec("Ada")).await.expect("spawn");
+    let bob = handle.spawn(spec("Bob")).await.expect("spawn");
+    let before = handle.stats().await.expect("stats");
+    assert_eq!((before.observations, before.observe_batches, before.observe_micros), (0, 0, 0));
+
+    let chop = |resident: ResidentId| -> Call<ActionAck> {
+        let handle = handle.clone();
+        Box::pin(async move { handle.act(resident, act("chop", json!({}))).await })
+    };
+    let observe = |resident: ResidentId| -> Call<Observation> {
+        let handle = handle.clone();
+        Box::pin(async move { handle.observe(resident, ObserveOpts::default()).await })
+    };
+
+    // The simulation thread takes one action and then waits in the
+    // journal.
+    armed.store(true, Ordering::SeqCst);
+    let mut first = chop(ada);
+    assert!(poll_once(&mut first).await.is_none());
+    tokio::task::spawn_blocking(move || entered_rx.recv())
+        .await
+        .expect("the task ran")
+        .expect("the journal was entered");
+
+    // Five calls arrive while the thread is held. They are in the mailbox
+    // together, so the thread takes them as one batch: an observation,
+    // then an action of the same resident, then three more observations.
+    let mut early = observe(ada);
+    assert!(poll_once(&mut early).await.is_none());
+    let mut second = chop(ada);
+    assert!(poll_once(&mut second).await.is_none());
+    let mut other = observe(bob);
+    assert!(poll_once(&mut other).await.is_none());
+    let mut nobody = observe(ResidentId(99));
+    assert!(poll_once(&mut nobody).await.is_none());
+    let mut late = observe(ada);
+    assert!(poll_once(&mut late).await.is_none());
+    release_tx.send(()).expect("the journal waits for the test");
+
+    first.await.expect("the first action");
+    second.await.expect("the second action");
+    // A resident starts with 100 cents and each action pays one. Both
+    // observations of Ada show the two actions, also the observation that
+    // was asked for before the second one: the observations of a batch
+    // come after its inputs.
+    assert_eq!(cash(&early.await.expect("an observation")), Some(102));
+    assert_eq!(cash(&late.await.expect("an observation")), Some(102));
+    let seen = other.await.expect("an observation");
+    assert_eq!((seen.resident, cash(&seen)), (bob, Some(100)));
+    // A resident that does not exist gets its error. The others are not
+    // touched by it.
+    assert_eq!(nobody.await.map(|_| ()), Err(SimError::UnknownResident));
+
+    // Four requests, built in one step.
+    let after = handle.stats().await.expect("stats");
+    assert_eq!((after.observations, after.observe_batches), (4, 1));
+    assert!(after.observe_micros > 0, "the step took time: {after:?}");
+    assert_eq!(join.shutdown().expect("a clean stop").residents(), 2);
+}
+
+#[tokio::test]
+async fn the_statistics_count_the_observations_of_waiting_calls() {
+    let (handle, _join) = start(common::world(), RuntimeConfig::manual());
+    let mut ids = Vec::new();
+    for name in ["Ada", "Bob", "Cy", "Di", "Eve"] {
+        ids.push(handle.spawn(spec(name)).await.expect("spawn"));
+    }
+    handle.step(1).await.expect("step");
+    let wait = |resident: ResidentId, filter: WaitFilter| {
+        let handle = handle.clone();
+        tokio::spawn(async move { handle.wait(resident, filter, Duration::from_secs(120)).await })
+    };
+    // Bob has two calls. Cy waits for a kind that does not come. Di has
+    // one call. Eve waits and gets no news.
+    let bob_one = wait(ids[1], WaitFilter::Any);
+    let bob_two = wait(ids[1], WaitFilter::Any);
+    let cy = wait(ids[2], WaitFilter::Kinds { kinds: vec!["town.other".into()] });
+    let di = wait(ids[3], WaitFilter::Any);
+    let eve = wait(ids[4], WaitFilter::Any);
+    // A call that starts to wait at the end of the inbox needs no
+    // observation.
+    let before = until(&handle, |s| s.waiting == 5).await;
+    assert_eq!((before.observations, before.observe_batches), (0, 0));
+
+    for to in [ids[1], ids[2], ids[3]] {
+        let tell = act("tell", json!({ "to": to, "kind": "town.greeting" }));
+        handle.act(ids[0], tell).await.expect("act");
+    }
+    handle.step(1).await.expect("step");
+
+    // The frame woke Bob, Cy and Di. The simulation thread built one
+    // observation for each of their four calls, and none for Eve.
+    let after = handle.stats().await.expect("stats");
+    assert_eq!(after.observations, 4);
+    assert_eq!(after.waiting, 2, "the calls of Cy and Eve still wait");
+    for call in [bob_one, bob_two, di] {
+        let observation = call.await.expect("the task ran").expect("an observation");
+        let kinds: Vec<&str> = observation.notices.iter().map(|n| n.kind.as_str()).collect();
+        assert_eq!(kinds, ["town.greeting"], "resident {}", observation.resident);
+    }
+    assert!(!cy.is_finished() && !eve.is_finished());
 }
 
 #[tokio::test]

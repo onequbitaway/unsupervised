@@ -257,3 +257,81 @@ pub async fn earn(server: &Server, client: &Client, keys: &[&str]) {
         assert_eq!(client.cash(key).await, before + SHIFT_PAY, "the shift paid");
     }
 }
+
+/// Time after which a test gives up on a thing that the server must do.
+/// It only turns a test that would hang into a test that fails.
+pub const PATIENCE: Duration = Duration::from_secs(60);
+
+/// Sends a request whose answer needs frames of the world, and runs
+/// frames until the answer is there.
+pub async fn send_stepping(server: &Server, request: RequestBuilder) -> (StatusCode, Value) {
+    let call = tokio::spawn(send(request));
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while !call.is_finished() {
+        assert!(std::time::Instant::now() < deadline, "the request got no answer");
+        server.sim.step(1).await.expect("the world steps");
+        tokio::task::yield_now().await;
+    }
+    call.await.expect("the request ran")
+}
+
+/// Asks the viewer service for `path` again and again until `ready` says
+/// that the answer is the one to wait for. The service reads the frames
+/// of the world in a task of its own.
+pub async fn viewer_shows(client: &Client, path: &str, ready: impl Fn(&Value) -> bool) -> Value {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        let (status, body) = send(client.get(path)).await;
+        if status == StatusCode::OK && ready(&body) {
+            return body;
+        }
+        assert!(std::time::Instant::now() < deadline, "{path} never showed it: {status} {body}");
+        tokio::task::yield_now().await;
+    }
+}
+
+/// A mission that a sponsor can publish: two places of 5,000 cents for
+/// two loaves of bread.
+pub fn bread_mission() -> Value {
+    json!({
+        "title": "Bread for the fair",
+        "text": "The town needs bread.",
+        "objectives": [
+            { "event": "economy.goods_produced", "fields": { "item": "bread" }, "count": 2 }
+        ],
+        "reward": 5000,
+        "deadline_in": 600,
+        "takers": 2,
+    })
+}
+
+impl Client {
+    /// Publishes a mission as a sponsor, and runs frames until the world
+    /// answered. Returns the status and the answer.
+    pub async fn sponsor(
+        &self,
+        server: &Server,
+        token: &str,
+        mission: &Value,
+    ) -> (StatusCode, Value) {
+        send_stepping(server, self.post("/v1/missions", mission).bearer_auth(token)).await
+    }
+
+    /// Sends the free verb `mission_list` for a resident and returns its
+    /// result. The global realm answers in the next frame, with a report.
+    pub async fn mission_list(&self, server: &Server, key: &str, args: Value) -> Value {
+        let sent = self.act(key, "mission_list", args).await;
+        assert_eq!(sent["acks"][0]["status"]["state"], "pending", "{sent}");
+        let action = sent["acks"][0]["action_id"].clone();
+        server.sim.step(2).await.expect("the world steps");
+        let (status, seen) = send(self.get("/v1/observe?sections=reports").bearer_auth(key)).await;
+        assert_eq!(status, StatusCode::OK, "{seen}");
+        let reports = seen["sections"]["reports"].as_array().expect("reports");
+        let report = reports
+            .iter()
+            .find(|report| report["action_id"] == action)
+            .unwrap_or_else(|| panic!("a report of the list, in {seen}"));
+        assert_eq!(report["ok"], true, "{report}");
+        report["result"].clone()
+    }
+}

@@ -1,5 +1,5 @@
-//! Measures what the runtime can take: actions per second and the time from
-//! a call to its acknowledgement, with the journal off and on.
+//! Measures what the runtime can take: calls per second and the time from
+//! a call to its answer, with the journal off and on.
 //!
 //! Many callers send `chop` actions through one `SimHandle` while the world
 //! runs frames in real time. Each caller owns one resident. The example
@@ -11,10 +11,11 @@
 //!   server that is not overloaded;
 //! - where the simulation thread spent its time.
 //!
-//! It also measures the kernel alone (no runtime), the effect of the batch
-//! size on a journal that syncs, what happens when more callers arrive than
-//! the mailbox holds, a snapshot, and the cost of a frame while very many
-//! `wait` calls wait.
+//! It also measures the kernel alone (no runtime), observations (alone,
+//! and one after each action, as `POST /v1/act` asks for them), the effect
+//! of the batch size on a journal that syncs, what happens when more
+//! callers arrive than the mailbox holds, a snapshot, and the cost of a
+//! frame while very many `wait` calls wait.
 //!
 //! ```text
 //! cargo run --release -p unsup-runtime --example throughput
@@ -33,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use unsup_kernel::{CityConfig, Input, Plugin, Pos, ResidentId, World, WorldConfig};
-use unsup_protocol::{ActionRequest, SimError, WaitFilter};
+use unsup_protocol::{ActionRequest, ObserveOpts, SimError, WaitFilter};
 use unsup_runtime::{
     DurableConfig, DurableJournal, FsStorage, RuntimeConfig, SimHandle, SimStats, SyncPolicy, start,
 };
@@ -49,13 +50,25 @@ const SNAPSHOT_EVERY: u64 = 20;
 /// How long a caller waits before it tries again after `overloaded`.
 const BACK_OFF: Duration = Duration::from_millis(1);
 
+/// What a caller sends.
+#[derive(Clone, Copy)]
+enum Load {
+    /// One `chop` action.
+    Act,
+    /// One observation.
+    Observe,
+    /// One `chop` action and then one observation. The two count as one
+    /// call.
+    ActObserve,
+}
+
 /// What one measurement gave.
 struct Outcome {
-    /// Acknowledged actions.
+    /// Answered calls.
     acks: u64,
     /// Calls that were refused with `overloaded`.
     overloaded: u64,
-    /// Time from each call to its acknowledgement, in microseconds, sorted.
+    /// Time from each call to its answer, in microseconds, sorted.
     latencies: Vec<u32>,
     /// Length of the measurement.
     elapsed: Duration,
@@ -102,11 +115,24 @@ async fn populate(handle: &SimHandle, count: usize, zones: usize) -> Vec<Residen
     ids
 }
 
-/// One caller: sends `chop` until the deadline. With a `period` it sends
-/// one action per period; without, the next action follows the answer.
+/// Sends one call of a load and waits for its answer.
+async fn send(handle: &SimHandle, resident: ResidentId, load: Load) -> Result<(), SimError> {
+    match load {
+        Load::Act => handle.act(resident, chop()).await.map(drop),
+        Load::Observe => handle.observe(resident, ObserveOpts::default()).await.map(drop),
+        Load::ActObserve => {
+            handle.act(resident, chop()).await?;
+            handle.observe(resident, ObserveOpts::default()).await.map(drop)
+        }
+    }
+}
+
+/// One caller: sends calls until the deadline. With a `period` it sends
+/// one call per period; without, the next call follows the answer.
 async fn caller(
     handle: SimHandle,
     resident: ResidentId,
+    load: Load,
     deadline: Instant,
     period: Option<Duration>,
     offset: Duration,
@@ -132,7 +158,7 @@ async fn caller(
             break;
         }
         let answer = tokio::select! {
-            answer = handle.act(resident, chop()) => answer,
+            answer = send(&handle, resident, load) => answer,
             // A call that is still on its way at the end is not counted.
             () = &mut end => break,
         };
@@ -152,6 +178,7 @@ async fn caller(
 async fn measure(
     handle: &SimHandle,
     residents: &[ResidentId],
+    load: Load,
     seconds: f64,
     rate: Option<f64>,
 ) -> Outcome {
@@ -166,7 +193,7 @@ async fn measure(
             // Paced callers do not all send at the same moment.
             let offset = period
                 .map_or(Duration::ZERO, |period| period.mul_f64(n as f64 / residents.len() as f64));
-            tokio::spawn(caller(handle.clone(), resident, deadline, period, offset))
+            tokio::spawn(caller(handle.clone(), resident, load, deadline, period, offset))
         })
         .collect();
     let mut latencies = Vec::new();
@@ -185,7 +212,7 @@ async fn measure(
 fn print_header() {
     println!(
         "{:<40} {:>11} {:>8} {:>8} {:>8} {:>9} {:>8} {:>10}   simulation thread",
-        "setting", "actions/s", "p50 ms", "p90 ms", "p99 ms", "p99.9 ms", "max ms", "overloaded"
+        "setting", "calls/s", "p50 ms", "p90 ms", "p99 ms", "p99.9 ms", "max ms", "overloaded"
     );
 }
 
@@ -196,8 +223,19 @@ fn print_row(label: &str, outcome: &Outcome) {
     let frames = a.frames_run - b.frames_run;
     let frame_time = (a.mean_frame_micros * a.frames_run)
         .saturating_sub(b.mean_frame_micros * b.frames_run) as f64;
+    // The time for observations is a part of the time of `apply`.
+    let steps = a.observe_batches - b.observe_batches;
+    let observations = if steps == 0 {
+        String::new()
+    } else {
+        format!(
+            "; observations {:.0}%, {:.1} in one step",
+            share(a.observe_micros, b.observe_micros),
+            (a.observations - b.observations) as f64 / steps as f64,
+        )
+    };
     println!(
-        "{label:<40} {:>11.0} {:>8.2} {:>8.2} {:>8.2} {:>9.2} {:>8.2} {:>10}   intake {:.0}%, commit {:.0}%, apply {:.0}%, reply {:.0}%, {frames} frames {:.0}%",
+        "{label:<40} {:>11.0} {:>8.2} {:>8.2} {:>8.2} {:>9.2} {:>8.2} {:>10}   intake {:.0}%, commit {:.0}%, apply {:.0}%, reply {:.0}%, {frames} frames {:.0}%{observations}",
         outcome.rate(),
         outcome.percentile(50.0),
         outcome.percentile(90.0),
@@ -284,9 +322,9 @@ async fn run_setting(
     let (handle, join) = start(world, config);
     let residents = populate(&handle, callers, zones).await;
 
-    let saturated = measure(&handle, &residents, seconds, None).await;
+    let saturated = measure(&handle, &residents, Load::Act, seconds, None).await;
     print_row(&format!("{label}, saturated"), &saturated);
-    let half = measure(&handle, &residents, seconds, Some(saturated.rate() / 2.0)).await;
+    let half = measure(&handle, &residents, Load::Act, seconds, Some(saturated.rate() / 2.0)).await;
     print_row(&format!("{label}, half load"), &half);
     if durable {
         let stats = handle.stats().await.expect("stats");
@@ -314,9 +352,56 @@ async fn run_overload(seconds: f64) {
     let callers = 4 * config.mailbox;
     let (handle, join) = start(world(4), config);
     let residents = populate(&handle, callers, 16).await;
-    let outcome = measure(&handle, &residents, seconds, None).await;
+    let outcome = measure(&handle, &residents, Load::Act, seconds, None).await;
     print_row(&format!("{callers} callers, mailbox 1024"), &outcome);
     join.shutdown().expect("a clean stop");
+}
+
+/// Observations without a journal: alone, saturated and at half of that
+/// rate, and one after each action. The simulation thread answers the
+/// observations of one batch of calls together.
+async fn run_observations(callers: usize, seconds: f64) {
+    let world = world(4);
+    let zones = world.layout().zones().len();
+    let (handle, join) = start(world, RuntimeConfig::real_time(TICK));
+    let residents = populate(&handle, callers, zones).await;
+    let saturated = measure(&handle, &residents, Load::Observe, seconds, None).await;
+    print_row("observe, saturated", &saturated);
+    let rate = Some(saturated.rate() / 2.0);
+    let half = measure(&handle, &residents, Load::Observe, seconds, rate).await;
+    print_row("observe, half load", &half);
+    let mixed = measure(&handle, &residents, Load::ActObserve, seconds, None).await;
+    print_row("act then observe, saturated", &mixed);
+    let rate = Some(mixed.rate() / 2.0);
+    let half = measure(&handle, &residents, Load::ActObserve, seconds, rate).await;
+    print_row("act then observe, half load", &half);
+    join.shutdown().expect("a clean stop");
+}
+
+/// The kernel without a runtime: one world on one thread builds the
+/// observation of each resident in turn. Returns observations per second.
+fn kernel_observes(residents: usize, seconds: f64) -> f64 {
+    let mut world = world(4);
+    let zones = world.layout().zones().len();
+    let ids: Vec<ResidentId> = (0..residents)
+        .map(|n| {
+            let id = world.spawn(spec(&format!("r{n}"))).expect("spawn");
+            let travel = act("travel", json!({ "zone": n % zones }));
+            world.apply(Input::Act { resident: id, request: travel });
+            id
+        })
+        .collect();
+    let opts = ObserveOpts::default();
+    let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+    let started = Instant::now();
+    let mut built = 0u64;
+    while Instant::now() < deadline {
+        for &resident in &ids {
+            std::hint::black_box(world.observe(resident, &opts).expect("observe"));
+        }
+        built += ids.len() as u64;
+    }
+    built as f64 / started.elapsed().as_secs_f64()
 }
 
 /// Sends a call again until the runtime takes it.
@@ -439,6 +524,12 @@ fn main() {
         threads.min(8),
     );
 
+    let observes = kernel_observes(callers, seconds.min(2.0));
+    println!(
+        "kernel alone: {observes:.0} observations/s on one thread ({:.2} us per observation)",
+        1_000_000.0 / observes,
+    );
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -446,6 +537,7 @@ fn main() {
     runtime.block_on(async {
         print_header();
         run_setting("journal off", None, None, callers, seconds).await;
+        run_observations(callers, seconds).await;
         let interval = SyncPolicy::Interval(Duration::from_millis(50));
         run_setting("journal, sync every 50 ms", Some(interval), None, callers, seconds).await;
         let every_batch = Some(SyncPolicy::EveryBatch);

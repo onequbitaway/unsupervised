@@ -14,6 +14,7 @@ gives the formats, the rules and the limits of the implementation.
 | Part | File | Job |
 | --- | --- | --- |
 | Simulation thread | `src/sim.rs` | Takes calls from the mailbox, records them, applies them, steps frames |
+| Observations | `src/observe.rs`, `src/sim/observing.rs` | The one function that builds observations, and the batch of `observe` calls |
 | Handle | `src/handle.rs` | The API for all other services |
 | Mailbox types | `src/mailbox.rs` | The calls and the answers |
 | Reply thread | `src/replier.rs` | Sends the answers of large batches |
@@ -175,6 +176,18 @@ disk, so a snapshot is never newer than the log on the disk.
 `SimStats` has the frame of the last snapshot, the time that the
 simulation thread stood still for it, the time of the write and the size.
 
+A host reads the snapshots of a storage with two functions of the module
+`snapshot`. Both work while the world runs, and neither reads the state.
+
+- `snapshot::list(storage)` returns the snapshot files, oldest first: the
+  name, the sequence number and the frame of each. It reads only the
+  names. A rollback can go to each of them.
+- `snapshot::newest(storage)` returns the `SnapshotMeta` of the newest
+  snapshot that a recovery or a rollback can use: the frame, the sequence
+  number and the state hash. It reads the header of one file. It passes
+  over a snapshot that a rollback made void and a file with a header that
+  cannot be read.
+
 ## 6. Recovery
 
 `recover(storage, plugins)` returns the world and a report.
@@ -277,6 +290,22 @@ calls `SimHandle::rollback`.
   most `runtime.max_waiters` calls wait; one more gets `Overloaded`. A
   resident has at most `runtime.max_waiters_per_resident` waiting calls;
   one more ends the oldest one.
+- **Observations.** An observation is the most expensive read. The
+  simulation thread does not answer an `observe` call as it comes. It
+  takes a batch of calls from the mailbox (`runtime.batch`), applies the
+  inputs of the batch, and then builds the observations of all `observe`
+  calls of the batch in one step. That step is one function:
+  `observe_batch` in `src/observe.rs`. Every observation of the simulation
+  thread comes from it, also that of a `wait` call; a `wait` call gets
+  its observation on its own, when the call is answered. Today the function
+  asks the world for one observation after the other. When the kernel
+  builds a batch on all cores (`World::observe_batch`), only the body of
+  that function changes.
+- **What an observation shows.** The world after every input of the same
+  batch, also after an input that came later than the `observe` call. The
+  world had that state between the call and its answer. A caller that
+  waits for the answer to its action before it asks for an observation
+  always sees that action.
 - **Answers.** A batch with `runtime.reply_handoff` answers or more goes
   to a reply thread.
 - **Statistics.** `SimHandle::stats` returns `SimStats`.
@@ -294,8 +323,12 @@ calls `SimHandle::rollback`.
 | `last_snapshot_frame`, `last_snapshot_micros`, `last_snapshot_write_micros`, `last_snapshot_bytes` | The last snapshot: frame, stall of the simulation thread, time of the write, size |
 | `rollbacks` | Rollbacks since the start |
 | `intake_micros`, `commit_micros`, `apply_micros`, `reply_micros` | Where the simulation thread spent its time |
+| `observations`, `observe_batches`, `observe_micros` | Observations that the simulation thread built; the steps in which it built them; the time for them. The time for the `observe` calls is also in `apply_micros` |
 
-The example `throughput` measures the runtime with many callers:
+The example `throughput` measures the runtime with many callers. It also
+measures observations: alone, and one after each action. Each row names
+the share of the time of the simulation thread that went to observations
+and the number of observations in one step.
 
 ```sh
 cargo run --release -p unsup-runtime --example throughput

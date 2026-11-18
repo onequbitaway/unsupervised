@@ -16,11 +16,16 @@
 //! it tells whether a later rollback dropped inputs that the snapshot holds.
 //! `state_hash` is `World::state_hash` at that moment. `payload_hash` is the
 //! blake3 hash of the payload and `check` covers the header.
+//!
+//! A host reads what a storage holds with [`list`] (the snapshot files,
+//! from their names) and [`newest`] (the header of the newest snapshot
+//! that can be used). Both are cheap and work while the world runs.
 
 mod format;
 mod store;
 mod writer;
 
 pub use format::SnapshotMeta;
-pub(crate) use store::{SnapshotEntry, head, list, load, write};
+pub use store::{SnapshotEntry, list, newest};
+pub(crate) use store::{head, load, write};
 pub(crate) use writer::{SnapshotJob, SnapshotWriter};

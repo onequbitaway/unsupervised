@@ -22,7 +22,7 @@ use crate::validate;
 /// name: kinds look like `society.speech`.
 const KIND_EXTRA: &str = ".";
 
-/// The query of `GET /v1/observe` and of `POST /v1/act`.
+/// The query of `GET /v1/observe`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ObserveQuery {
@@ -69,16 +69,42 @@ pub(crate) async fn me(
     })))
 }
 
+/// The query of `POST /v1/act`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActQuery {
+    /// `false`: the answer has only the acknowledgements. Without it, or
+    /// with `true`, the answer also has a fresh observation.
+    #[serde(default)]
+    observe: Option<bool>,
+    /// For the observation: `brief` or `full`.
+    #[serde(default)]
+    detail: Option<Detail>,
+    /// For the observation: only notices and reports with a sequence
+    /// number at or above this.
+    #[serde(default)]
+    since: Option<u64>,
+    /// For the observation: names of the sections to return, with commas
+    /// between them.
+    #[serde(default)]
+    sections: Option<String>,
+}
+
 /// `POST /v1/act`: sends one action request or a plan. Returns the
-/// acknowledgements and a fresh observation.
+/// acknowledgements and a fresh observation. With `observe=false` the
+/// answer has only the acknowledgements, and the server builds no
+/// observation.
 pub(crate) async fn act(
     State(gateway): State<Gateway>,
     auth: ResidentAuth,
-    Params(query): Params<ObserveQuery>,
+    Params(query): Params<ActQuery>,
     Body(body): Body<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let resident = auth.resident;
-    let opts = query.into_opts(&gateway)?;
+    let observe = query.observe.unwrap_or(true);
+    // The rest of the query is checked also when no observation follows.
+    let opts = ObserveQuery { detail: query.detail, since: query.since, sections: query.sections }
+        .into_opts(&gateway)?;
     let (requests, _) =
         validate::act_body(body, gateway.config().limits.max_plan).map_err(ApiError::invalid)?;
     gateway.admit(resident, &requests).await?;
@@ -86,6 +112,9 @@ pub(crate) async fn act(
         Ok(acks) => acks,
         Err(error) => return Err(gateway.resident_error(resident, error).await),
     };
+    if !observe {
+        return Ok(Json(json!({ "acks": acks })));
+    }
     let observation = observe_as(&gateway, auth, opts).await?;
     Ok(Json(json!({ "acks": acks, "observation": observation })))
 }
