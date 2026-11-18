@@ -140,7 +140,7 @@ fn trade(
     }
     // Check what the order locks before anything changes.
     let (needed, available) = match side {
-        Side::Buy => (args.shares * args.price, Bank::balance(realm, resident)),
+        Side::Buy => (args.shares * args.price, crate::bank::available(realm, p, &bank, resident)),
         Side::Sell => (args.shares, free),
     };
     if available < needed {

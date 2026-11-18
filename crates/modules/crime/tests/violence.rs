@@ -235,13 +235,16 @@ fn the_stronger_fighter_wins_and_a_victim_that_sleeps_is_easy() {
     assert!(!fight(100, 100));
     assert!(!fight(0, 400));
 
-    // Only the bonus against a victim that sleeps decides.
+    // Only the bonus against a victim that sleeps decides. The residents
+    // have no routines: the routine `sleep when tired` would put the tired
+    // victim back to sleep in the tick in which the robbery wakes it.
     let rules = [
         ("crime.chance_min_bp", 0),
         ("crime.chance_max_bp", 10_000),
         ("crime.rob_base_bp", 0),
         ("crime.combat_level_bp", 0),
         ("crime.force_asleep_bonus_bp", 10_000),
+        ("life.spawn_routines", 0),
         NO_WATCH,
     ];
     let rob = |asleep: bool| {

@@ -123,7 +123,16 @@ impl Plugin for Fixture {
         b.instant_verb::<ArrestArgs>(spec("arrest_test"), |realm, ctx, args| {
             realm.emit(
                 EventMeta::public("crime.arrest_made", 50).actor(ctx.resident),
-                &json!({ "target": args.target, "officer": ctx.resident, "charge": "theft" }),
+                // The data of the crime module: an arrest by an officer for
+                // one case.
+                &json!({
+                    "officer": ctx.resident,
+                    "target": args.target,
+                    "case": 7,
+                    "cases": [7],
+                    "city": 0,
+                    "watch": false,
+                }),
             );
             Ok(Value::Null)
         });

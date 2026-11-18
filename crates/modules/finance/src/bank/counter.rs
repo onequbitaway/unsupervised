@@ -12,6 +12,7 @@ use unsup_kernel::{
     ResidentId, Scope,
 };
 
+use super::loans;
 use super::state::Bank;
 use crate::params::Params;
 use crate::util::{day_of, drama, no_account, part, positive, require_site, spec, wait_for_global};
@@ -170,12 +171,8 @@ fn withdraw(
         return Err(no_account(resident, true));
     }
     let fee = part(amount, realm.param(p.withdraw_fee_bp));
-    let balance = Bank::balance(realm, resident);
     let needed = amount.saturating_add(fee);
-    if balance < needed {
-        return Err(ActionError::insufficient("Your balance is too low for this withdrawal.")
-            .with_details(json!({ "needed": needed, "available": balance })));
-    }
+    loans::check_free(realm, p, &bank, resident, needed, "withdrawal")?;
     bank.pay_out(realm, resident, BANK_TREASURY, fee, "bank.fee")?;
     bank.wire_out(realm, resident, resident, amount, "bank.withdraw")?;
     Ok(json!({ "withdrawn": amount, "fee": fee, "balance": Bank::balance(realm, resident) }))

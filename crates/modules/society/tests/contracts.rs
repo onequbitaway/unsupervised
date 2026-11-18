@@ -236,14 +236,15 @@ fn an_offer_that_nobody_signs_expires_and_the_money_comes_back() {
     w.assert_conserved();
 }
 
-/// A bounty: 500 for the arrest of `target`, for `due_in` minutes.
+/// A bounty: 500 for the arrest of `target` by an officer, not by the
+/// city watch, for `due_in` minutes.
 fn bounty(target: ResidentId, due_in: u32) -> Value {
     json!([{
         "kind": "pay_on_event",
         "by": "offerer",
         "amount": 500,
         "event": "crime.arrest_made",
-        "fields": { "target": target, "charge": "theft" },
+        "fields": { "target": target, "watch": false },
         "due_in": due_in,
     }])
 }
@@ -271,7 +272,7 @@ fn a_bounty_pays_when_the_event_happens_in_any_zone() {
             "fields": {
                 "untrusted": true,
                 "from": ada,
-                "text": format!("{{\"charge\":\"theft\",\"target\":{}}}", thief.0),
+                "text": format!("{{\"target\":{},\"watch\":false}}", thief.0),
             },
             "due_in": 100,
             "state": "open",
@@ -693,9 +694,9 @@ fn the_names_in_an_event_clause_have_length_limits() {
     set(&mut w, "society.contract_field_name_max", 6);
     ok(&mut w, ada, "contract_offer", offer);
 
-    // The value `theft` has 5 bytes.
+    // The value `bread` has 5 bytes.
     set(&mut w, "society.contract_field_text_max", 4);
-    let offer = event("crime.arrest_made", json!({ "charge": "theft" }));
+    let offer = event("life.meal_eaten", json!({ "item": "bread" }));
     assert_eq!(fail(&mut w, ada, "contract_offer", offer.clone()), ErrorCode::InvalidArgs);
     set(&mut w, "society.contract_field_text_max", 5);
     ok(&mut w, ada, "contract_offer", offer);

@@ -1,5 +1,5 @@
-//! What a new resident gets: full needs, its start age and a bed in a
-//! shelter.
+//! What a new resident gets: full needs, its start age, the default
+//! routines and a bed in a shelter.
 
 use unsup_kernel::{Builder, Idx, Realm, Scope};
 
@@ -8,6 +8,7 @@ use crate::care::remember_bed;
 use crate::handles::Handles;
 use crate::names::{attr, site};
 use crate::needs;
+use crate::reflex;
 use crate::shelters::Shelters;
 
 /// Sets up a new resident.
@@ -17,6 +18,7 @@ fn welcome(realm: &Realm, h: &Handles, idx: Idx) {
     }
     realm.attr_set(idx, h.age, realm.param(h.p.spawn_age));
     needs::start_clock(realm, idx);
+    reflex::install(realm, h, idx);
 
     // The bed: the shelter where the resident appeared, else the nearest
     // shelter of the district, else the nearest shelter of the city.

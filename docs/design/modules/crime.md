@@ -241,8 +241,8 @@ buy it for less pays the same amount to repair it.
 
 ### 4.6 `defraud`
 
-The verb table of the game design has `defraud`. This module does not have
-it. A fraud is a promise that a resident breaks. A resident can break a
+The first verb table of the game design had `defraud`. This module does not
+have it, and the table does not have it any more. A fraud is a promise that a resident breaks. A resident can break a
 promise without a verb, and the engine cannot know that a promise was made
 unless it is a contract. A contract of the society module already punishes
 a breach. A verb `defraud` would only let a resident tell the engine about
@@ -747,12 +747,18 @@ still use:
 | --- | --- |
 | kernel | `wait`, `cancel`, `set_routines` |
 | life | `eat`, `use_item`, `sleep`, `rest`, `write_will`, `inspect` |
-| society | `say`, `message`, `org_say` |
+| society | `say`, `message`, `org_say`, `contract_view` |
 | economy | `list_jobs`, `list_property`, `list_recipes` |
+| finance | `transfer`, `loan_repay`, `cancel_shares`, `shares_book` |
+| missions | `mission_list`, `leaderboard` |
 | crime | `report_crime`, `pay_fine`, `case_list`, `case_view` |
 
-Those modules list the two conditions in `allowed_in` already. No change in
-another module is necessary.
+These are 26 verbs. Each module lists the two conditions in `allowed_in`
+of its verbs. No other verb works: an inmate cannot walk, trade, work,
+give, vote or commit a crime. The scenario `s02_heist` of
+`crates/scenarios` asks every verb of the catalogue and fails when the
+list changes. The finance verbs use only the bank account: an inmate can
+send money to a friend, who brings it as cash for the fine.
 
 **The jail keeps an inmate alive.** An inmate cannot buy food or walk to a
 bed. Once in each game hour, in each zone, for each resident that is
@@ -979,7 +985,8 @@ of the case.
 | Courts | `rule_case`, `jury_vote` |
 | Queries | `case_list` (F), `case_view` (F) |
 
-Differences from the verb table of `docs/design/game-design.md`, section 5:
+The verb table of `docs/design/game-design.md`, section 5, has these 21
+verbs. Three points differ from the first game design:
 
 - `defraud` is not there (section 4.6).
 - `repair` is new: the verb that gives the value of a damaged site back.

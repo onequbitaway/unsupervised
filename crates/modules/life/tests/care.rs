@@ -8,10 +8,12 @@ use unsup_kernel::serde_json::json;
 use unsup_kernel::testing::TestWorld;
 use unsup_kernel::{Holder, Money, Pos, ResidentId};
 
-/// A world without the hourly decay, so that only the verbs change needs.
+/// A world without the hourly decay, the reflexes and the routines of a
+/// newcomer, so that only the verbs of the test change needs.
 fn calm() -> TestWorld<'static> {
     world_with(with_params(&[
         ("life.reflexes", 0),
+        ("life.spawn_routines", 0),
         ("life.food_decay_per_hour", 0),
         ("life.energy_decay_per_hour", 0),
         ("life.mood_decay_per_hour", 0),

@@ -96,8 +96,15 @@ pub(crate) const fn spec(verb: &'static str, summary: &'static str, free: bool) 
     VerbSpec { verb, module: MODULE, summary, free, allowed_in: &[] }
 }
 
-/// Makes the description of a verb that works from a hospital bed: it only
-/// uses the bank account.
+/// Makes the description of a verb that works from a hospital bed and from
+/// a cell: it only uses the bank account. So a patient and an inmate can
+/// pay what they owe.
 pub(crate) const fn remote(verb: &'static str, summary: &'static str, free: bool) -> VerbSpec {
-    VerbSpec { verb, module: MODULE, summary, free, allowed_in: &["hospitalized"] }
+    VerbSpec {
+        verb,
+        module: MODULE,
+        summary,
+        free,
+        allowed_in: &["hospitalized", "jailed", "detained"],
+    }
 }

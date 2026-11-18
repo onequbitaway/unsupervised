@@ -76,15 +76,19 @@ max = 1000000
 policy = false
 summary = "Credit limit of a resident without history and without deposits, in cents."
 
+# Credit without a deposit behind it is off: a resident that owns nothing
+# loses nothing in a default, so an owner could make residents only to
+# borrow and default. A server that wants such credit sets the next two
+# numbers and lowers `finance.loan_collateral_bp`.
 [params."finance.loan_limit_per_account_day"]
-value = 500
+value = 0
 min = 0
 max = 1000000
 policy = false
 summary = "Cents that each full day of account age adds to the credit limit."
 
 [params."finance.loan_limit_per_repaid_loan"]
-value = 20000
+value = 0
 min = 0
 max = 10000000
 policy = false
@@ -96,6 +100,13 @@ min = 0
 max = 100000
 policy = false
 summary = "Share of the seasoned balance that counts for the credit limit, in basis points."
+
+[params."finance.loan_collateral_bp"]
+value = 10000
+min = 0
+max = 10000
+policy = false
+summary = "Share of the open principal of a loan that the borrower must keep in its account, in basis points. With 10,000 a loan is fully secured: a default costs the bank no principal."
 
 [params."finance.loan_default_penalty_bp"]
 value = 5000

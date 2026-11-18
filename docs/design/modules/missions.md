@@ -601,7 +601,7 @@ Invariant: while a mission is open, its escrow holds
 | Kind | Fields | Use |
 | --- | --- | --- |
 | Each watched kind (section 4) | The actor; the data fields that an objective names | Progress of missions |
-| `crime.arrest_made` | The actor, else `officer` | The board `law` |
+| `crime.arrest_made` | The actor, else `officer`. The data is `officer`, `target`, `case`, `cases`, `city`, `watch` | The board `law` |
 | `kernel.despawned` | The actor | A taker leaves its missions; the boards |
 | `life.resident_died` | `resident`, `heir` | The heir of a poster |
 | `society.org_left` | `org`, `resident` | A member leaves the team of that organization |

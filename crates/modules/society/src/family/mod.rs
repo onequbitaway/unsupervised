@@ -40,13 +40,25 @@ pub(crate) fn build(b: &mut Builder, p: Params) {
                     household::on_home_lost(realm, &p, tenant, site);
                 }
             });
-            b.on_event("economy.property_sold", move |realm, event| {
-                let seller = serde_json::from_value::<Holder>(event.data["from"].clone());
+            // A lease that ends without an eviction: the tenant left by
+            // itself, or the owner ended the lease.
+            b.on_event("economy.lease_ended", move |realm, event| {
+                let tenant = event.data["tenant"].as_u64().map(ResidentId);
                 let site = event.data["site"].as_u64().map(SiteId);
-                if let (Ok(Holder::Resident(seller)), Some(site)) = (seller, site) {
-                    household::on_home_lost(realm, &p, seller, site);
+                if let (Some(tenant), Some(site)) = (tenant, site) {
+                    household::on_home_lost(realm, &p, tenant, site);
                 }
             });
+            // A sale and a foreclosure take the home from its owner.
+            for kind in ["economy.property_sold", "economy.property_foreclosed"] {
+                b.on_event(kind, move |realm, event| {
+                    let owner = serde_json::from_value::<Holder>(event.data["from"].clone());
+                    let site = event.data["site"].as_u64().map(SiteId);
+                    if let (Ok(Holder::Resident(owner)), Some(site)) = (owner, site) {
+                        household::on_home_lost(realm, &p, owner, site);
+                    }
+                });
+            }
         }
     }
     bonds::build(b, p);

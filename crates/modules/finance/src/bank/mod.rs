@@ -16,6 +16,7 @@ use unsup_kernel::{Builder, Scope, Stage};
 
 pub use self::counter::AmountArgs;
 pub(crate) use self::daily::end_loan;
+pub(crate) use self::loans::available;
 pub use self::loans::{LoanRepayArgs, LoanRequestArgs};
 pub use self::state::{Account, Bank, Loan};
 pub use self::transfer::TransferArgs;

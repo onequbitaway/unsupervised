@@ -27,7 +27,9 @@ fn act(w: &mut TestWorld<'_>, r: ResidentId, verb: &str, args: Value) {
 /// The first minutes: accounts, a loan, orders that wait, an issue of
 /// shares.
 fn setup(w: &mut TestWorld<'_>) {
+    // Unsecured credit, so that a loan can be written off.
     w.set_param("finance.loan_base_limit", 30_000);
+    w.set_param("finance.loan_collateral_bp", 0);
     for (name, pos, cash) in [
         ("Ann", AT_BANK, 60_100),
         ("Bob", AT_BANK, 20_100),

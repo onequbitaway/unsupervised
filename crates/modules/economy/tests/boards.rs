@@ -199,7 +199,7 @@ fn a_site_that_another_module_adds_later_reaches_the_board_at_the_next_check() {
 fn the_job_board_says_what_the_city_pays_for_a_starter_shift() {
     let mut t = Town::new();
     // Room for one starter shift a day.
-    t.world.set_param("economy.public_works_budget", 2_000);
+    t.world.set_param("economy.public_works_budget", 2_800);
     t.world.step(1);
     let ada = resident_at(&mut t.world, "Ada", 0, t.at.city_hall);
     let bob = t.world.spawn("Bob");
@@ -211,7 +211,7 @@ fn the_job_board_says_what_the_city_pays_for_a_starter_shift() {
             "jobs": [],
             "more": 0,
             "public_works": {
-                "wage": 2_000,
+                "wage": 2_800,
                 "minutes": 240,
                 "kinds": ["city_hall", "depot"],
                 "open": true,
@@ -233,7 +233,7 @@ fn the_job_board_says_what_the_city_pays_for_a_starter_shift() {
         ask(&mut t, bob, "list_jobs", json!({})),
         json!({ "city": 0, "jobs": [], "more": 0 })
     );
-    assert_eq!(flows(&t.world), module_flows([("gov.public_works", 2_000)], [], [], []));
+    assert_eq!(flows(&t.world), module_flows([("gov.public_works", 2_800)], [], [], []));
 }
 
 #[test]

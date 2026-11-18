@@ -319,12 +319,27 @@ slowly also slows the needs.
 
 ### 3.4 Residents with no owner online
 
-The design asks for default routines for each new resident. The kernel has
-no function with which a module can set routines. Only the verb
-`set_routines` can. So the module does two things.
+A resident lives when its owner is away. The module does two things.
 
-**Reflexes.** After the hourly change, a resident with no action and no
-plan:
+**Default routines.** Each new resident gets two routines when it appears
+(`Realm::set_routines` in the spawn hook):
+
+1. `eat when hungry`: food below `life.routine_eat_below` (400) and the
+   resident carries a food item. Action: `eat`.
+2. `sleep when tired`: energy below `life.routine_sleep_below` (250).
+   Action: `sleep`, at the place where the resident stands.
+
+- A routine fires only for a resident with no action and no plan.
+- A resident that sleeps does a new action only after it wakes up. `cancel`
+  wakes it.
+- The owner replaces the routines with the verb `set_routines`. An empty
+  list removes them.
+- `unsup_life::default_routines(blueprint)` returns the two routines, for a
+  process that wants to send them again.
+- `life.spawn_routines = 0` gives a new resident no routines.
+
+**Reflexes.** They are for a resident without routines. After the hourly
+change, a resident with no action and no plan:
 
 - eats one unit of the food that it carries when its food is below
   `life.reflex_eat_below` (300);
@@ -333,15 +348,6 @@ plan:
 
 Dozing keeps a resident alive, but its energy stays near the low mark and
 its mood falls. `life.reflexes = 0` stops the reflexes.
-
-**Default routines.** `unsup_life::default_routines(blueprint)` returns two
-routines. The process that creates a resident can send them with
-`set_routines`:
-
-1. `eat when hungry`: food below `life.routine_eat_below` (400) and the
-   resident carries a food item. Action: `eat`.
-2. `sleep when tired`: energy below `life.routine_sleep_below` (250).
-   Action: `sleep`.
 
 ## 4. Food, medicine, sleep, rest and hospital
 
@@ -543,9 +549,14 @@ names nobody. A resident cannot name itself. Event:
 Arguments: `to`, and `money`, or `item` and `qty`, or all three.
 
 - The receiver must be at most `life.give_range` tiles away (1): on the same
-  tile or on a tile next to it, in the same zone.
+  tile or on a tile next to it.
 - The cash and the goods move at once. A gift is complete or it does not
   occur. The giver is busy for `life.give_ticks` ticks (1).
+- The receiver can stand on the other side of a district border. The zone
+  of the giver knows the residents near its border
+  (`Realm::nearby_outside`), as they were one frame ago. Such a gift leaves
+  the giver at once, goes by wire and arrives in the next frame. It follows
+  a receiver that walked on.
 - Refusals: `invalid_args` (to itself, nothing to give, a negative amount, a
   quantity below 1), `not_found` (unknown item), `not_here`, `insufficient`.
 
@@ -577,6 +588,11 @@ Arguments: `resident` or `site`, or nothing.
   also see the money in the till.
 - Nothing: the tile, the zone, the city and the district type of the place
   where the resident stands, and the site there.
+
+- A resident in sight on the other side of a district border: `resident`,
+  `name`, `pos`, `distance`, `activity`, `zone` and `across_border: true`.
+  The zone of the observer knows no more about it, and what it knows is one
+  frame old.
 
 Sight is `kernel.sight_radius` tiles. Refusals: `not_here` (not in sight),
 `not_found` (no such site in this district), `invalid_args` (two targets).
@@ -678,6 +694,10 @@ depends on `unsup-life` (the server, the crime module) can also use:
 
 ## 15. Limits
 
+- A gift across a district border is not checked against the greatest
+  balance of the receiver. The kernel does that when the wire arrives.
+- The default routine `sleep when tired` sleeps where the resident stands.
+  It does not walk to the shelter first.
 - The kernel section `nearby` does not know the condition `asleep`. A
   resident that sleeps still sees its surroundings in the observation.
 - A site name is unique in its zone, not in its city.

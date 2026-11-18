@@ -39,9 +39,16 @@ fn alerts(w: &TestWorld<'_>, r: ResidentId) -> Vec<(String, String, i64)> {
         .collect()
 }
 
-/// A world without the reflexes, so that only the rates of the pass show.
+/// A world without the reflexes and without the routines of a newcomer, so
+/// that only the rates of the pass show.
 fn bare() -> TestWorld<'static> {
-    world_with(with_params(&[("life.reflexes", 0)]))
+    world_with(with_params(&[("life.reflexes", 0), ("life.spawn_routines", 0)]))
+}
+
+/// A world whose residents start without routines, so that only the
+/// reflexes act for an idle resident.
+fn reflexes_only() -> TestWorld<'static> {
+    world_with(with_params(&[("life.spawn_routines", 0)]))
 }
 
 #[test]
@@ -150,7 +157,7 @@ fn a_sleeping_resident_keeps_its_energy_and_a_patient_keeps_all_needs() {
 
 #[test]
 fn an_idle_resident_eats_what_it_carries_and_dozes() {
-    let mut w = world();
+    let mut w = reflexes_only();
     let ada = w.spawn("Ada");
     w.give_item(ada, "bread", 2);
     w.give_item(ada, "stone", 1);

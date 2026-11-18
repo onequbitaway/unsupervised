@@ -49,7 +49,7 @@ fn definition(rng: &mut Rng) -> Value {
         ("economy.goods_produced", json!({ "item": "bread" })),
         ("economy.goods_produced", json!({})),
         ("economy.shift_completed", json!({})),
-        ("crime.arrest_made", json!({ "charge": "theft" })),
+        ("crime.arrest_made", json!({ "watch": false })),
         ("missions.mission_completed", json!({})),
         ("society.said", json!({})),
     ];

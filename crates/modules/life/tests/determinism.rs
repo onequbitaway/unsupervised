@@ -130,7 +130,9 @@ fn setup(w: &mut TestWorld<'_>) {
     w.act_ok(giver, "give", json!({ "to": heir, "money": 1_500, "item": "bread", "qty": 2 }));
 
     // The testator dies at the next hourly pass and leaves all to the heir.
+    // It has no routines: the routine `eat when hungry` would eat its bread.
     let testator = member("testator");
+    w.act_ok(testator, "set_routines", json!({ "routines": [] }));
     w.act_ok(testator, "write_will", json!({ "heir": heir }));
     w.set_attr(testator, "need.food", 0);
     w.set_attr(testator, "need.health", 15);

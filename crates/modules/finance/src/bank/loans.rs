@@ -77,6 +77,52 @@ pub(crate) fn credit_limit(realm: &Realm, p: &Params, account: &Account, day: u6
     part(raw, (BP - lost).max(0)).min(realm.param(p.loan_limit_max))
 }
 
+/// Returns the collateral that the bank holds for an open principal: the
+/// part of the account balance that the borrower cannot take out.
+pub(crate) fn collateral(realm: &Realm, p: &Params, principal: i64) -> i64 {
+    part(principal.max(0), realm.param(p.loan_collateral_bp).clamp(0, BP))
+}
+
+/// Returns the collateral that the bank holds in the account of a
+/// resident, in cents. It is zero without a loan.
+pub(crate) fn held(realm: &Realm, p: &Params, bank: &Bank, resident: ResidentId) -> i64 {
+    let principal = bank.account(resident).and_then(|a| a.loan.as_ref()).map_or(0, |l| l.principal);
+    collateral(realm, p, principal)
+}
+
+/// Returns what a resident can take out of its account: the balance
+/// without the collateral of its loan.
+pub(crate) fn available(realm: &Realm, p: &Params, bank: &Bank, resident: ResidentId) -> i64 {
+    (Bank::balance(realm, resident) - held(realm, p, bank, resident)).max(0)
+}
+
+/// Checks that a resident can take `needed` cents out of its account. The
+/// collateral of a loan stays in the account.
+pub(crate) fn check_free(
+    realm: &Realm,
+    p: &Params,
+    bank: &Bank,
+    resident: ResidentId,
+    needed: i64,
+    what: &str,
+) -> Result<(), ActionError> {
+    let held = held(realm, p, bank, resident);
+    let free = (Bank::balance(realm, resident) - held).max(0);
+    if free >= needed {
+        return Ok(());
+    }
+    let mut details = json!({ "needed": needed, "available": free });
+    let message = if held > 0 {
+        details["held"] = json!(held);
+        format!(
+            "Your balance is too low for this {what}. The bank holds {held} cents as collateral for your loan."
+        )
+    } else {
+        format!("Your balance is too low for this {what}.")
+    };
+    Err(ActionError::insufficient(message).with_details(details))
+}
+
 /// Returns how much the bank can still lend under the reserve limit, in
 /// cents.
 pub(crate) fn lending_room(realm: &Realm, p: &Params, bank: &Bank) -> i64 {
@@ -95,6 +141,10 @@ pub(crate) fn ticks_to_collection(realm: &Realm, loan: &Loan) -> u64 {
 /// goes to the bank treasury. The principal is destroyed through the sink
 /// `bank.loan_repay`. A loan without principal and without due interest is
 /// closed and counts as repaid. Returns true when the loan was closed.
+///
+/// The payment must leave the collateral of the principal that stays open
+/// in the account. So a repayment of principal can use the collateral
+/// that it frees, and the interest must come from free money.
 pub(crate) fn pay(
     bank: &mut Bank,
     realm: &Realm,
@@ -104,12 +154,14 @@ pub(crate) fn pay(
     principal: i64,
 ) -> Result<bool, LedgerError> {
     let balance = Bank::balance(realm, resident);
+    let open = bank.account(resident).and_then(|a| a.loan.as_ref()).map_or(0, |l| l.principal);
+    let kept = collateral(realm, p, open - principal);
     let needed = interest.saturating_add(principal);
-    if balance < needed {
+    if balance - kept < needed {
         return Err(LedgerError::Insufficient {
             holder: Bank::holder(resident),
             needed,
-            available: balance,
+            available: (balance - kept).max(0),
         });
     }
     bank.pay_out(realm, resident, BANK_TREASURY, interest, "loan.interest")?;
@@ -237,6 +289,7 @@ fn request(
         "instalment": instalment,
         "first_due_in_ticks": first_due_in,
         "balance": Bank::balance(realm, resident),
+        "held": collateral(realm, p, amount),
     }))
 }
 

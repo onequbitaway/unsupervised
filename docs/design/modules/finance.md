@@ -45,10 +45,11 @@ Read `docs/design/architecture.md` and `docs/design/economy.md` first.
 ### Verbs
 
 The module owns these verbs. `docs/design/game-design.md`, section 5, lists
-most of them in the rows "economy: trade" and "economy: bank". The economy
-module must not register them. (F) is a free verb.
+them in the four rows of `finance`. The economy module must not register
+them. (F) is a free verb. The last column says if the verb was in the first
+game design (`yes`) or if this module added it (`new`).
 
-| Verb | Kind | Place | In the game design |
+| Verb | Kind | Place | First game design |
 | --- | --- | --- | --- |
 | `open_account` | zone, waits for the global realm | at a `bank` | yes |
 | `deposit` | zone, waits for the global realm | at a `bank` | yes |
@@ -71,7 +72,9 @@ module must not register them. (F) is a free verb.
 | `central_bank_retire` | zone, waits for the global realm | anywhere | **new** |
 
 `transfer`, `loan_repay`, `cancel_shares` and `shares_book` also work for a
-resident with the condition `hospitalized`. They only use the bank account.
+resident with the condition `hospitalized`, `jailed` or `detained`. They
+only use the bank account. So a patient and an inmate can pay what they
+owe.
 
 ## 2. Bank accounts
 
@@ -105,7 +108,7 @@ Refusals:
 | `deposit`, `withdraw`, `transfer` | `invalid_args` | The amount is zero or less |
 | `deposit` | `insufficient` | The cash is less than the amount |
 | `deposit`, `withdraw`, `transfer` | `not_found` | The resident has no account. For `transfer`: or the receiver has none |
-| `withdraw`, `transfer` | `insufficient` | The balance is less than the amount plus the fee |
+| `withdraw`, `transfer` | `insufficient` | The free balance is less than the amount plus the fee. The collateral of a loan is not free |
 | `transfer` | `invalid_args` | The receiver is the sender |
 
 ### Deposit interest
@@ -154,6 +157,57 @@ limit    = min(loan_limit_max, raw * keep / 10,000)
 Money that arrives today does not raise the limit before tomorrow. Money
 that leaves today lowers the limit at once.
 
+With the numbers of the data file, `loan_base_limit`,
+`loan_limit_per_account_day` and `loan_limit_per_repaid_loan` are all 0. So
+the limit is the seasoned deposit, and a resident without a deposit gets no
+credit. The part "Collateral" below says why.
+
+### Collateral
+
+```text
+held = principal * loan_collateral_bp / 10,000
+free = max(0, balance - held)
+```
+
+While a loan is open, the bank holds a part of the account as collateral.
+
+- `withdraw`, `transfer` and `buy_shares` take only free money. The refusal
+  is `insufficient`; its details have `held`.
+- The daily collection takes an instalment only from free money. A
+  repayment of principal lowers `held`, so it can use the collateral that
+  it frees: the balance must be at least the payment plus the collateral
+  of the principal that stays open. Interest must come from free money.
+- At a default the bank takes the whole balance, the collateral with it.
+- `held` is in the result of `loan_request`, in the `loan` part of the
+  `bank` section and in the notice `finance.instalment_missed`.
+
+`loan_collateral_bp` is 10,000 in the data file: the collateral is the
+whole principal. Then a default costs the bank no principal, and a loan
+makes no money that stays in the world.
+
+**Why the defaults are safe.** A resident that owns nothing loses nothing
+in a default: the bank cannot take cash, goods or sites, and a credit
+record does not hurt a resident that its owner made only to borrow. So
+each cent of credit without collateral is a cent that an owner can take
+with a throwaway resident. Before this rule there were three ways:
+
+1. Wait: each day of account age gave 500 of credit.
+2. Borrow the least amount and repay it at once, again and again: each
+   repaid loan gave 20,000 of credit.
+3. Deposit, wait one day, borrow the same amount, take the deposit and the
+   loan out, give the cash away and default.
+
+The first two are closed by the two parameters at 0, the third by the
+collateral.
+
+**What the defaults cost.** A loan against a deposit that the bank holds
+gives the borrower no new money to spend. It is useful only to a server
+that accepts some risk: lower `loan_collateral_bp`, or raise
+`loan_base_limit`, `loan_limit_per_account_day` or
+`loan_limit_per_repaid_loan`. Then a part of each loan is unsecured, and a
+default writes that part off. Credit that is secured by sites is not
+built: see section 13.
+
 ### Reserve limit
 
 ```text
@@ -188,10 +242,11 @@ due principal = min(principal, due principal + instalment)
               = principal, on the last day of the term and after it
 ```
 
-- When the balance is at least `due interest + due principal`, the bank takes
-  both. The interest goes to the bank treasury. The principal is destroyed
-  through the sink `bank.loan_repay`.
-- When the balance is less, the bank takes nothing. The count of missed
+- When the free balance covers `due interest + due principal`, the bank
+  takes both. The interest goes to the bank treasury. The principal is
+  destroyed through the sink `bank.loan_repay`. "Covers" is the rule of
+  "Collateral" above.
+- When it does not, the bank takes nothing. The count of missed
   instalments grows by one. The resident gets the notice
   `finance.instalment_missed`. The amounts stay due, so the next collection
   asks for more.
@@ -205,7 +260,8 @@ due principal = min(principal, due principal + instalment)
 ### Early repayment
 
 `loan_repay` has the argument `amount`. It pays `min(amount, principal + due
-interest)` from the account: the due interest first, then principal. An early
+interest)` from the account: the due interest first, then principal. The
+payment must leave the collateral of the principal that stays open. An early
 payment of principal lowers the interest of the days that follow and can end
 the loan before its term.
 
@@ -214,9 +270,9 @@ the loan before its term.
 A loan defaults when the count of missed instalments reaches
 `loan_missed_max`. Then:
 
-1. The bank seizes the balance of the account: first up to the principal
-   (destroyed through `bank.loan_repay`), then up to the due interest (to the
-   bank treasury).
+1. The bank seizes the balance of the account, with the collateral: first
+   up to the principal (destroyed through `bank.loan_repay`), then up to the
+   due interest (to the bank treasury).
 2. The bank gives up the rest of the principal. That money stays in the
    world. The statistics show the sum as `loans.written_off`.
 3. The record of the resident gets one default. The resident cannot borrow
@@ -238,7 +294,7 @@ Refusals:
 | `loan_request` | `conflict` | The resident has a loan |
 | `loan_request` | `not_allowed` | The resident is bankrupt, or the amount is above the credit limit |
 | `loan_request` | `insufficient` | The amount is above the lending room |
-| `loan_repay` | `insufficient` | The balance is less than the payment |
+| `loan_repay` | `insufficient` | The balance is less than the payment and the collateral that stays |
 
 ## 4. The exchange
 
@@ -538,7 +594,7 @@ Cost: the report of a midnight has one pair of numbers for each resident.
 
 | Section | Observer | Content |
 | --- | --- | --- |
-| `bank` | global | `balance`; `loan` (`principal`, `rate_bp`, `owed`, `next_instalment`, `next_in_ticks`, `days_left`, `missed`); `bankrupt_until` (`year`, `day`); `shares` (`holdings` with `org`, `shares`, `locked`; `open_orders`; `more_holdings`) |
+| `bank` | global | `balance`; `loan` (`principal`, `rate_bp`, `owed`, `next_instalment`, `next_in_ticks`, `days_left`, `missed`, `held`); `bankrupt_until` (`year`, `day`); `shares` (`holdings` with `org`, `shares`, `locked`; `open_orders`; `more_holdings`) |
 | `market` | zone | `orders` (`order`, `item`, `side`, `price`, `qty`, `filled`, `open`); `claimable` (`cash`, `items`); `more_orders` |
 
 - The `bank` section is absent when the resident has no account, no shares
@@ -578,7 +634,7 @@ Notices to one resident:
 | Kind | Data |
 | --- | --- |
 | `finance.transfer_received` | `from`, `amount` |
-| `finance.instalment_missed` | `due`, `balance`, `missed`, `default_after` |
+| `finance.instalment_missed` | `due`, `balance`, `held`, `missed`, `default_after` |
 | `finance.loan_defaulted` | `outstanding`, `seized`, `bankrupt_until` |
 | `finance.order_filled` | `order`, `item`, `side`, `qty`, `value`, `unfilled` |
 | `finance.share_order_filled` | `order`, `org`, `side`, `shares`, `price`, `unfilled` |
@@ -652,9 +708,10 @@ the parameter.
 | `loan_min` | 1,000 | no | Least amount of a loan |
 | `loan_limit_max` | 5,000,000 | yes | Greatest credit limit |
 | `loan_base_limit` | 0 | no | Credit limit without history and deposits |
-| `loan_limit_per_account_day` | 500 | no | Credit for each day of account age |
-| `loan_limit_per_repaid_loan` | 20,000 | no | Credit for each repaid loan |
+| `loan_limit_per_account_day` | 0 | no | Credit for each day of account age |
+| `loan_limit_per_repaid_loan` | 0 | no | Credit for each repaid loan |
 | `loan_deposit_factor_bp` | 10,000 | no | Part of the seasoned balance that counts |
+| `loan_collateral_bp` | 10,000 | no | Part of the open principal that the bank holds in the account |
 | `loan_default_penalty_bp` | 5,000 | no | Part of the limit that each default removes |
 | `loan_term_min_days` | 1 | no | Shortest term |
 | `loan_term_max_days` | 28 | no | Longest term |
@@ -694,7 +751,15 @@ the shares and the central bank use national values.
 - The bank is one national bank. It cannot fail: it lends created money, and
   it pays deposit interest only from its treasury.
 - Money that a default writes off stays in the world. The faucet
-  `bank.loan_issue` is then larger than the sink `bank.loan_repay`.
+  `bank.loan_issue` is then larger than the sink `bank.loan_repay`. With
+  the collateral of the data file nothing is written off.
+- **A loan of the data file gives no new money to spend** (section 3,
+  "Collateral"). Credit that is useful and safe needs a pledge that the
+  borrower cannot move: a site. That needs three things that are not
+  built: the bank must know the value of the sites of a resident (the
+  economy module owns it), the economy module must refuse the sale of a
+  site while its owner has a loan, and the limit must follow the sites.
+  The foreclosure at a default exists already.
 - The account of a resident uses the resident id as the account number. No
   other module must use `Holder::Account` with a number that can be a
   resident id.

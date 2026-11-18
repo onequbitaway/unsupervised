@@ -4,7 +4,7 @@
 use serde_json::{Map, Value, json};
 use unsup_kernel::{Builder, ObserveOpts, Realm, ResidentId};
 
-use super::loans::{credit_limit, ticks_to_collection};
+use super::loans::{collateral, credit_limit, ticks_to_collection};
 use super::state::Bank;
 use crate::params::Params;
 use crate::shares;
@@ -38,6 +38,7 @@ fn section(realm: &Realm, p: &Params, resident: ResidentId, opts: &ObserveOpts) 
                     "next_in_ticks": ticks_to_collection(realm, loan),
                     "days_left": loan.days_left,
                     "missed": loan.missed,
+                    "held": collateral(realm, p, loan.principal),
                 }),
             );
         }

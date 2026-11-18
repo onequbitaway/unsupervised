@@ -36,7 +36,7 @@ fn grain_becomes_bread_and_reaches_a_buyer() {
     // Eve starts with nothing too. She works one starter shift and buys two
     // loaves with the wage.
     let eve = resident_at(&mut t.world, "Eve", 0, t.at.city_hall);
-    assert_eq!(ok(&mut t.world, eve, "work", json!({}))["net"], 1_800);
+    assert_eq!(ok(&mut t.world, eve, "work", json!({}))["net"], 2_520);
     go(&mut t.world, eve, t.at.restaurant);
     let bought = ok(&mut t.world, eve, "buy", json!({ "item": "bread", "qty": 2 }));
     assert_eq!((bought["total"].as_i64(), bought["tax"].as_i64()), (Some(1_600), Some(80)));
@@ -52,20 +52,20 @@ fn grain_becomes_bread_and_reaches_a_buyer() {
 
     // Who holds what.
     assert_eq!(cash(&t.world, fay), 4_800);
-    assert_eq!(cash(&t.world, eve), 1_800 - 1_600);
+    assert_eq!(cash(&t.world, eve), 2_520 - 1_600);
     assert_eq!(cash(&t.world, cy), 0);
     assert_eq!(till(&t.world, t.at.restaurant), 6_000 - 4_800 + 1_600 - 80);
     let place = Holder::Site(t.at.restaurant);
     assert_eq!((t.world.qty(place, "grain"), t.world.qty(place, "bread")), (4, 8));
     // The city: the price of the restaurant, the permit, the income tax of
     // the shift and the sales tax of the bread.
-    assert_eq!(treasury(&t.world), 500_000 + 5_000 + 200 + 80);
+    assert_eq!(treasury(&t.world), 500_000 + 5_000 + 280 + 80);
 
     // Every faucet and sink, exactly.
     let flows = flows(&t.world);
     assert_eq!(
         flows.minted,
-        map([("gov.public_works", 2_000), ("kernel.grant", 500_000 + 5_000 + 6_000)])
+        map([("gov.public_works", 2_800), ("kernel.grant", 500_000 + 5_000 + 6_000)])
     );
     assert_eq!(flows.burned, map([]));
     assert_eq!(
@@ -79,7 +79,7 @@ fn grain_becomes_bread_and_reaches_a_buyer() {
         + cash(&t.world, cy)
         + till(&t.world, t.at.restaurant)
         + treasury(&t.world);
-    assert_eq!(held, 2_000 + 500_000 + 5_000 + 6_000);
+    assert_eq!(held, 2_800 + 500_000 + 5_000 + 6_000);
 }
 
 #[test]

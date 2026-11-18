@@ -1,9 +1,16 @@
 //! Hand-to-hand transfer: the verb `give`.
+//!
+//! The receiver stands on the tile of the giver or on a tile next to it.
+//! It can stand on the other side of a district border: the zone of the
+//! giver knows the residents near its border (`Realm::nearby_outside`).
+//! Such a gift goes by wire and arrives in the next frame.
 
 use serde::{Deserialize, Serialize};
 use unsup_kernel::schemars::{self, JsonSchema};
 use unsup_kernel::serde_json::json;
-use unsup_kernel::{ActionError, Begin, Builder, EventMeta, Holder, Money, ResidentId, VerbSpec};
+use unsup_kernel::{
+    ActionError, Begin, Builder, Dest, EventMeta, Holder, Money, ResidentId, VerbSpec,
+};
 
 use crate::handles::Handles;
 
@@ -14,7 +21,7 @@ pub const GIFT_RECEIVED: &str = "life.gift_received";
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GiveArgs {
     /// The resident that gets the gift. It must stand on your tile or on a
-    /// tile next to it.
+    /// tile next to it. It can stand in the next district.
     pub to: ResidentId,
     /// Cents of cash to give.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -66,8 +73,14 @@ pub(crate) fn register(b: &mut Builder, h: Handles) {
             }
             let range = u32::try_from(realm.param(h.p.give_range)).unwrap_or(0);
             let here = realm.pos(ctx.idx);
-            let near =
-                realm.idx_of(args.to).is_some_and(|other| realm.pos(other).dist(here) <= range);
+            // A resident of this zone counts with its position of now. A
+            // resident of another zone counts with the position that this
+            // zone last heard of.
+            let receiver = realm.idx_of(args.to);
+            let near = match receiver {
+                Some(other) => realm.pos(other).dist(here) <= range,
+                None => realm.nearby_outside(here, range).iter().any(|o| o.id == args.to),
+            };
             if !near {
                 return Err(ActionError::not_here(format!(
                     "Resident {} is not next to you.",
@@ -78,14 +91,11 @@ pub(crate) fn register(b: &mut Builder, h: Handles) {
             {
                 // Check both parts first, so that a gift is whole or not at
                 // all.
-                let mut ledger = realm.ledger_mut();
+                let ledger = realm.ledger();
                 let cash = ledger.money(from).cents();
                 if cash < money {
                     return Err(ActionError::insufficient("You do not have that much cash.")
                         .with_details(json!({ "needed": money, "available": cash })));
-                }
-                if ledger.money(to).cents().checked_add(money).is_none() {
-                    return Err(ActionError::invalid_args("The amount is too large."));
                 }
                 if let Some((item, qty)) = goods {
                     let carried = ledger.qty(from, item);
@@ -93,12 +103,34 @@ pub(crate) fn register(b: &mut Builder, h: Handles) {
                         return Err(ActionError::insufficient("You do not carry that many.")
                             .with_details(json!({ "needed": qty, "available": carried })));
                     }
-                    if ledger.qty(to, item).checked_add(qty).is_none() {
+                }
+                if receiver.is_some() {
+                    if ledger.money(to).cents().checked_add(money).is_none() {
+                        return Err(ActionError::invalid_args("The amount is too large."));
+                    }
+                    if let Some((item, qty)) = goods
+                        && ledger.qty(to, item).checked_add(qty).is_none()
+                    {
                         return Err(ActionError::invalid_args("The quantity is too large."));
                     }
+                }
+            }
+            if receiver.is_some() {
+                let mut ledger = realm.ledger_mut();
+                if let Some((item, qty)) = goods {
                     ledger.transfer_item(from, to, item, qty, "gift")?;
                 }
                 ledger.transfer_money(from, to, Money(money), "gift")?;
+            } else {
+                // Across the border the gift goes by wire. It follows the
+                // receiver when that one walks on.
+                let dest = Dest::Resident(args.to);
+                if let Some((item, qty)) = goods {
+                    realm.wire_item(from, dest, to, item, qty, "gift")?;
+                }
+                if money > 0 {
+                    realm.wire_money(from, dest, to, Money(money), "gift")?;
+                }
             }
             let gift = json!({
                 "from": ctx.resident,

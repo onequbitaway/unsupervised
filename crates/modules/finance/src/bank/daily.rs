@@ -63,6 +63,7 @@ fn collect(bank: &mut Bank, realm: &Realm, p: &Params, resident: ResidentId, tod
             json!({
                 "due": interest + principal,
                 "balance": Bank::balance(realm, resident),
+                "held": loans::held(realm, p, bank, resident),
                 "missed": missed,
                 "default_after": limit,
             }),
