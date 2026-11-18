@@ -169,3 +169,90 @@ another resident is always an `Untrusted` value inside the notice data.
   contract can be broken.
 - Violence is abstract. The game reports "assault" and a health loss. It has
   no graphic text.
+
+## 9. Contracts between modules
+
+The base modules do not import each other. They meet only at the points in
+this section. Change a point only together with every module that uses it.
+
+### Sites
+
+- The life module creates every site at world generation. Each site starts
+  with `owner = Holder::Org(OrgId::city(c))` and the attribute `value` (price
+  in cents). Public buildings have the tag `public`. They are never sold.
+- The economy module sells and leases sites. It writes `owner` and `tenants`.
+- A resident can sleep well in a `home` or `apartment` where it is the owner
+  or a tenant. Everybody can sleep in a `shelter`.
+- A business site has a till: the money of `Holder::Site(site)`. Sales go
+  into the till. Wages come out of the till. The owner moves money between
+  the till and its own cash. A till can be robbed.
+
+### Money and organizations
+
+- Wages, sales and rent are paid in cash, in the zone, at once.
+- Bank deposits (`Holder::Account`) and treasuries (`Holder::Org`) live in
+  the global realm. Money reaches them by `wire_money`.
+- Taxes and fines go to `Holder::Org(OrgId::city(c))`. National revenue goes
+  to `Holder::Org(OrgId::NATION)`.
+- The society module creates the organization records for the reserved ids
+  at world generation. It is the only writer of memberships
+  (`realm.grant`, `realm.revoke`).
+- A zone verb that needs a permission checks `realm.can(idx, org, perm)` in
+  `begin`. When the effect is in the global realm, the verb sends a message
+  and returns `Begin::Wait`; the global handler answers with
+  `complete_action`.
+
+### Attributes and conditions
+
+A module that uses a shared attribute or condition declares it with
+`Builder::attr` or `Builder::condition`, with the definition of section 3.
+The first declaration wins, so two modules can declare the same name.
+
+### Events with fixed data
+
+Ids are numbers. `holder` is the JSON form of `Holder`. Money is cents.
+
+| Kind | Data |
+| --- | --- |
+| `life.resident_died` | `resident`, `cause`, `age`, `heir` (holder or null), `estate` |
+| `economy.shift_completed` | `resident`, `site`, `wage`, `tax`, `skill` |
+| `economy.goods_sold` | `seller` (holder), `buyer`, `site`, `city`, `item` (name), `qty`, `unit_price`, `tax` |
+| `economy.goods_produced` | `resident`, `site`, `item` (name), `qty` |
+| `economy.property_sold` | `site`, `city`, `from` (holder), `to` (holder), `price` |
+| `economy.lease_started` | `site`, `tenant`, `rent` |
+| `economy.tenant_evicted` | `site`, `tenant` |
+| `economy.business_opened` | `site`, `owner` (holder), `kind` |
+| `finance.loan_granted` | `resident`, `amount`, `rate_bp`, `term_days` |
+| `finance.loan_defaulted` | `resident`, `outstanding` |
+| `finance.order_filled` | `city`, `item` (name), `qty`, `price`, `buyer`, `seller` |
+| `society.org_created` | `org`, `name`, `founder` |
+| `society.contract_signed` | `contract`, `parties` |
+| `society.contract_fulfilled` | `contract` |
+| `society.contract_breached` | `contract`, `by` |
+| `society.married` | `a`, `b` |
+
+On `finance.loan_defaulted` the economy module forecloses: every site that
+the resident owns goes to the city.
+
+### State for viewers
+
+A module publishes public state as an event whose kind ends in `_published`,
+for example `finance.stats_published` or `missions.leaderboard_published`.
+The data has a `key` field when there are several series (a board name, a
+city). The spectator service keeps the newest event of each kind and key and
+serves it over HTTP. Modules never talk to the spectator directly.
+
+### Observation sections
+
+| Section | Module |
+| --- | --- |
+| `home`, `skills` | life |
+| `job`, `business`, `property` | economy |
+| `bank`, `market` | finance |
+| `orgs`, `contracts`, `relations` | society |
+| `law` | crime |
+| `politics` | politics |
+| `missions` | missions |
+
+A section is absent when it has nothing to say. Keep each section below
+about 150 tokens in the brief detail.
