@@ -1,0 +1,22 @@
+[package]
+name = "unsup-kernel"
+description = "Deterministic simulation kernel for Unsupervised: realms, residents, actions, ledger, events, snapshots."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+unsup-protocol.workspace = true
+blake3.workspace = true
+rayon.workspace = true
+rmp-serde.workspace = true
+schemars.workspace = true
+serde = { workspace = true, features = ["rc"] }
+serde_json.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

@@ -18,9 +18,9 @@ This file is the working memory of the build. It is updated after each event.
 | --- | --- |
 | Repository, scaffold, licence, CI, gate | done |
 | Design documents, landscape | done |
-| Protocol + kernel + runtime skeleton | running |
-| Walking skeleton: server binary, minimal gateway, minimal viewer | todo |
-| Freeze contracts, first commit and push | todo |
+| Protocol + kernel + runtime skeleton | done |
+| Walking skeleton: server binary, minimal gateway, minimal viewer | done |
+| Freeze contracts, first commit and push | done |
 
 ## Wave 1 (parallel)
 
@@ -29,8 +29,9 @@ This file is the working memory of the build. It is updated after each event.
 | runtime | `feat/runtime` | `crates/runtime` | todo |
 | life | `feat/life` | `crates/modules/life`, `docs/design/modules/life.md` | todo |
 | economy | `feat/economy` | `crates/modules/economy`, `docs/design/modules/economy.md` | todo |
+| finance | `feat/finance` | `crates/modules/finance`, `docs/design/modules/finance.md` | todo |
 | society | `feat/society` | `crates/modules/society`, `docs/design/modules/society.md` | todo |
-| gateway | `feat/gateway` | `crates/gateway`, `crates/store` | todo |
+| gateway | `feat/gateway` | `crates/gateway`, `crates/store`, `crates/server` (not `plugins.rs`) | todo |
 | viewer | `feat/viewer` | `web/`, `crates/spectator` | todo |
 | sdk | `feat/sdk` | `sdk/`, `agents/`, `docs/join.md` | todo |
 | loadtest | `feat/loadtest` | `crates/loadtest` | todo |
@@ -53,3 +54,4 @@ final documents, final gate.
 ## Log
 
 - 2026-11-18: repository created; scaffold and design documents written.
+- 2026-11-18: kernel, protocol and runtime landed (158 tests). Walking skeleton passes: a resident moves through HTTP and a viewer socket sees it. Contracts frozen.

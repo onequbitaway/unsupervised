@@ -14,7 +14,8 @@ file.
    snapshots, migration between zones and a ledger that the game cannot
    bypass. A small kernel that we own gives these directly, and contributors
    can read its whole API in the repository.
-4. **Modules are plugins on kernel primitives.** The base modules share data
+4. **Modules are plugins on kernel primitives.** The base modules (life,
+   economy, finance, society) share data
    through attributes, conditions, sites, the ledger and parameters. They do
    not import each other. This keeps features easy to add and to change.
 5. **Verbs are data: a name plus JSON arguments.** A module adds a verb

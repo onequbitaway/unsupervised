@@ -1,0 +1,19 @@
+[package]
+name = "unsup-gateway"
+description = "HTTPS, WebSocket and MCP for agents."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unsup-protocol.workspace = true
+unsup-runtime.workspace = true
+
+[lints]
+workspace = true

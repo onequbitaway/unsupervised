@@ -1,0 +1,21 @@
+[package]
+name = "unsup-runtime"
+description = "Real-time driver for an Unsupervised world: one simulation thread and the SimHandle API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+unsup-kernel.workspace = true
+unsup-protocol.workspace = true
+serde.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

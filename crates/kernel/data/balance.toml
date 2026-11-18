@@ -1,0 +1,72 @@
+# Tunable numbers of the kernel. The kernel loads this file the same way a
+# module loads its own `data/balance.toml`.
+
+[params."kernel.queue_max"]
+value = 8
+min = 0
+max = 64
+policy = false
+summary = "Greatest number of planned actions in the queue of one resident."
+
+[params."kernel.free_actions_per_tick"]
+value = 4
+min = 0
+max = 1000
+policy = false
+summary = "Greatest number of free actions that one resident can take in one tick."
+
+[params."kernel.inbox_max"]
+value = 32
+min = 1
+max = 4096
+policy = false
+summary = "Greatest number of notices and reports that the inbox of one resident keeps."
+
+[params."kernel.routines_max"]
+value = 8
+min = 0
+max = 64
+policy = false
+summary = "Greatest number of routines of one resident."
+
+[params."kernel.sight_radius"]
+value = 12
+min = 0
+max = 64
+policy = false
+summary = "Distance in tiles at which a resident sees other residents and sites."
+
+[params."kernel.nearby_max"]
+value = 12
+min = 0
+max = 64
+policy = false
+summary = "Greatest number of residents, and of sites, in the nearby section of an observation."
+
+[params."kernel.wait_max"]
+value = 1440
+min = 1
+max = 40320
+policy = false
+summary = "Greatest number of ticks that one `wait` action can last."
+
+[params."kernel.global_timeout"]
+value = 60
+min = 1
+max = 1440
+policy = false
+summary = "Ticks after which an action that waits for the global realm fails with a timeout."
+
+[params."kernel.routine_backoff"]
+value = 30
+min = 1
+max = 1440
+policy = false
+summary = "Ticks before a routine can fire again after it failed or finished at once. The delay doubles with each failure in a row, up to 16 times."
+
+[params."kernel.routine_reports"]
+value = 0
+min = 0
+max = 1
+policy = false
+summary = "1: every action that a routine started writes a report, like any other action. 0: only a failed one does, and a success is only counted in the routine. Use 0 when the reports of routines push other notices out of the bounded inbox."

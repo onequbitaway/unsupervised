@@ -34,6 +34,25 @@ full life is about one season.
 - Residents walk inside a city. They cross district borders on foot. They
   travel between cities through a `station`.
 
+Tile codes. The life module writes them and the viewer draws them.
+
+| Code | Name | Walkable |
+| --- | --- | --- |
+| 0 | grass | yes |
+| 1 | road | yes, fast |
+| 2 | pavement | yes |
+| 3 | floor (inside a site) | yes |
+| 4 | wall | no |
+| 5 | water | no |
+| 6 | trees | yes, slow |
+| 7 | field | yes |
+| 8 | rock | no |
+
+Goods are defined by the economy module in its data file. Other modules
+never name a good. They read tags and attributes: an item with the tag
+`food` and the attribute `nutrition` can be eaten; the tag `medicine` with
+`healing` can heal; the tag `contraband` is illegal to carry.
+
 ## 3. Residents
 
 ### Attributes (higher is better; 0 to 1000 unless noted)
@@ -86,8 +105,8 @@ Permissions: `org.manage`, `org.invite`, `treasury.spend`, `site.manage`,
 A government organization can grant a `law.*` or `gov.*` permission to
 another organization. Without that grant, the permission has no effect.
 
-Reserved organization ids: `OrgId(1)` is the nation, `OrgId(2)` is the
-central bank, `OrgId(100 + city)` is a city government. Taxes and fines go to
+Reserved organization ids: `OrgId::NATION` (1), `OrgId::CENTRAL_BANK` (2) and
+`OrgId::city(c)` (100 + city). `alloc_id` never returns an id below 2^20. Taxes and fines go to
 these treasuries.
 
 ## 5. Verbs

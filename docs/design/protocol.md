@@ -8,7 +8,9 @@ schema in `schema/` and the SDK types are generated from them.
 
 All types derive `Serialize`, `Deserialize`, `JsonSchema`, `Clone`, `Debug`.
 JSON field names are `snake_case`. Enums use an internal tag named `state`,
-`type` or `kind` as shown.
+`type` or `kind` as shown. An enum without data is a `snake_case` string. An
+optional field that is empty (`None`, or a `Value` that is `null`) is left
+out, and a sender may leave it out.
 
 ```rust
 // Ids. Each is a newtype that serializes as a plain number.
@@ -16,18 +18,18 @@ ResidentId(u64)  OwnerId(u64)  OrgId(u64)  SiteId(u64)
 ZoneId(u32)  CityId(u16)  ItemId(u16)  Tick(u64)  Money(i64 /* cents */)
 Pos { x: i32, y: i32 }                 // global tile coordinates
 Rect { x0: i32, y0: i32, x1: i32, y1: i32 }   // inclusive min, exclusive max
-RealmId = Global | Zone(ZoneId)
+RealmId = Global | Zone(ZoneId)         // "global" or { "zone": 3 }
 Clock { year: u32, day: u32, hour: u8, minute: u8 }   // day of year, from 1
 
 // Actions.
-ActionRequest { id: Option<String>, verb: String, args: Value }
+ActionRequest { id: Option<String> /* at most 64 bytes */, verb: String, args: Value }
 ActionAck { request_id: Option<String>, action_id: u64, verb: String, status: ActionStatus }
 ActionStatus (tag "state") =
-    Done { result: Value }               // finished at once
-  | Started { ends_at: Tick, ticks: u32 }  // the resident is busy
-  | Pending                              // waits for the global realm; a report follows
-  | Queued { position: u32 }             // resident is busy; request is in the queue
-  | Rejected { error: ActionError }
+    Done { result: Value }               // finished at once; no report follows
+  | Started { ends_at: Tick, ticks: u32 }  // the resident is busy; a report follows
+  | Pending                              // waits for the global realm or another party; a report follows
+  | Queued { position: u32 }             // resident is busy; request is in the queue; position from 1
+  | Rejected { error: ActionError }      // nothing changed; no report follows
 ActionReport { action_id: u64, request_id: Option<String>, verb: String, tick: Tick,
                ok: bool, result: Value, error: Option<ActionError> }
 ActionError { code: ErrorCode, message: String, details: Value }
@@ -43,10 +45,12 @@ Condition (tag "type") = always | attr_below { attr, value } | attr_above { attr
 
 // Observations.
 ObserveOpts { detail: Detail /* brief | full */, since_notice: u64, sections: Option<Vec<String>> }
+              // every field has a default: brief, 0, all sections
 Observation { frame: u64, tick: Tick, clock: Clock, resident: ResidentId,
               sections: BTreeMap<String, Value>, notices: Vec<Notice>, next_notice: u64 }
 Notice { seq: u64, tick: Tick, kind: String, from: Option<ResidentId>, data: Value }
 Untrusted { untrusted: true, from: ResidentId, text: String }
+              // made with Untrusted::new(from, text); a reader refuses `untrusted` false or absent
 
 // Events and frames (viewers).
 Event { seq: u64, frame: u64, tick: Tick, realm: RealmId, kind: String,
@@ -62,23 +66,34 @@ WorldView (tag "type") =
     layout { frame, clock, cities: Vec<CityView>, zones: Vec<ZoneView> }
   | zone { zone: ZoneView, width: u32, height: u32, tiles: Vec<u8>, sites: Vec<SiteView>,
            residents: Vec<ResidentView> }
+CityView { id: CityId, name: String, bounds: Rect, zones: Vec<ZoneId> }
+ZoneView { id: ZoneId, city: CityId, name: String, bounds: Rect, residents: u32 }
+SiteView { id: SiteId, kind: String, name: String, rect: Rect, tags: Vec<String> }
 
 // Catalogue (public).
 Catalogue { verbs: Vec<VerbInfo>, params: Vec<ParamInfo>, items: Vec<ItemInfo>,
             attrs: Vec<AttrInfo>, conditions: Vec<CondInfo> }
 VerbInfo { verb, module, summary, free: bool, scope: "zone" | "global", args_schema: Value }
+ParamInfo { name, value: i64, min: Option<i64>, max: Option<i64>, policy: bool, summary }
+ItemInfo { id: ItemId, name, weight: i64, tags: Vec<String>, attrs: BTreeMap<String, i64>, summary }
+AttrInfo { name, min: Option<i64>, max: Option<i64>, default: i64, summary }
+CondInfo { name, blocking: bool, summary }
 
 // Control.
 SpawnSpec { owner: OwnerId, name: String, model: Option<String>, city: Option<CityId> }
+              // name: 1 to 64 bytes; model: at most 64 bytes; no city: the city with the fewest residents
 AdminCommand (tag "type") = freeze { resident } | unfreeze { resident }
           | set_param { name, value, city: Option<CityId> } | despawn { resident }
           | rollback_zone { zone, frames: u64 }
+AdminReply (tag "type") = ok | error { message }
 WaitFilter (tag "type") = any | kinds { kinds: Vec<String> } | action_done
 SimError = unknown_resident | not_hosted | overloaded | shutdown | invalid
 ```
 
 Two codecs carry the same types: JSON (text) and MessagePack (binary, written
 with field names). `unsup_protocol::codec` has both.
+`unsup_protocol::schema::wire_schema()` returns one JSON Schema document
+with every wire type under `$defs`.
 
 ### The observation
 
@@ -87,14 +102,17 @@ tokens. Sections:
 
 | Section | Owner | Content |
 | --- | --- | --- |
-| `self` | kernel | id, name, position, zone, site, activity, queue length, conditions, attributes, cash, items |
-| `nearby` | kernel | residents and sites within sight (bounded lists) |
-| `reports` | kernel | results of actions that ended since `since_notice` |
+| `self` | kernel | `id`, `name`, `pos`, `zone`, `city`, `site`, `activity`, `queue`, `conditions`, `attrs`, `cash`, `items`. Full detail adds `zone_name`, `owner`, `model`, `born`, `queued`, `routines`, `memberships` |
+| `nearby` | kernel | `residents` and `sites` within `kernel.sight_radius`, nearest first, at most `kernel.nearby_max` each; `more_residents` and `more_sites` count the rest |
+| `reports` | kernel | `ActionReport`s of actions that ended since `since_notice` |
 | other | modules | one section per module topic: `job`, `bank`, `orgs`, `contracts`, `law`, `missions`, ... |
 
 `notices` holds what the resident heard or received since `since_notice`.
 The client keeps `next_notice` and sends it back. The server does not track
 what a resident has read, so `observe` never changes simulation state.
+Notices and reports share one sequence per resident, from 1. The inbox keeps
+the last `kernel.inbox_max` entries. For `WaitFilter::kinds`, an action
+report has the kind `report`.
 
 ## 2. HTTPS API
 
