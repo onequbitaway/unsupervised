@@ -124,7 +124,10 @@ pub const ADMIN: &str = "admin-token-of-the-server-tests";
 /// can work a starter shift there.
 pub const DEPOT: (i64, i64) = (24, 4);
 /// What one starter shift pays after the income tax, in cents.
-pub const SHIFT_PAY: i64 = 1_800;
+pub const SHIFT_PAY: i64 = 2_520;
+/// The wage of one starter shift before the income tax, in cents. The
+/// world makes this money when it pays the shift.
+pub const SHIFT_WAGE: i64 = 2_800;
 /// Frames that are enough to walk to the depot from the place where a
 /// resident appears, and to work one shift there.
 const WALK_FRAMES: u32 = 60;

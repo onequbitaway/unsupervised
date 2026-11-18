@@ -2393,7 +2393,7 @@
       "name": "economy.public_works_budget",
       "policy": true,
       "summary": "Cents that one city can pay for starter shifts in one game day.",
-      "value": 200000
+      "value": 280000
     },
     {
       "max": 1000000,
@@ -2401,7 +2401,7 @@
       "name": "economy.public_works_wage",
       "policy": true,
       "summary": "Wage in cents, before income tax, for one starter shift at a city hall or a depot.",
-      "value": 2000
+      "value": 2800
     },
     {
       "max": 28,
@@ -2622,6 +2622,14 @@
     {
       "max": 10000,
       "min": 0,
+      "name": "finance.loan_collateral_bp",
+      "policy": false,
+      "summary": "Share of the open principal of a loan that the borrower must keep in its account, in basis points. With 10,000 a loan is fully secured: a default costs the bank no principal.",
+      "value": 10000
+    },
+    {
+      "max": 10000,
+      "min": 0,
       "name": "finance.loan_default_penalty_bp",
       "policy": false,
       "summary": "Share of the credit limit that each past default removes, in basis points.",
@@ -2657,7 +2665,7 @@
       "name": "finance.loan_limit_per_account_day",
       "policy": false,
       "summary": "Cents that each full day of account age adds to the credit limit.",
-      "value": 500
+      "value": 0
     },
     {
       "max": 10000000,
@@ -2665,7 +2673,7 @@
       "name": "finance.loan_limit_per_repaid_loan",
       "policy": false,
       "summary": "Cents that each fully repaid loan adds to the credit limit.",
-      "value": 20000
+      "value": 0
     },
     {
       "max": 1000000,
@@ -3970,6 +3978,14 @@
       "policy": false,
       "summary": "Age in years of a new resident.",
       "value": 18
+    },
+    {
+      "max": 1,
+      "min": 0,
+      "name": "life.spawn_routines",
+      "policy": false,
+      "summary": "1: a new resident gets the default routines `eat when hungry` and `sleep when tired`. 0: it starts without routines.",
+      "value": 1
     },
     {
       "max": 1000,
@@ -7732,7 +7748,7 @@
           },
           "to": {
             "$ref": "#/$defs/ResidentId",
-            "description": "The resident that gets the gift. It must stand on your tile or on a\ntile next to it."
+            "description": "The resident that gets the gift. It must stand on your tile or on a\ntile next to it. It can stand in the next district."
           }
         },
         "required": [

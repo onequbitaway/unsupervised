@@ -6,7 +6,9 @@ mod common;
 
 use std::path::Path;
 
-use common::{ADMIN, Client, SHIFT_PAY, TempDir, advance, config, copy_dir, durable, earn, send};
+use common::{
+    ADMIN, Client, SHIFT_PAY, SHIFT_WAGE, TempDir, advance, config, copy_dir, durable, earn, send,
+};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use unsup_runtime::ReplayFrom;
@@ -198,7 +200,8 @@ async fn the_check_of_a_directory_compares_every_snapshot_and_audits_the_money()
     // Two shifts were paid from the faucet of the public works. No money
     // was destroyed. The tax went to the city, so all of it is held.
     let money = audit.money.expect("the money adds up");
-    assert_eq!((money.minted, money.burned, money.held + money.in_flight), (4_000, 0, 4_000));
+    let made = 2 * SHIFT_WAGE;
+    assert_eq!((money.minted, money.burned, money.held + money.in_flight), (made, 0, made));
     assert_eq!(audit.audit_error, None);
 
     // From the newest snapshot there is nothing to replay.

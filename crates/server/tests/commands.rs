@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use common::{Client, DEPOT, SHIFT_PAY, TempDir, send};
+use common::{Client, DEPOT, SHIFT_PAY, SHIFT_WAGE, TempDir, send};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -220,7 +220,7 @@ async fn a_killed_server_starts_again_with_the_same_residents_balances_and_state
     assert!(frame > 250, "the shift alone has 240 frames: {checked}");
     let state_hash = checked["state_hash"].as_str().expect("a state hash").to_string();
     assert!(!checked["snapshots"].as_array().expect("snapshots").is_empty(), "{checked}");
-    assert_eq!(checked["money"]["minted"], 2_000, "one shift was paid");
+    assert_eq!(checked["money"]["minted"], SHIFT_WAGE, "one shift was paid");
 
     // The same directory, a world that does not move by itself.
     let running = Running::start(&data, &config, 0).await;
