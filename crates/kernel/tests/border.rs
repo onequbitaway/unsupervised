@@ -309,6 +309,33 @@ fn a_resident_that_crosses_and_goes_far_leaves_the_copy_of_the_zone_it_left() {
 }
 
 #[test]
+fn a_copy_shows_again_when_its_resident_came_and_left_between_two_frames() {
+    let mut w = world();
+    let ada = w.spawn_at("Ada", Pos::new(60, 30));
+    let bea = w.spawn_at("Bea", Pos::new(66, 30));
+    w.step(2);
+    let copy = json!([{ "id": bea, "name": "Bea", "pos": { "x": 66, "y": 30 }, "zone": 1 }]);
+    assert_eq!(seen(&w, ada), copy);
+
+    // Bea comes into the zone of Ada between two frames. Zone 0 has the
+    // row and the old copy; the row counts.
+    w.act_ok(bea, "jump", json!({ "zone": 0, "x": 62, "y": 30 }));
+    assert_eq!(seen(&w, ada), json!([{ "id": bea, "name": "Bea", "pos": { "x": 62, "y": 30 } }]));
+    assert_eq!(outside(&w, 0, Pos::new(60, 30), 12), []);
+
+    // Bea goes far away in the same pause. Zone 0 has no row any more. Its
+    // copy is what zone 1 last told it, so it shows Bea where she was,
+    // until the zones have run a tick.
+    w.act_ok(bea, "jump", json!({ "zone": 3, "x": 100, "y": 100 }));
+    assert_eq!(w.zone_of(bea), ZoneId(3));
+    assert_eq!(seen(&w, ada), copy);
+    assert_eq!(outside(&w, 0, Pos::new(60, 30), 12).len(), 1);
+    w.step(1);
+    assert_eq!(seen(&w, ada), json!([]));
+    assert_eq!(outside(&w, 0, Pos::new(60, 30), 12), []);
+}
+
+#[test]
 fn a_resident_that_leaves_the_world_leaves_the_copies() {
     let mut w = world();
     let ada = w.spawn_at("Ada", Pos::new(63, 30));

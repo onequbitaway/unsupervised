@@ -6,9 +6,12 @@
 //! many as a generated city has. Then it spawns N residents (first
 //! argument, default 100,000) and prints the time of one spawn.
 //!
+//! It also prints how many residents share the fullest tile: the kernel
+//! spreads the newcomers of a spawn site over its walkable tiles.
+//!
 //! The last line is a checksum of the place of every resident. The same
 //! world gives the same checksum, so two builds of the kernel can be
-//! compared: they must put each resident at the same site.
+//! compared: they must put each resident on the same tile.
 //!
 //! ```text
 //! cargo run --release -p unsup-kernel --example bench_spawn -- 100000
@@ -17,6 +20,7 @@
 // A benchmark reads the wall clock. The simulation never does.
 #![allow(clippy::disallowed_methods)]
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use unsup_kernel::protocol::SpawnSpec;
@@ -95,8 +99,10 @@ fn residents_argument() -> usize {
     }
 }
 
-/// FNV-1a over the zone and the position of every resident, in id order.
-fn place_checksum(world: &World, residents: u64) -> u64 {
+/// Returns FNV-1a over the zone and the position of every resident, in id
+/// order, the number of tiles with a resident, and the number of residents
+/// on the fullest tile.
+fn places(world: &World, residents: u64) -> (u64, usize, usize) {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     let mut mix = |value: u64| {
         for byte in value.to_le_bytes() {
@@ -104,6 +110,7 @@ fn place_checksum(world: &World, residents: u64) -> u64 {
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
     };
+    let mut on_tile: BTreeMap<Pos, usize> = BTreeMap::new();
     for id in 1..=residents {
         let id = unsup_kernel::ResidentId(id);
         let zone = world.locate(id).expect("every resident is in a zone");
@@ -112,8 +119,9 @@ fn place_checksum(world: &World, residents: u64) -> u64 {
         mix(u64::from(zone.0));
         mix(pos.x as u64);
         mix(pos.y as u64);
+        *on_tile.entry(pos).or_default() += 1;
     }
-    hash
+    (hash, on_tile.len(), on_tile.values().copied().max().unwrap_or(0))
 }
 
 fn main() {
@@ -153,5 +161,7 @@ fn main() {
         elapsed.as_secs_f64() * 1_000_000.0 / residents as f64
     );
     world.audit().expect("the ledgers are balanced");
-    println!("places: checksum {:016x}", place_checksum(&world, residents as u64));
+    let (checksum, tiles, fullest) = places(&world, residents as u64);
+    println!("crowding: the residents stand on {tiles} tiles, {fullest} on the fullest tile");
+    println!("places: checksum {checksum:016x}");
 }

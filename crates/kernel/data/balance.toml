@@ -43,6 +43,13 @@ max = 64
 policy = false
 summary = "Greatest number of residents, and of sites, in the nearby section of an observation."
 
+[params."kernel.spawn_tiles"]
+value = 207
+min = 0
+max = 9223372036854775807
+policy = false
+summary = "The tile codes on which a new resident can appear at a spawn site, as a sum of powers of two: 2^n stands for tile code n. The default is the walkable codes 0, 1, 2, 3, 6 and 7. A code above 62 is never used."
+
 [params."kernel.wait_max"]
 value = 1440
 min = 1

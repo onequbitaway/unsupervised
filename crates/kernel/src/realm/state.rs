@@ -170,7 +170,7 @@ impl Realm {
         let forward = self.forward.borrow();
         let border_shown = self.border.shown.borrow();
         let border_dirty = self.border.dirty.borrow();
-        let border_ghosts = self.border.ghosts.borrow();
+        let border_ghosts = self.border.ghosts();
         let border_ended = self.border.ended.borrow();
         let def = self.def();
         let state = RealmStateRef {
@@ -356,7 +356,7 @@ impl Realm {
         }
         *self.border.shown.borrow_mut() = state.border_shown.unwrap_or_else(|| vec![0; n]);
         *self.border.dirty.borrow_mut() = border_dirty;
-        *self.border.ghosts.borrow_mut() = state.border_ghosts;
+        *self.border.ghosts_mut() = state.border_ghosts;
         *self.border.ended.borrow_mut() = state.border_ended;
         *self.index.borrow_mut() = index;
         *self.timers.borrow_mut() = timers;

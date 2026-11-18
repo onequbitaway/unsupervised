@@ -114,7 +114,8 @@ pub use kernel_plugin::{GRANT_FAUCET, SetRoutinesArgs, WaitArgs};
 pub use kin::Kin;
 pub use layout::{CityInfo, Layout, ZoneInfo};
 pub use ledger::{
-    AuditError, Flow, Holder, ItemTotals, Ledger, LedgerError, LedgerTotals, MoneyTotals, UNCLAIMED,
+    AuditError, Flow, Holder, ItemTotals, Ledger, LedgerError, LedgerTotals, MoneyTotals,
+    SUPPLY_CAP, UNCLAIMED,
 };
 pub use message::{Dest, Envelope};
 pub use plugin::{

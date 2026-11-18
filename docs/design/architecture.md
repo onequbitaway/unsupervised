@@ -120,14 +120,14 @@ feature cannot be expressed with the existing ones.
 | Attribute | A named `i64` column with bounds: needs, skills, age, reputation |
 | Condition | A named flag with an optional end tick: `jailed`, `hospitalized`. Blocking conditions restrict verbs |
 | Resource | A typed singleton in one realm: a market book, a registry |
-| Ledger | The only store of money and goods. Holders: resident, site, organization, account, escrow |
+| Ledger | The only store of money and goods. Holders: resident, site, organization, account, escrow. A supply cap keeps every balance far below the limit of `i64` |
 | Site | A building or lot in a zone: kind, rectangle, owner, tenants, tags, attributes |
 | Parameter | A named tunable number. Defaults come from data files. Laws change parameters |
 | Item | An entry in the item catalogue: name, weight, tags, attributes |
 | Verb | An action that a resident can take. It costs game time |
 | Agenda | Per resident: the running action, a queue of planned actions, standing routines |
 | Event | A fact that happened. Viewers, missions and leaderboards consume events |
-| Notice | A private entry in a resident's inbox: speech heard, message, action result |
+| Notice | A private entry in a resident's inbox: speech heard, message, action result. The inbox keeps it as packed bytes |
 | Message | Typed data sent from one realm to another. Delivered at the frame boundary |
 | Membership | Per resident: organizations, roles and permissions. Mirrored from the global realm |
 | Kin | Per resident: heir, spouse, household. Shared by the life and society modules |
@@ -354,6 +354,7 @@ impl Realm {
     pub fn set_pos(&self, idx: Idx, pos: Pos) -> Result<(), PosError>;  // may trigger migration
     pub fn nearby(&self, pos: Pos, radius: u32) -> Vec<Idx>;    // sorted by ResidentId
     pub fn nearby_into(&self, pos: Pos, radius: u32, out: &mut Vec<Idx>);  // reuses the buffer
+    pub fn nearest(&self, pos: Pos, radius: u32, k: usize) -> Vec<Idx>;    // the k nearest, nearest first, ties by ResidentId
     pub fn nearby_outside(&self, pos: Pos, radius: u32) -> Vec<Outsider>;  // residents of other zones, sorted by ResidentId
     pub fn attr(&self, idx: Idx, a: AttrId) -> i64;
     pub fn attr_set(&self, idx: Idx, a: AttrId, v: i64) -> i64; // clamps, returns new value
@@ -423,6 +424,15 @@ pub struct Outsider { pub id: ResidentId, pub zone: ZoneId, pub pos: Pos, pub na
   residents of this zone, also near a zone border: an `Idx` names a row of
   this zone. `nearby_outside` gives the residents on the other side of a
   border.
+- `nearest` gives the `k` residents of this zone that are nearest to `pos`
+  among those within `radius`. The order is the distance, then the
+  `ResidentId`. A resident on `pos` itself is in the list. Use it when a few
+  neighbours are enough: it does not collect or sort the residents in
+  sight. It reads the buckets of the zone ring by ring around `pos` and
+  stops when no bucket that is left can hold a resident as near as the `k`
+  that it has. The cost follows `k` and the number of residents near `pos`.
+  Residents on one tile are equally near, so the kernel reads each of them
+  to find the lowest ids.
 - Sight across a border. Zones share nothing in a frame. So each zone keeps
   a copy of the residents of the zones around it that are near its border:
   id, zone, position, name, activity. At the end of its tick a zone tells
@@ -464,6 +474,14 @@ pub struct Outsider { pub id: ResidentId, pub zone: ZoneId, pub pos: Pos, pub na
   global realm.
 - An observer must not change state. A write during `observe` panics in
   debug builds.
+- `Directory::sample_alive(&self, rng: &mut Rng) -> Option<ResidentId>` draws
+  one living resident. Each living resident has the same chance. It gives
+  `None` when nobody lives. Give it `realm.rng()` of the global realm. It
+  does not assume that ids start at 1 or follow each other. The cost does
+  not grow with the number of residents while a fair part of those that
+  ever lived is alive: the directory keeps a dense list of its ids, draws
+  from it and takes the first id that is alive. After 32 draws without a
+  living resident it counts through the living residents one time.
 
 ### 5.4 Ledger
 
@@ -477,8 +495,10 @@ impl Ledger {
     pub fn transfer_money(&mut self, from: Holder, to: Holder, amount: Money, reason: &str) -> Result<(), LedgerError>;
     pub fn transfer_item(&mut self, from: Holder, to: Holder, item: ItemId, qty: i64, reason: &str) -> Result<(), LedgerError>;
     pub fn mint(&mut self, faucet: FaucetId, to: Holder, amount: Money);
+    pub fn try_mint(&mut self, faucet: FaucetId, to: Holder, amount: Money) -> Result<(), LedgerError>;
     pub fn burn(&mut self, from: Holder, sink: SinkId, amount: Money) -> Result<(), LedgerError>;
     pub fn produce(&mut self, faucet: FaucetId, to: Holder, item: ItemId, qty: i64);
+    pub fn try_produce(&mut self, faucet: FaucetId, to: Holder, item: ItemId, qty: i64) -> Result<(), LedgerError>;
     pub fn consume(&mut self, from: Holder, sink: SinkId, item: ItemId, qty: i64) -> Result<(), LedgerError>;
     pub fn totals(&self) -> LedgerTotals;          // held, minted, burned, wired in, wired out
     pub fn audit(&self) -> Result<(), AuditError>; // held == minted - burned + in - out
@@ -492,6 +512,8 @@ impl Ledger {
     pub fn money_flows(&self) -> impl Iterator<Item = (&str, Flow)>;   // count and sum per reason
     pub fn item_flows(&self) -> impl Iterator<Item = (&str, Flow)>;
 }
+
+pub const SUPPLY_CAP: i64 = 1 << 48;   // the most that one realm can create, net
 ```
 
 `reason` is a short fixed label such as `wage` or `rent`; the ledger keeps
@@ -508,6 +530,37 @@ or less do nothing. `LedgerError` converts to `ActionError` with `?`.
   kernel bug. `World::audit` checks the whole world, including money and
   goods in flight between realms.
 - A resident's holdings move with the resident on migration.
+
+The supply cap. The faucets of one realm create at most `SUPPLY_CAP` (2^48)
+of money, in cents, net of what the sinks of that realm destroyed. The same
+cap holds for each kind of goods. "Net" is minted minus burned, or produced
+minus consumed, in the ledger of that realm. Value that came from another
+realm does not count.
+
+- `try_mint` and `try_produce` refuse an amount that would take the realm
+  above the cap, with `LedgerError::Overflow`. They refuse a negative amount
+  with `LedgerError::InvalidAmount`. Nothing changes on an error. Use them
+  when the caller must know: a verb can then refuse the action instead of
+  paying nothing.
+- `mint` and `produce` create nothing in the same cases, and do not say so.
+- A sink makes room again. A realm that destroyed what other realms created
+  can create that much more.
+- The supply invariant: a world has at most `MAX_ZONES + 1` = 8,191 realms
+  and no balance is below zero, so no balance in the world is above
+  8,191 * 2^48. That is less than 2^61, a quarter of the limit of `i64`. The
+  kernel checks this relation when it is compiled.
+- So a balance always has room for what another holder or another realm
+  gives to it. A transfer fails only when the payer has too little or the
+  amount is negative. The arrival of a wire, the arrival of a resident with
+  its holdings and an inheritance (`despawn` with an heir) cannot fail. The
+  kernel adds with a check in these places and panics when the check fails:
+  only corrupted state can break the invariant, and the kernel then stops
+  instead of losing value.
+- The sums per reason label (`money_flows`, `item_flows`) are statistics of
+  everything that ever moved. They stop at the limit of `i64`.
+- A snapshot from before the cap restores. A realm of such a world that is
+  already above the cap creates nothing more until its sinks bring it
+  below.
 
 ### 5.5 Events and notices
 
@@ -543,6 +596,13 @@ notice. Use `protocol::Untrusted::new(from, text)`. It serializes with
 - An event that nobody would receive is not serialized.
 - The inbox of a resident keeps the last `kernel.inbox_max` entries. Notices
   and action reports share one sequence, from 1.
+- The inbox keeps each entry as packed bytes (MessagePack), not as a tree of
+  JSON values. A tree costs several hundred bytes for each JSON object,
+  however small; the bytes are about as long as the text. The kernel opens
+  an entry when an observation shows it. Residents that get the same notice
+  share one copy of the bytes. The arguments of the running action, of the
+  planned actions and of the routines are packed in the same way. So are
+  the answers to the last 32 requests with an idempotency key.
 - Kernel events: `kernel.spawned` and `kernel.despawned` (public),
   `kernel.action_interrupted` and `kernel.condition_ended` (silent).
 
@@ -554,6 +614,7 @@ impl World {
     pub fn try_new(plugins: &[&dyn Plugin], config: WorldConfig) -> Result<World, WorldError>;
     pub fn apply(&mut self, input: Input) -> Output;     // the only way to change state
     pub fn observe(&self, r: ResidentId, opts: &ObserveOpts) -> Result<Observation, SimError>;
+    pub fn observe_batch(&mut self, requests: &[(ResidentId, ObserveOpts)]) -> Vec<Result<Observation, SimError>>;
     pub fn next_notice(&self, r: ResidentId) -> Result<u64, SimError>;   // cursor for `wait`
     pub fn view(&self, q: &ViewQuery) -> Result<WorldView, SimError>;    // for viewers: tiles, sites, residents
     pub fn catalogue(&self) -> Catalogue;                // verbs with JSON schemas, params, items
@@ -636,7 +697,7 @@ tick. `from` is the sender that the handler sees.
 
 - One tick is one game minute: 1,440 ticks per day. Zones are numbered city
   by city, row by row. A city is a square of `districts * districts` zones.
-- A new resident appears at the centre of a site with the tag `spawn` in the
+- A new resident appears on a tile of a site with the tag `spawn` in the
   requested city (residents are spread over all such sites by id), else at
   the centre of the first zone of the city. Without a city, the city with
   the fewest residents is used.
@@ -645,6 +706,30 @@ tick. `from` is the sender that the handler sees.
   kernel keeps this list. It reads the sites of a zone again only after
   `sites_mut` was called there, so a spawn does not scan the sites of the
   city.
+- The newcomers of one site take its walkable tiles in turn, so that a busy
+  site does not get a crowd on one tile. The tiles are those of the site
+  that are in its zone and have a walkable code, counted row by row. Turn 0
+  has the centre of the site, or the next walkable tile after it. After the
+  last tile comes the first. Resident `id` has turn `(id - 1) / count`. A
+  site without a walkable tile keeps its centre for every newcomer.
+- The walkable codes are the parameter `kernel.spawn_tiles`: a sum of powers
+  of two, where 2^n stands for tile code n. The default is 207: the codes
+  0, 1, 2, 3, 6 and 7 of game-design.md, section 2. A code above 62 is
+  never used.
+- `observe_batch` builds many observations on all processor cores. The
+  answer to each request is the answer of `observe` for that request, in
+  the order of the requests. The requests for the residents of one zone run
+  on one thread, and the zones run in parallel on the rayon thread pool of
+  the caller. The sections of the global realm are built by one more task
+  at the same time as the zones. A realm serves one thread at a time, so
+  that task is not split; the batch takes as long as the slower of the two
+  parts, not their sum. The call takes `&mut self` because a realm cannot
+  be shared between threads: the unique borrow gives each thread its own
+  realm.
+- The `nearby` section lists the nearest residents first, in the order of
+  distance and then of id, and says in `more_residents` how many more are
+  in sight. The kernel finds them with the search of `Realm::nearest` and
+  does not sort the residents in sight.
 - The frame: zones tick in parallel (rayon); the result does not depend on
   the thread schedule. Then the global realm gets the messages of the zones
   and ticks. Then residents that left a zone arrive in their new zone, and
@@ -660,6 +745,14 @@ tick. `from` is the sender that the handler sees.
   and verb its old id, so a snapshot restores with a newer set of plugins.
   Components and resources are matched by `NAME`: a new one starts with its
   default, one that no plugin registers any more is dropped.
+- A snapshot of an older kernel restores, and the world goes on as it did
+  there. Three parts of the format changed, and `restore` reads both forms:
+  an inbox entry, the arguments of an action and the remembered answer to a
+  request were values and are packed bytes now. A snapshot that this kernel
+  writes has the new form, so an older kernel cannot read it. The state
+  hash of a world differs between the two kernels for this reason. Derived data (the net creation of a
+  ledger, the list of ids of the directory, the list of copies in sight)
+  is not in a snapshot and not in the state hash.
 - `AdminCommand::RollbackZone` is refused by the kernel. It needs the
   snapshot history of the runtime.
 
@@ -729,12 +822,15 @@ The runtime:
 The kernel has calls for the work of the runtime, so that the runtime does
 not copy kernel formats: `World::snapshot_with_hash` for a snapshot that is
 named after its hash, `Envelope::module` for a message from a service
-outside the simulation, and `Blueprint::handles_message` to refuse such a
-message before it is in the input log when no module takes it
-(section 5.6).
+outside the simulation, `Blueprint::handles_message` to refuse such a
+message before it is in the input log when no module takes it, and
+`World::observe_batch` to answer the observation requests of one batch of
+the mailbox on all processor cores (section 5.6).
 
 Status. The mailbox loop, real-time and manual stepping, `wait`, the frame
-broadcast and the statistics are implemented. The input log, snapshots,
+broadcast and the statistics are implemented. The runtime answers each
+observation request with `World::observe` on its own thread; it does not
+call `World::observe_batch` yet. The input log, snapshots,
 replay and time dilation are not; they plug in through `Journal` (every
 input before it is applied, the world after every frame) and `Pacer` (the
 `skip` list of every frame). The defaults record nothing and never skip.

@@ -596,6 +596,50 @@ fn a_world_can_host_a_subset_of_the_realms() {
 }
 
 #[test]
+fn a_module_draws_living_residents_from_the_directory() {
+    /// Draws `n` residents with the generator of the global realm.
+    fn draw(w: &TestWorld<'_>, n: usize) -> Vec<Option<ResidentId>> {
+        let global = w.global();
+        let directory = global.directory();
+        let mut rng = global.rng();
+        (0..n).map(|_| directory.sample_alive(&mut rng)).collect()
+    }
+    let build = || {
+        let mut w = world();
+        assert_eq!(draw(&w, 1), [None], "nobody lives yet");
+        let ids: Vec<ResidentId> = (0..40).map(|i| w.spawn(&format!("r{i}"))).collect();
+        w.step(1);
+        // Every fourth resident leaves the world.
+        for &id in ids.iter().step_by(4) {
+            w.despawn(id);
+        }
+        w.step(1);
+        w
+    };
+    let mut w = build();
+    assert_eq!(w.global().directory().living(), 30);
+    let drawn = draw(&w, 300);
+    let mut distinct: Vec<u64> = drawn.iter().map(|id| id.expect("somebody lives").0).collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    // All 30 living residents come in 300 draws, and nobody that left:
+    // residents 1, 5, 9, ... are gone.
+    let living: Vec<u64> = (1..=40).filter(|id| id % 4 != 1).collect();
+    assert_eq!(distinct, living);
+
+    // The draw uses the generator of the realm: a world with the same
+    // inputs draws the same residents, also after a snapshot.
+    let mut twin = build();
+    assert_eq!(draw(&twin, 300), drawn);
+    assert_eq!(twin.hash(), w.hash());
+    twin.snapshot_restore();
+    w.step(1);
+    twin.step(1);
+    assert_eq!(draw(&twin, 50), draw(&w, 50));
+    assert_eq!(twin.hash(), w.hash());
+}
+
+#[test]
 fn the_world_knows_its_layout_and_config() {
     let w = world();
     assert_eq!(w.world.config().zone_size, 64);

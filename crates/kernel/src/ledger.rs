@@ -11,6 +11,14 @@
 //!
 //! "Wired" value is value that moved between realms: a wire, or the holdings
 //! of a resident that migrated.
+//!
+//! # The supply cap
+//!
+//! The faucets of one realm cannot create more than [`SUPPLY_CAP`], so no
+//! balance in the world can come near the limit of `i64`. That is the
+//! *supply invariant*; the text of [`SUPPLY_CAP`] states it. Because of it
+//! a transfer, the arrival of a wire and the arrival of a resident with its
+//! holdings cannot fail for lack of room.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -19,7 +27,28 @@ use serde::{Deserialize, Serialize};
 use unsup_protocol::{ActionError, ErrorCode, ItemId, Money, OrgId, RealmId, ResidentId, SiteId};
 
 use crate::codec::pairs;
+use crate::config::MAX_ZONES;
 use crate::ids::{FaucetId, SinkId};
+
+/// The greatest net amount that the faucets of one realm can create: 2^48,
+/// for money (in cents) and for each kind of goods. "Net" means created
+/// minus destroyed by the sinks of the same realm.
+///
+/// [`Ledger::try_mint`] and [`Ledger::try_produce`] refuse to pass it.
+///
+/// # The supply invariant
+///
+/// A world has at most `MAX_ZONES + 1` realms, and no balance is below
+/// zero. So no balance in the world can be above
+/// `(MAX_ZONES + 1) * SUPPLY_CAP`, which is less than a quarter of the limit
+/// of `i64`. A balance thus always has room for what another holder or
+/// another realm gives to it: a transfer, the arrival of a wire and the
+/// arrival of a resident with its holdings cannot fail for lack of room.
+pub const SUPPLY_CAP: i64 = 1 << 48;
+
+// The supply invariant. The whole world at the cap fits four times in an
+// `i64`, so the sum of any two balances also fits.
+const _: () = assert!((MAX_ZONES as i128 + 1) * (SUPPLY_CAP as i128) <= (i64::MAX as i128) / 4);
 
 /// The owner of a balance.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
@@ -56,7 +85,9 @@ pub enum LedgerError {
     },
     /// The amount is negative.
     InvalidAmount,
-    /// A balance or a total would not fit in an `i64`.
+    /// The amount is too large: a faucet would pass the [`SUPPLY_CAP`], or
+    /// a balance or a total would not fit in an `i64`. A transfer cannot
+    /// fail this way while the supply invariant holds.
     Overflow,
     /// A wire names a destination that cannot hold a balance (all zones, or a
     /// zone that does not exist).
@@ -227,6 +258,69 @@ pub struct Ledger {
     item_out: BTreeMap<ItemId, i64>,
     money_flows: BTreeMap<String, Flow>,
     item_flows: BTreeMap<String, Flow>,
+    /// What the faucets created minus what the sinks destroyed. It is
+    /// derived from the totals above, so it is not saved.
+    #[serde(skip)]
+    created: Created,
+}
+
+/// What the faucets of a ledger created minus what its sinks destroyed:
+/// the numbers that the supply cap limits.
+#[derive(Clone, Debug, Default)]
+struct Net {
+    money: i64,
+    /// By item id. Item ids are small, so a dense table is faster than a
+    /// map.
+    items: Vec<i64>,
+}
+
+impl Net {
+    fn item(&self, item: ItemId) -> i64 {
+        self.items.get(usize::from(item.0)).copied().unwrap_or(0)
+    }
+
+    fn add_item(&mut self, item: ItemId, delta: i64) {
+        let slot = usize::from(item.0);
+        if slot >= self.items.len() {
+            self.items.resize(slot + 1, 0);
+        }
+        self.items[slot] = self.items[slot].wrapping_add(delta);
+    }
+}
+
+/// The net creation of a ledger, built from its totals at the first use and
+/// kept up to date after that, so that a faucet does not add up every total
+/// each time.
+///
+/// It holds nothing that the totals do not say. So it is not part of the
+/// saved state, and two ledgers with equal totals are equal whether or not
+/// the cache is built.
+#[derive(Clone, Debug, Default)]
+struct Created(Option<Net>);
+
+impl PartialEq for Created {
+    fn eq(&self, _: &Created) -> bool {
+        true
+    }
+}
+
+impl Eq for Created {}
+
+/// Adds to a balance an amount that another holder or another realm had.
+///
+/// # Panics
+///
+/// Panics when the sum does not fit. The supply invariant (see
+/// [`SUPPLY_CAP`]) keeps every balance far below the limit, so this means
+/// that the state is corrupted, and the ledger stops instead of losing
+/// value.
+fn credit(balance: i64, amount: i64) -> i64 {
+    match balance.checked_add(amount) {
+        Some(sum) => sum,
+        None => panic!(
+            "the supply invariant is broken: a balance of {balance} has no room for {amount}"
+        ),
+    }
 }
 
 /// Adds `delta` to a counter in a map of totals.
@@ -242,7 +336,8 @@ fn wsum<'a>(values: impl Iterator<Item = &'a i64>) -> i64 {
 }
 
 /// Records one transfer under its reason label. The label is allocated only
-/// the first time it is seen.
+/// the first time it is seen. The sum is a statistic of everything that
+/// ever moved, not a balance, so it stops at the limit of `i64`.
 fn record(flows: &mut BTreeMap<String, Flow>, reason: &str, amount: i64) {
     if let Some(flow) = flows.get_mut(reason) {
         flow.count += 1;
@@ -335,6 +430,9 @@ impl Ledger {
     /// `reason` is a short fixed label such as `wage` or `rent`. The ledger
     /// keeps the count and the sum per label, so do not put ids or names in
     /// it. An amount of zero does nothing. A failed transfer changes nothing.
+    ///
+    /// The transfer fails only when `from` has too little or the amount is
+    /// negative. The receiver always has room (the supply invariant).
     pub fn transfer_money(
         &mut self,
         from: Holder,
@@ -391,20 +489,52 @@ impl Ledger {
     // ---- Faucets and sinks ---------------------------------------------
 
     /// Creates money. An amount of zero or less creates nothing, and so does
-    /// an amount that would not fit.
+    /// an amount that [`Ledger::try_mint`] refuses: one that takes the
+    /// realm above the [`SUPPLY_CAP`]. Use `try_mint` when the caller must
+    /// know that nothing was created, for example to refuse an action
+    /// instead of paying nothing.
     pub fn mint(&mut self, faucet: FaucetId, to: Holder, amount: Money) {
-        let amount = amount.0;
-        if amount <= 0 {
-            return;
+        if amount.0 > 0 {
+            // The contract of `mint`: a refused amount creates nothing and
+            // the caller is not told.
+            let _ = self.try_mint(faucet, to, amount);
         }
+    }
+
+    /// Creates money, or says why not. Nothing changes on an error.
+    ///
+    /// The faucets of one ledger create at most [`SUPPLY_CAP`], net of what
+    /// its sinks destroyed. An amount that would pass the cap is refused
+    /// with [`LedgerError::Overflow`], a negative amount with
+    /// [`LedgerError::InvalidAmount`]. An amount of zero does nothing.
+    pub fn try_mint(
+        &mut self,
+        faucet: FaucetId,
+        to: Holder,
+        amount: Money,
+    ) -> Result<(), LedgerError> {
+        let amount = amount.0;
+        if amount < 0 {
+            return Err(LedgerError::InvalidAmount);
+        }
+        if amount == 0 {
+            return Ok(());
+        }
+        let net = self.net().money;
+        // `net` can be far below zero (a realm that burns what others
+        // minted), so the sum is checked too.
+        let new_net = net.checked_add(amount).filter(|&n| n <= SUPPLY_CAP);
         let balance = self.money.get(&to).copied().unwrap_or(0);
         let total = self.minted.get(&faucet).copied().unwrap_or(0);
-        if let (Some(balance), Some(total)) =
-            (balance.checked_add(amount), total.checked_add(amount))
-        {
-            self.set_money(to, balance);
-            self.minted.insert(faucet, total);
-        }
+        let (Some(new_net), Some(balance), Some(total)) =
+            (new_net, balance.checked_add(amount), total.checked_add(amount))
+        else {
+            return Err(LedgerError::Overflow);
+        };
+        self.set_money(to, balance);
+        self.minted.insert(faucet, total);
+        self.net().money = new_net;
+        Ok(())
     }
 
     /// Destroys money of a holder.
@@ -422,21 +552,52 @@ impl Ledger {
         }
         self.set_money(from, available - amount);
         bump(&mut self.burned, sink, amount);
+        if let Some(net) = &mut self.created.0 {
+            net.money = net.money.wrapping_sub(amount);
+        }
         Ok(())
     }
 
     /// Creates units of an item. A quantity of zero or less creates nothing,
-    /// and so does a quantity that would not fit.
+    /// and so does a quantity that [`Ledger::try_produce`] refuses: one
+    /// that takes the realm above the [`SUPPLY_CAP`] for this item.
     pub fn produce(&mut self, faucet: FaucetId, to: Holder, item: ItemId, qty: i64) {
-        if qty <= 0 {
-            return;
+        if qty > 0 {
+            // The contract of `produce`: a refused quantity creates nothing
+            // and the caller is not told.
+            let _ = self.try_produce(faucet, to, item, qty);
         }
+    }
+
+    /// Creates units of an item, or says why not. Nothing changes on an
+    /// error. The rules are those of [`Ledger::try_mint`]; each item has
+    /// its own cap.
+    pub fn try_produce(
+        &mut self,
+        faucet: FaucetId,
+        to: Holder,
+        item: ItemId,
+        qty: i64,
+    ) -> Result<(), LedgerError> {
+        if qty < 0 {
+            return Err(LedgerError::InvalidAmount);
+        }
+        if qty == 0 {
+            return Ok(());
+        }
+        let net = self.net().item(item);
+        let fits = net.checked_add(qty).is_some_and(|n| n <= SUPPLY_CAP);
         let balance = self.qty(to, item);
         let total = self.produced_by(faucet, item);
-        if let (Some(balance), Some(total)) = (balance.checked_add(qty), total.checked_add(qty)) {
-            self.set_qty(to, item, balance);
-            self.produced.insert((faucet, item), total);
-        }
+        let (true, Some(balance), Some(total)) =
+            (fits, balance.checked_add(qty), total.checked_add(qty))
+        else {
+            return Err(LedgerError::Overflow);
+        };
+        self.set_qty(to, item, balance);
+        self.produced.insert((faucet, item), total);
+        self.net().add_item(item, qty);
+        Ok(())
     }
 
     /// Destroys units of an item of a holder.
@@ -459,6 +620,9 @@ impl Ledger {
         }
         self.set_qty(from, item, available - qty);
         bump(&mut self.consumed, (sink, item), qty);
+        if let Some(net) = &mut self.created.0 {
+            net.add_item(item, qty.wrapping_neg());
+        }
         Ok(())
     }
 
@@ -556,6 +720,27 @@ impl Ledger {
 
     // ---- Kernel only ---------------------------------------------------
 
+    /// Returns what the faucets created minus what the sinks destroyed. The
+    /// first call adds up the totals; they can have wrapped, but the true
+    /// net fits, so the wrapped sums give it.
+    fn net(&mut self) -> &mut Net {
+        if self.created.0.is_none() {
+            let mut net = Net { money: self.net_money_from_totals(), items: Vec::new() };
+            for (&(_, item), &qty) in &self.produced {
+                net.add_item(item, qty);
+            }
+            for (&(_, item), &qty) in &self.consumed {
+                net.add_item(item, qty.wrapping_neg());
+            }
+            self.created.0 = Some(net);
+        }
+        self.created.0.get_or_insert_default()
+    }
+
+    fn net_money_from_totals(&self) -> i64 {
+        wsum(self.minted.values()).wrapping_sub(wsum(self.burned.values()))
+    }
+
     fn set_money(&mut self, holder: Holder, cents: i64) {
         if cents == 0 {
             self.money.remove(&holder);
@@ -595,9 +780,14 @@ impl Ledger {
     }
 
     /// Gives a holder money that came from another realm.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the balance has no room, which the supply invariant
+    /// rules out (see [`credit`]).
     pub(crate) fn wire_in_money(&mut self, to: Holder, amount: i64) {
         let balance = self.money.get(&to).copied().unwrap_or(0);
-        self.set_money(to, balance.saturating_add(amount));
+        self.set_money(to, credit(balance, amount));
         self.money_in = self.money_in.wrapping_add(amount);
     }
 
@@ -625,9 +815,14 @@ impl Ledger {
     }
 
     /// Gives a holder units of an item that came from another realm.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the balance has no room, which the supply invariant
+    /// rules out (see [`credit`]).
     pub(crate) fn wire_in_item(&mut self, to: Holder, item: ItemId, qty: i64) {
         let balance = self.qty(to, item);
-        self.set_qty(to, item, balance.saturating_add(qty));
+        self.set_qty(to, item, credit(balance, qty));
         bump(&mut self.item_in, item, qty);
     }
 
@@ -655,15 +850,28 @@ impl Ledger {
     }
 
     /// Moves everything that `from` has to `to` in this ledger.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a transfer fails. That cannot happen while the state is
+    /// sound: each amount is the whole balance of `from`, so `from` has
+    /// enough, and the supply invariant gives `to` room.
     pub(crate) fn move_holdings(&mut self, from: Holder, to: Holder, reason: &str) {
         if from == to {
             return;
         }
         let money = self.money(from);
-        // Neither transfer can fail: the amounts are the whole balance.
-        let _ = self.transfer_money(from, to, money, reason);
+        if let Err(error) = self.transfer_money(from, to, money, reason) {
+            panic!(
+                "the supply invariant is broken: {to:?} cannot take the money of {from:?}: {error}"
+            );
+        }
         for (item, qty) in self.items_of(from) {
-            let _ = self.transfer_item(from, to, item, qty, reason);
+            if let Err(error) = self.transfer_item(from, to, item, qty, reason) {
+                panic!(
+                    "the supply invariant is broken: {to:?} cannot take item {item} of {from:?}: {error}"
+                );
+            }
         }
     }
 
@@ -752,15 +960,149 @@ mod tests {
     }
 
     #[test]
-    fn overflow_is_refused() {
+    fn a_faucet_stops_at_the_supply_cap() {
         let mut ledger = Ledger::new();
-        ledger.mint(WAGES, ANN, Money(i64::MAX));
-        ledger.mint(FARM, BOB, Money(10));
-        // The faucet total of WAGES is full, so this mints nothing.
+        assert_eq!(ledger.try_mint(WAGES, ANN, Money(SUPPLY_CAP - 10)), Ok(()));
+        // Faucets share the cap of the ledger: it limits what the realm
+        // creates, not what one faucet creates.
+        assert_eq!(ledger.try_mint(FARM, BOB, Money(11)), Err(LedgerError::Overflow));
+        assert_eq!(ledger.try_mint(FARM, BOB, Money(10)), Ok(()));
+        assert_eq!(ledger.try_mint(WAGES, BOB, Money(1)), Err(LedgerError::Overflow));
+        let full = ledger.clone();
+        // `mint` creates nothing above the cap and does not say so.
         ledger.mint(WAGES, BOB, Money(1));
-        assert_eq!(ledger.money(BOB), Money(10));
-        assert_eq!(ledger.transfer_money(BOB, ANN, Money(5), "gift"), Err(LedgerError::Overflow));
-        assert_eq!(ledger.money(BOB), Money(10));
+        ledger.mint(FARM, ANN, Money(i64::MAX));
+        assert_eq!(ledger, full);
+        assert_eq!(ledger.totals().money.held, SUPPLY_CAP);
+        assert_eq!((ledger.money(ANN), ledger.money(BOB)), (Money(SUPPLY_CAP - 10), Money(10)));
+        assert_eq!(ledger.minted_by(FARM), Money(10));
+        // A sink makes room again: the cap is on minted minus burned.
+        ledger.burn(ANN, TAX, Money(25)).unwrap();
+        assert_eq!(ledger.try_mint(FARM, BOB, Money(26)), Err(LedgerError::Overflow));
+        assert_eq!(ledger.try_mint(FARM, BOB, Money(25)), Ok(()));
+        assert_eq!(ledger.money(BOB), Money(35));
+        assert_eq!(ledger.audit(), Ok(()));
+        // Money that came from another realm does not count: this realm
+        // did not create it.
+        let mut other = Ledger::new();
+        other.wire_in_money(ANN, SUPPLY_CAP);
+        assert_eq!(other.try_mint(WAGES, ANN, Money(SUPPLY_CAP)), Ok(()));
+        assert_eq!(other.money(ANN), Money(2 * SUPPLY_CAP));
+        // And a realm that burned what others minted can mint that much
+        // more, but never more than the cap above zero.
+        other.burn(ANN, TAX, Money(2 * SUPPLY_CAP)).unwrap();
+        assert_eq!(other.try_mint(WAGES, ANN, Money(2 * SUPPLY_CAP)), Ok(()));
+        assert_eq!(other.try_mint(WAGES, ANN, Money(1)), Err(LedgerError::Overflow));
+        assert_eq!(other.audit(), Ok(()));
+    }
+
+    #[test]
+    fn each_item_has_its_own_supply_cap() {
+        let mut ledger = Ledger::new();
+        assert_eq!(ledger.try_produce(FARM, ANN, BREAD, SUPPLY_CAP), Ok(()));
+        assert_eq!(ledger.try_produce(FARM, BOB, BREAD, 1), Err(LedgerError::Overflow));
+        assert_eq!(ledger.try_produce(WAGES, BOB, BREAD, 1), Err(LedgerError::Overflow));
+        // Another item, and money, have their own room.
+        assert_eq!(ledger.try_produce(FARM, BOB, COAL, 7), Ok(()));
+        assert_eq!(ledger.try_mint(WAGES, BOB, Money(7)), Ok(()));
+        let full = ledger.clone();
+        ledger.produce(FARM, BOB, BREAD, 1);
+        assert_eq!(ledger, full);
+        ledger.consume(ANN, EATEN, BREAD, 4).unwrap();
+        assert_eq!(ledger.try_produce(FARM, BOB, BREAD, 5), Err(LedgerError::Overflow));
+        assert_eq!(ledger.try_produce(FARM, BOB, BREAD, 4), Ok(()));
+        assert_eq!((ledger.qty(ANN, BREAD), ledger.qty(BOB, BREAD)), (SUPPLY_CAP - 4, 4));
+        assert_eq!(ledger.qty(BOB, COAL), 7);
+        assert_eq!(ledger.audit(), Ok(()));
+    }
+
+    #[test]
+    fn try_mint_and_try_produce_say_why_nothing_was_created() {
+        let mut ledger = funded();
+        let before = ledger.clone();
+        assert_eq!(ledger.try_mint(WAGES, ANN, Money(-1)), Err(LedgerError::InvalidAmount));
+        assert_eq!(ledger.try_produce(FARM, ANN, BREAD, -1), Err(LedgerError::InvalidAmount));
+        assert_eq!(ledger.try_mint(WAGES, ANN, Money(SUPPLY_CAP)), Err(LedgerError::Overflow));
+        assert_eq!(ledger.try_produce(FARM, ANN, BREAD, SUPPLY_CAP), Err(LedgerError::Overflow));
+        assert_eq!(ledger.try_mint(WAGES, ANN, Money(0)), Ok(()));
+        assert_eq!(ledger.try_produce(FARM, ANN, BREAD, 0), Ok(()));
+        assert_eq!(ledger, before);
+        assert_eq!(ledger.try_mint(WAGES, BOB, Money(40)), Ok(()));
+        assert_eq!(ledger.try_produce(FARM, BOB, COAL, 2), Ok(()));
+        assert_eq!((ledger.money(BOB), ledger.qty(BOB, COAL)), (Money(40), 2));
+        assert_eq!((ledger.minted_by(WAGES), ledger.produced_by(FARM, COAL)), (Money(1_040), 2));
+    }
+
+    #[test]
+    fn the_supply_cap_survives_serialization() {
+        // The net creation is not saved. A ledger that is read back builds
+        // it from its totals.
+        let mut ledger = Ledger::new();
+        ledger.mint(WAGES, ANN, Money(SUPPLY_CAP));
+        ledger.burn(ANN, TAX, Money(100)).unwrap();
+        ledger.produce(FARM, ANN, BREAD, SUPPLY_CAP - 3);
+        ledger.produce(WAGES, ANN, BREAD, 2);
+        ledger.consume(ANN, EATEN, BREAD, 9).unwrap();
+        let bytes = crate::codec::encode("ledger", &ledger);
+        let mut back: Ledger = crate::codec::decode("ledger", &bytes).unwrap();
+        assert_eq!(back, ledger);
+        for ledger in [&mut back, &mut ledger] {
+            assert_eq!(ledger.try_mint(FARM, BOB, Money(101)), Err(LedgerError::Overflow));
+            assert_eq!(ledger.try_mint(FARM, BOB, Money(100)), Ok(()));
+            assert_eq!(ledger.try_produce(FARM, BOB, BREAD, 11), Err(LedgerError::Overflow));
+            assert_eq!(ledger.try_produce(FARM, BOB, BREAD, 10), Ok(()));
+            assert_eq!(ledger.try_produce(FARM, BOB, COAL, SUPPLY_CAP), Ok(()));
+        }
+        assert_eq!(back, ledger);
+        assert_eq!(crate::codec::encode("ledger", &back), crate::codec::encode("ledger", &ledger));
+    }
+
+    #[test]
+    fn a_receiver_at_the_limit_of_i64_is_refused() {
+        // The supply cap keeps a balance far from the limit. Only a wrong
+        // balance can be near it; a transfer to it fails and changes
+        // nothing.
+        let mut ledger = funded();
+        ledger.corrupt_money(BOB, i64::MAX - 4);
+        ledger.corrupt_item(BOB, BREAD, i64::MAX - 1);
+        let before = ledger.clone();
+        assert_eq!(ledger.transfer_money(ANN, BOB, Money(5), "gift"), Err(LedgerError::Overflow));
+        assert_eq!(ledger.transfer_item(ANN, BOB, BREAD, 2, "gift"), Err(LedgerError::Overflow));
+        assert_eq!(ledger, before);
+        assert_eq!(ledger.transfer_money(ANN, BOB, Money(4), "gift"), Ok(()));
+        assert_eq!(ledger.money(BOB), Money(i64::MAX));
+    }
+
+    #[test]
+    #[should_panic(expected = "the supply invariant is broken: a balance of 9223372036854775807")]
+    fn a_wire_to_a_balance_without_room_panics() {
+        let mut ledger = Ledger::new();
+        ledger.corrupt_money(ANN, i64::MAX);
+        ledger.wire_in_money(ANN, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "the supply invariant is broken: a balance of 9223372036854775800")]
+    fn an_item_wire_to_a_balance_without_room_panics() {
+        let mut ledger = Ledger::new();
+        ledger.corrupt_item(ANN, BREAD, i64::MAX - 7);
+        ledger.wire_in_item(ANN, BREAD, 8);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot take the money of Resident(ResidentId(1))")]
+    fn move_holdings_to_a_balance_without_room_panics() {
+        let mut ledger = funded();
+        ledger.corrupt_money(BOB, i64::MAX);
+        ledger.move_holdings(ANN, BOB, "inherit");
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot take item 3 of Resident(ResidentId(1))")]
+    fn move_holdings_of_items_to_a_balance_without_room_panics() {
+        let mut ledger = funded();
+        ledger.corrupt_item(BOB, BREAD, i64::MAX);
+        ledger.move_holdings(ANN, BOB, "inherit");
     }
 
     #[test]
