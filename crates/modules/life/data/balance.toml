@@ -1,1 +1,541 @@
-# Balance numbers of the life module. See docs/design/architecture.md, section 7.
+# Balance numbers of the life module. See docs/design/architecture.md, section 7,
+# and docs/design/modules/life.md for the formulas that use them.
+#
+# Money is in cents. One tick is one game minute. Needs go from 0 to 1000.
+
+# ---- World generation -------------------------------------------------------
+#
+# The tables below use one line for each number. Each line is a normal
+# parameter.
+
+[params]
+# Layout of a district.
+"life.gen.block" = { value = 14, min = 5, max = 64, summary = "Side of one city block in tiles." }
+"life.gen.street" = { value = 2, min = 1, max = 4, summary = "Width of a street between two blocks in tiles." }
+"life.gen.margin_trees_pct" = { value = 8, min = 0, max = 100, summary = "Percent of the free tiles around a building that get a tree." }
+"life.gen.mine_rim" = { value = 2, min = 1, max = 16, summary = "Width in tiles of the free ground around the rock of a mine." }
+"life.gen.pond_divisor" = { value = 4, min = 2, max = 64, summary = "The pond of a park is as wide and as high as the park divided by this number." }
+"life.gen.value_jitter_pct" = { value = 15, min = 0, max = 90, summary = "A site value differs from the value of its kind by at most this percent." }
+
+# Shares of the district types in a city with nine zones or more.
+"life.gen.share.downtown" = { value = 10, min = 0, max = 100, summary = "Share of downtown districts in a city." }
+"life.gen.share.commercial" = { value = 15, min = 0, max = 100, summary = "Share of commercial districts in a city." }
+"life.gen.share.residential" = { value = 35, min = 0, max = 100, summary = "Share of residential districts in a city." }
+"life.gen.share.industrial" = { value = 15, min = 0, max = 100, summary = "Share of industrial districts in a city." }
+"life.gen.share.rural" = { value = 25, min = 0, max = 100, summary = "Share of rural districts in a city." }
+
+# Public services: a city has one site of the kind for this number of zones,
+# and at least one.
+"life.gen.zones_per.shelter" = { value = 2, min = 1, max = 10000, summary = "Zones of a city for each shelter." }
+"life.gen.zones_per.school" = { value = 4, min = 1, max = 10000, summary = "Zones of a city for each school." }
+"life.gen.zones_per.hospital" = { value = 6, min = 1, max = 10000, summary = "Zones of a city for each hospital." }
+"life.gen.zones_per.police_station" = { value = 6, min = 1, max = 10000, summary = "Zones of a city for each police station." }
+"life.gen.zones_per.bank" = { value = 6, min = 1, max = 10000, summary = "Zones of a city for each bank." }
+"life.gen.zones_per.station" = { value = 16, min = 1, max = 10000, summary = "Zones of a city for each station." }
+
+# What fills the free lots of a district. The numbers are weights.
+"life.gen.mix.downtown.office" = { value = 30, min = 0, max = 1000, summary = "Weight of offices in a downtown district." }
+"life.gen.mix.downtown.apartment" = { value = 20, min = 0, max = 1000, summary = "Weight of apartments in a downtown district." }
+"life.gen.mix.downtown.shop" = { value = 15, min = 0, max = 1000, summary = "Weight of shops in a downtown district." }
+"life.gen.mix.downtown.restaurant" = { value = 15, min = 0, max = 1000, summary = "Weight of restaurants in a downtown district." }
+"life.gen.mix.downtown.park" = { value = 5, min = 0, max = 1000, summary = "Weight of parks in a downtown district." }
+"life.gen.mix.commercial.shop" = { value = 30, min = 0, max = 1000, summary = "Weight of shops in a commercial district." }
+"life.gen.mix.commercial.restaurant" = { value = 20, min = 0, max = 1000, summary = "Weight of restaurants in a commercial district." }
+"life.gen.mix.commercial.office" = { value = 20, min = 0, max = 1000, summary = "Weight of offices in a commercial district." }
+"life.gen.mix.commercial.apartment" = { value = 10, min = 0, max = 1000, summary = "Weight of apartments in a commercial district." }
+"life.gen.mix.commercial.warehouse" = { value = 8, min = 0, max = 1000, summary = "Weight of warehouses in a commercial district." }
+"life.gen.mix.commercial.workshop" = { value = 6, min = 0, max = 1000, summary = "Weight of workshops in a commercial district." }
+"life.gen.mix.commercial.park" = { value = 3, min = 0, max = 1000, summary = "Weight of parks in a commercial district." }
+"life.gen.mix.residential.home" = { value = 60, min = 0, max = 1000, summary = "Weight of homes in a residential district." }
+"life.gen.mix.residential.apartment" = { value = 15, min = 0, max = 1000, summary = "Weight of apartments in a residential district." }
+"life.gen.mix.residential.park" = { value = 8, min = 0, max = 1000, summary = "Weight of parks in a residential district." }
+"life.gen.mix.residential.shop" = { value = 6, min = 0, max = 1000, summary = "Weight of shops in a residential district." }
+"life.gen.mix.residential.restaurant" = { value = 4, min = 0, max = 1000, summary = "Weight of restaurants in a residential district." }
+"life.gen.mix.residential.workshop" = { value = 2, min = 0, max = 1000, summary = "Weight of workshops in a residential district." }
+"life.gen.mix.industrial.factory" = { value = 30, min = 0, max = 1000, summary = "Weight of factories in an industrial district." }
+"life.gen.mix.industrial.warehouse" = { value = 25, min = 0, max = 1000, summary = "Weight of warehouses in an industrial district." }
+"life.gen.mix.industrial.workshop" = { value = 20, min = 0, max = 1000, summary = "Weight of workshops in an industrial district." }
+"life.gen.mix.industrial.mine" = { value = 5, min = 0, max = 1000, summary = "Weight of mines in an industrial district." }
+"life.gen.mix.industrial.office" = { value = 5, min = 0, max = 1000, summary = "Weight of offices in an industrial district." }
+"life.gen.mix.industrial.apartment" = { value = 5, min = 0, max = 1000, summary = "Weight of apartments in an industrial district." }
+"life.gen.mix.rural.farm" = { value = 45, min = 0, max = 1000, summary = "Weight of farms in a rural district." }
+"life.gen.mix.rural.forest" = { value = 25, min = 0, max = 1000, summary = "Weight of forests in a rural district." }
+"life.gen.mix.rural.home" = { value = 12, min = 0, max = 1000, summary = "Weight of homes in a rural district." }
+"life.gen.mix.rural.mine" = { value = 10, min = 0, max = 1000, summary = "Weight of mines in a rural district." }
+"life.gen.mix.rural.workshop" = { value = 3, min = 0, max = 1000, summary = "Weight of workshops in a rural district." }
+"life.gen.mix.mixed.home" = { value = 30, min = 0, max = 1000, summary = "Weight of homes in a mixed district." }
+"life.gen.mix.mixed.shop" = { value = 10, min = 0, max = 1000, summary = "Weight of shops in a mixed district." }
+"life.gen.mix.mixed.apartment" = { value = 8, min = 0, max = 1000, summary = "Weight of apartments in a mixed district." }
+"life.gen.mix.mixed.restaurant" = { value = 8, min = 0, max = 1000, summary = "Weight of restaurants in a mixed district." }
+"life.gen.mix.mixed.office" = { value = 8, min = 0, max = 1000, summary = "Weight of offices in a mixed district." }
+"life.gen.mix.mixed.farm" = { value = 8, min = 0, max = 1000, summary = "Weight of farms in a mixed district." }
+"life.gen.mix.mixed.workshop" = { value = 6, min = 0, max = 1000, summary = "Weight of workshops in a mixed district." }
+"life.gen.mix.mixed.warehouse" = { value = 4, min = 0, max = 1000, summary = "Weight of warehouses in a mixed district." }
+"life.gen.mix.mixed.park" = { value = 4, min = 0, max = 1000, summary = "Weight of parks in a mixed district." }
+
+# Start value of a site of each kind, in cents.
+"life.site.home.value" = { value = 4000000, min = 0, max = 100000000000, summary = "Start value of a home in cents." }
+"life.site.apartment.value" = { value = 9000000, min = 0, max = 100000000000, summary = "Start value of an apartment building in cents." }
+"life.site.shelter.value" = { value = 6000000, min = 0, max = 100000000000, summary = "Start value of a shelter in cents." }
+"life.site.shop.value" = { value = 5000000, min = 0, max = 100000000000, summary = "Start value of a shop in cents." }
+"life.site.restaurant.value" = { value = 5500000, min = 0, max = 100000000000, summary = "Start value of a restaurant in cents." }
+"life.site.office.value" = { value = 6000000, min = 0, max = 100000000000, summary = "Start value of an office in cents." }
+"life.site.factory.value" = { value = 20000000, min = 0, max = 100000000000, summary = "Start value of a factory in cents." }
+"life.site.workshop.value" = { value = 4500000, min = 0, max = 100000000000, summary = "Start value of a workshop in cents." }
+"life.site.farm.value" = { value = 8000000, min = 0, max = 100000000000, summary = "Start value of a farm in cents." }
+"life.site.mine.value" = { value = 12000000, min = 0, max = 100000000000, summary = "Start value of a mine in cents." }
+"life.site.forest.value" = { value = 6000000, min = 0, max = 100000000000, summary = "Start value of a forest in cents." }
+"life.site.warehouse.value" = { value = 7000000, min = 0, max = 100000000000, summary = "Start value of a warehouse in cents." }
+"life.site.bank.value" = { value = 15000000, min = 0, max = 100000000000, summary = "Start value of a bank in cents." }
+"life.site.exchange.value" = { value = 18000000, min = 0, max = 100000000000, summary = "Start value of an exchange in cents." }
+"life.site.city_hall.value" = { value = 25000000, min = 0, max = 100000000000, summary = "Start value of a city hall in cents." }
+"life.site.police_station.value" = { value = 9000000, min = 0, max = 100000000000, summary = "Start value of a police station in cents." }
+"life.site.courthouse.value" = { value = 16000000, min = 0, max = 100000000000, summary = "Start value of a courthouse in cents." }
+"life.site.jail.value" = { value = 14000000, min = 0, max = 100000000000, summary = "Start value of a jail in cents." }
+"life.site.hospital.value" = { value = 22000000, min = 0, max = 100000000000, summary = "Start value of a hospital in cents." }
+"life.site.school.value" = { value = 16000000, min = 0, max = 100000000000, summary = "Start value of a school in cents." }
+"life.site.station.value" = { value = 24000000, min = 0, max = 100000000000, summary = "Start value of a station in cents." }
+"life.site.park.value" = { value = 3000000, min = 0, max = 100000000000, summary = "Start value of a park in cents." }
+"life.site.newsroom.value" = { value = 7000000, min = 0, max = 100000000000, summary = "Start value of a newsroom in cents." }
+"life.site.depot.value" = { value = 15000000, min = 0, max = 100000000000, summary = "Start value of a depot in cents." }
+
+# Beds of the sites where residents sleep.
+"life.site.home.beds" = { value = 2, min = 1, max = 100, summary = "Beds of a home." }
+"life.site.apartment.beds" = { value = 8, min = 1, max = 1000, summary = "Beds of an apartment building." }
+"life.site.shelter.beds" = { value = 24, min = 1, max = 10000, summary = "Beds of a shelter." }
+
+# ---- Movement ---------------------------------------------------------------
+
+[params."life.walk_ticks_road"]
+value = 1
+min = 1
+max = 60
+summary = "Ticks that one step onto a road tile takes."
+
+[params."life.walk_ticks_pavement"]
+value = 1
+min = 1
+max = 60
+summary = "Ticks that one step onto a pavement tile takes."
+
+[params."life.walk_ticks_floor"]
+value = 1
+min = 1
+max = 60
+summary = "Ticks that one step onto a floor tile takes."
+
+[params."life.walk_ticks_grass"]
+value = 2
+min = 1
+max = 60
+summary = "Ticks that one step onto a grass tile takes."
+
+[params."life.walk_ticks_field"]
+value = 2
+min = 1
+max = 60
+summary = "Ticks that one step onto a field tile takes."
+
+[params."life.walk_ticks_trees"]
+value = 4
+min = 1
+max = 60
+summary = "Ticks that one step onto a tile with trees takes."
+
+[params."life.path_search_max"]
+value = 8192
+min = 16
+max = 1000000
+summary = "Greatest number of tiles that one path search looks at."
+
+[params."life.walk_timeout"]
+value = 2880
+min = 60
+max = 40320
+summary = "Ticks after which a walk to another district fails. The search for a site of another district counts too."
+
+[params."life.travel_fare"]
+value = 2500
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that one journey between two cities costs. The city of departure gets the fare."
+
+[params."life.travel_ticks"]
+value = 120
+min = 1
+max = 10080
+summary = "Ticks that one journey between two cities takes."
+
+# ---- Needs ------------------------------------------------------------------
+
+[params."life.food_decay_per_hour"]
+value = 14
+min = 0
+max = 200
+summary = "Food points that a resident loses each game hour."
+
+[params."life.energy_decay_per_hour"]
+value = 40
+min = 0
+max = 200
+summary = "Energy points that a resident who is awake loses each game hour."
+
+[params."life.mood_decay_per_hour"]
+value = 2
+min = 0
+max = 200
+summary = "Mood points that a resident loses each game hour."
+
+[params."life.need_low"]
+value = 250
+min = 1
+max = 1000
+summary = "Below this value, food or energy is low: mood falls and health does not come back."
+
+[params."life.low_need_mood_per_hour"]
+value = 10
+min = 0
+max = 200
+summary = "Mood points that a resident loses each game hour for each of food and energy that is low."
+
+[params."life.starve_health_per_hour"]
+value = 20
+min = 0
+max = 1000
+summary = "Health points that a resident with no food loses each game hour."
+
+[params."life.exhaust_health_per_hour"]
+value = 10
+min = 0
+max = 1000
+summary = "Health points that a resident with no energy loses each game hour."
+
+[params."life.health_regen_per_hour"]
+value = 5
+min = 0
+max = 1000
+summary = "Health points that come back each game hour while food and energy are not low."
+
+# ---- Food and medicine ------------------------------------------------------
+
+[params."life.eat_ticks"]
+value = 10
+min = 1
+max = 240
+summary = "Ticks that one meal takes."
+
+[params."life.meal_mood"]
+value = 5
+min = 0
+max = 1000
+summary = "Mood points that one meal gives."
+
+[params."life.use_item_ticks"]
+value = 5
+min = 1
+max = 240
+summary = "Ticks that the use of one item takes."
+
+# ---- Sleep and rest ---------------------------------------------------------
+
+[params."life.sleep_min_ticks"]
+value = 30
+min = 1
+max = 1440
+summary = "Shortest sleep in ticks."
+
+[params."life.sleep_max_ticks"]
+value = 720
+min = 1
+max = 1440
+summary = "Longest sleep in ticks."
+
+[params."life.sleep_energy_good_per_hour"]
+value = 125
+min = 0
+max = 1000
+summary = "Energy points for each hour of sleep in a home that the resident owns or rents."
+
+[params."life.sleep_energy_fair_per_hour"]
+value = 90
+min = 0
+max = 1000
+summary = "Energy points for each hour of sleep in a shelter."
+
+[params."life.sleep_energy_poor_per_hour"]
+value = 60
+min = 0
+max = 1000
+summary = "Energy points for each hour of sleep in any other place."
+
+[params."life.sleep_mood_good_per_hour"]
+value = 10
+min = -200
+max = 200
+summary = "Mood points for each hour of sleep in a home that the resident owns or rents."
+
+[params."life.sleep_mood_fair_per_hour"]
+value = 4
+min = -200
+max = 200
+summary = "Mood points for each hour of sleep in a shelter."
+
+[params."life.sleep_mood_poor_per_hour"]
+value = 0
+min = -200
+max = 200
+summary = "Mood points for each hour of sleep in any other place."
+
+[params."life.rest_max_ticks"]
+value = 240
+min = 1
+max = 1440
+summary = "Longest rest in ticks."
+
+[params."life.rest_energy_per_hour"]
+value = 20
+min = 0
+max = 1000
+summary = "Energy points for each hour of rest."
+
+[params."life.rest_mood_per_hour"]
+value = 20
+min = 0
+max = 1000
+summary = "Mood points for each hour of rest."
+
+[params."life.rest_mood_park_per_hour"]
+value = 40
+min = 0
+max = 1000
+summary = "Mood points for each hour of rest in a park."
+
+# ---- Hospital ---------------------------------------------------------------
+
+[params."life.heal_fee_per_point"]
+value = 20
+min = 0
+max = 100000
+policy = true
+summary = "Cents that a hospital charges for each health point."
+
+[params."life.heal_health_per_hour"]
+value = 150
+min = 1
+max = 1000
+summary = "Health points that a hospital gives back each game hour."
+
+# ---- Skills -----------------------------------------------------------------
+
+[params."life.train_min_ticks"]
+value = 60
+min = 1
+max = 1440
+summary = "Shortest lesson in ticks."
+
+[params."life.train_max_ticks"]
+value = 480
+min = 1
+max = 1440
+summary = "Longest lesson in ticks."
+
+[params."life.train_fee_per_hour"]
+value = 1000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that a school charges for each hour of a lesson."
+
+[params."life.train_xp_per_hour"]
+value = 60
+min = 0
+max = 100000
+summary = "Experience points for each hour of a lesson at full mood."
+
+[params."life.learn_min_pct"]
+value = 50
+min = 0
+max = 100
+summary = "Percent of the experience that a resident with no mood still learns."
+
+# ---- Age and death ----------------------------------------------------------
+
+[params."life.spawn_age"]
+value = 18
+min = 0
+max = 120
+summary = "Age in years of a new resident."
+
+[params."life.old_age_from"]
+value = 70
+min = 0
+max = 200
+summary = "Age in years from which a resident can die of old age."
+
+[params."life.old_age_death_bp"]
+value = 500
+min = 0
+max = 10000
+summary = "Chance to die of old age in one year at the first old age, in basis points."
+
+[params."life.old_age_death_rise_bp"]
+value = 300
+min = 0
+max = 10000
+summary = "Basis points that the chance to die of old age grows with each further year."
+
+[params."life.estate_wait_ticks"]
+value = 2
+min = 1
+max = 1440
+summary = "Ticks of the global realm that an estate with an heir waits for the holdings of the dead resident. An estate that is still empty after this time had nothing."
+
+# ---- Gifts ------------------------------------------------------------------
+
+[params."life.give_range"]
+value = 1
+min = 0
+max = 8
+summary = "Greatest distance in tiles between the two residents of a gift."
+
+[params."life.give_ticks"]
+value = 1
+min = 1
+max = 60
+summary = "Ticks that a gift takes."
+
+[params."life.carry_ticks"]
+value = 1
+min = 1
+max = 60
+summary = "Ticks that `drop` and `pick_up` take."
+
+# ---- Looking around ---------------------------------------------------------
+
+[params."life.asleep_sight_radius"]
+value = 1
+min = 0
+max = 64
+summary = "Distance in tiles at which a resident that sleeps can `inspect` residents and sites."
+
+[params."life.inspect_hurt_below"]
+value = 500
+min = 0
+max = 1000
+summary = "A resident with less health than this looks hurt to a resident that inspects it. Below `life.need_low` it looks critical."
+
+# ---- Residents without an owner online --------------------------------------
+
+[params."life.reflexes"]
+value = 1
+min = 0
+max = 1
+summary = "1: an idle resident eats carried food and dozes by itself when it must. 0: only routines and actions do that."
+
+[params."life.reflex_eat_below"]
+value = 300
+min = 0
+max = 1000
+summary = "An idle resident eats carried food by itself when its food is below this value."
+
+[params."life.reflex_doze_below"]
+value = 200
+min = 0
+max = 1000
+summary = "An idle resident dozes by itself when its energy is below this value."
+
+[params."life.reflex_doze_energy"]
+value = 60
+min = 0
+max = 1000
+summary = "Energy points that one hour of dozing gives."
+
+[params."life.routine_eat_below"]
+value = 400
+min = 0
+max = 1000
+summary = "The default routine `eat` starts when food is below this value."
+
+[params."life.routine_sleep_below"]
+value = 250
+min = 0
+max = 1000
+summary = "The default routine `sleep` starts when energy is below this value."
+
+# ---- Events -----------------------------------------------------------------
+#
+# The drama score of each event, 0 to 100. The director uses it to choose
+# what viewers see. See docs/design/game-design.md, section 6.
+
+[params."life.drama.died"]
+value = 80
+min = 0
+max = 100
+summary = "Drama of `life.resident_died`."
+
+[params."life.drama.estate"]
+value = 25
+min = 0
+max = 100
+summary = "Drama of `life.estate_settled`."
+
+[params."life.drama.meal"]
+value = 2
+min = 0
+max = 100
+summary = "Drama of `life.meal_eaten`."
+
+[params."life.drama.slept"]
+value = 1
+min = 0
+max = 100
+summary = "Drama of `life.slept`."
+
+[params."life.drama.item_used"]
+value = 4
+min = 0
+max = 100
+summary = "Drama of `life.item_used`."
+
+[params."life.drama.healed"]
+value = 15
+min = 0
+max = 100
+summary = "Drama of `life.patient_healed`."
+
+[params."life.drama.trained"]
+value = 8
+min = 0
+max = 100
+summary = "Drama of `life.skill_trained`."
+
+[params."life.drama.level_gained"]
+value = 20
+min = 0
+max = 100
+summary = "Drama of `life.level_gained`."
+
+[params."life.drama.gift"]
+value = 12
+min = 0
+max = 100
+summary = "Drama of `life.gift_given`."
+
+[params."life.drama.traveled"]
+value = 12
+min = 0
+max = 100
+summary = "Drama of `life.traveled`."
+
+[params."life.drama.will"]
+value = 15
+min = 0
+max = 100
+summary = "Drama of `life.will_written`."
+
+[params."life.drama.birthday"]
+value = 5
+min = 0
+max = 100
+summary = "Drama of `life.birthday_reached`."
