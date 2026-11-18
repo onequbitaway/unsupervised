@@ -1,1 +1,268 @@
-# Balance numbers of the crime module. See docs/design/architecture.md, section 7.
+# Balance numbers of the crime module. See docs/design/architecture.md, section 7,
+# and docs/design/modules/crime.md for the formulas that use them.
+#
+# Money is in cents. One tick is one game minute. A chance is in basis points
+# (1/10,000). Health goes from 0 to 1000. A parameter with `policy = true` can
+# be changed by a law, for the nation or for one city.
+
+[params]
+
+# ---- All crimes ----------------------------------------------------------------
+
+"crime.chance_min_bp" = { value = 500, min = 0, max = 10000, summary = "Least chance that a crime or an investigation works." }
+"crime.chance_max_bp" = { value = 9500, min = 0, max = 10000, summary = "Greatest chance that a crime or an investigation works." }
+"crime.night_from_hour" = { value = 22, min = 0, max = 23, summary = "First hour of the night." }
+"crime.night_to_hour" = { value = 6, min = 0, max = 23, summary = "First hour of the day." }
+"crime.night_bonus_bp" = { value = 1500, min = 0, max = 10000, summary = "Chance that a pickpocket, a burglar or a vandal gets at night." }
+"crime.stealth_level_bp" = { value = 600, min = 0, max = 10000, summary = "Chance that each stealth level gives to a pickpocket, a burglar or a vandal." }
+"crime.combat_level_bp" = { value = 800, min = 0, max = 10000, summary = "Chance that each combat level above the victim gives to an attacker." }
+"crime.force_asleep_bonus_bp" = { value = 2000, min = 0, max = 10000, summary = "Chance that an attacker gets against a victim that sleeps." }
+"crime.xp_success" = { value = 12, min = 0, max = 1000, summary = "Experience for a crime that worked." }
+"crime.xp_fail" = { value = 4, min = 0, max = 1000, summary = "Experience for a crime that failed." }
+
+# ---- pickpocket ----------------------------------------------------------------
+
+"crime.pickpocket_ticks" = { value = 3, min = 1, max = 240, summary = "Ticks that `pickpocket` takes." }
+"crime.pickpocket_range" = { value = 1, min = 0, max = 8, summary = "Greatest distance in tiles between a pickpocket and its victim." }
+"crime.pickpocket_base_bp" = { value = 4500, min = 0, max = 10000, summary = "Chance that `pickpocket` works before skills, night and sleep." }
+"crime.pickpocket_asleep_bonus_bp" = { value = 2500, min = 0, max = 10000, summary = "Chance that a pickpocket gets when the victim sleeps." }
+"crime.pickpocket_alert_bp" = { value = 400, min = 0, max = 10000, summary = "Chance that each investigation level of the victim takes from a pickpocket." }
+"crime.pickpocket_pct" = { value = 25, min = 0, max = 100, summary = "Percent of the cash of the victim that a pickpocket takes." }
+"crime.pickpocket_max" = { value = 5000, min = 0, max = 100000000, summary = "Greatest cash in cents that one `pickpocket` takes." }
+
+# ---- burgle --------------------------------------------------------------------
+
+"crime.burgle_ticks" = { value = 20, min = 1, max = 480, summary = "Ticks that `burgle` takes." }
+"crime.burgle_base_bp" = { value = 3500, min = 0, max = 10000, summary = "Chance that `burgle` works before skills, night, occupants and tools." }
+"crime.burgle_empty_bonus_bp" = { value = 2000, min = 0, max = 10000, summary = "Chance that a burglar gets when nobody else in the site is awake." }
+"crime.burgle_occupant_malus_bp" = { value = 1500, min = 0, max = 10000, summary = "Chance that each other resident in the site that is awake takes from a burglar." }
+"crime.burgle_tool_bonus_bp" = { value = 1500, min = 0, max = 10000, summary = "Chance that a burglar gets when it carries an item with the tag `tool`." }
+"crime.burgle_public_malus_bp" = { value = 2000, min = 0, max = 10000, summary = "Chance that a public building takes from a burglar." }
+"crime.burgle_till_pct" = { value = 50, min = 0, max = 100, summary = "Percent of the till that a burglar takes." }
+"crime.burgle_units_max" = { value = 10, min = 0, max = 10000, summary = "Greatest number of units of goods that one `burgle` takes." }
+
+# ---- rob -----------------------------------------------------------------------
+
+"crime.rob_ticks" = { value = 5, min = 1, max = 240, summary = "Ticks that `rob` takes." }
+"crime.rob_range" = { value = 1, min = 0, max = 8, summary = "Greatest distance in tiles between a robber and its victim." }
+"crime.rob_base_bp" = { value = 5000, min = 0, max = 10000, summary = "Chance that `rob` works when both residents have the same combat level." }
+"crime.rob_cash_pct" = { value = 60, min = 0, max = 100, summary = "Percent of the cash of the victim that a robber takes." }
+"crime.rob_units_max" = { value = 5, min = 0, max = 10000, summary = "Greatest number of units of goods that one `rob` takes." }
+"crime.rob_injury" = { value = 100, min = 0, max = 1000, summary = "Health that the victim of a robbery loses." }
+"crime.rob_fail_injury" = { value = 60, min = 0, max = 1000, summary = "Health that a robber loses when the robbery fails. It never kills." }
+
+# ---- assault -------------------------------------------------------------------
+
+"crime.assault_ticks" = { value = 3, min = 1, max = 240, summary = "Ticks that `assault` takes." }
+"crime.assault_range" = { value = 1, min = 0, max = 8, summary = "Greatest distance in tiles between an attacker and its victim." }
+"crime.assault_base_bp" = { value = 6000, min = 0, max = 10000, summary = "Chance that `assault` works when both residents have the same combat level." }
+"crime.assault_damage" = { value = 150, min = 0, max = 1000, summary = "Health that the victim of an assault loses, before the combat level of the attacker." }
+"crime.assault_level_damage" = { value = 25, min = 0, max = 1000, summary = "Health that each combat level of the attacker adds to an assault." }
+"crime.assault_fail_injury" = { value = 60, min = 0, max = 1000, summary = "Health that an attacker loses when the assault fails. It never kills." }
+
+# ---- vandalize and repair ------------------------------------------------------
+
+"crime.vandalize_ticks" = { value = 10, min = 1, max = 480, summary = "Ticks that `vandalize` takes." }
+"crime.vandalize_base_bp" = { value = 6000, min = 0, max = 10000, summary = "Chance that `vandalize` works before skills and night." }
+"crime.vandalize_stock_pct" = { value = 25, min = 0, max = 100, summary = "Percent of each good in the stock that one `vandalize` destroys, rounded up." }
+"crime.vandalize_value_bp" = { value = 50, min = 0, max = 10000, summary = "Share of the value of a site without damage that one `vandalize` takes." }
+"crime.vandalize_damage_max_bp" = { value = 1000, min = 0, max = 10000, summary = "Greatest share of the value of a site without damage that vandalism can take in total." }
+"crime.repair_ticks" = { value = 30, min = 1, max = 480, summary = "Ticks that `repair` takes." }
+"crime.repair_cost_bp" = { value = 10000, min = 0, max = 100000, summary = "Cost of a repair as a share of the value that it gives back." }
+"crime.repair_xp" = { value = 6, min = 0, max = 1000, summary = "Experience in labor for one `repair`." }
+
+# ---- fence ---------------------------------------------------------------------
+
+"crime.fence_ticks" = { value = 10, min = 1, max = 480, summary = "Ticks that `fence` takes." }
+"crime.fence_bp" = { value = 6000, min = 0, max = 10000, summary = "Share of the depot price that a fence pays for one stolen unit. Keep it at or below 10000." }
+"crime.fence_base_bp" = { value = 0, min = 0, max = 10000, summary = "For a good that the depot does not trade: the share of its normal price that stands in for the depot price. 0: no fence buys such a good." }
+
+# ---- bribe ---------------------------------------------------------------------
+
+"crime.bribe_ticks" = { value = 1, min = 1, max = 60, summary = "Ticks that `bribe` takes." }
+"crime.bribe_range" = { value = 1, min = 0, max = 8, summary = "Greatest distance in tiles between the two residents of a bribe." }
+"crime.bribe_note_max" = { value = 200, min = 0, max = 2000, summary = "Greatest length of the note of a bribe in bytes." }
+
+# ---- Hot value -----------------------------------------------------------------
+
+"crime.hot_ticks" = { value = 4320, min = 1, max = 1000000, summary = "Ticks after which stolen value that a resident still holds is no longer hot." }
+"crime.hot_lots_max" = { value = 16, min = 1, max = 256, summary = "Greatest number of lots of hot value in the record of one resident." }
+
+# ---- Witnesses -----------------------------------------------------------------
+
+"crime.witness_radius" = { value = 8, min = 0, max = 64, summary = "Distance in tiles at which a resident that is awake notices a crime." }
+"crime.witness_max" = { value = 8, min = 1, max = 64, summary = "Greatest number of residents that notice one crime." }
+"crime.identify_base_bp" = { value = 6000, min = 0, max = 10000, summary = "Chance that a witness recognizes the perpetrator, before the corrections." }
+"crime.identify_stealth_bp" = { value = 700, min = 0, max = 10000, summary = "Chance that each stealth level of the perpetrator takes from a witness." }
+"crime.identify_night_malus_bp" = { value = 2000, min = 0, max = 10000, summary = "Chance that the night takes from a witness." }
+"crime.identify_distance_bp" = { value = 300, min = 0, max = 10000, summary = "Chance that each tile of distance takes from a witness." }
+"crime.identify_fail_bonus_bp" = { value = 2500, min = 0, max = 10000, summary = "Chance that a witness gets when the crime failed." }
+"crime.identify_force_bonus_bp" = { value = 3000, min = 0, max = 10000, summary = "Chance that the victim of a robbery or an assault gets to recognize the attacker." }
+"crime.identify_asleep_malus_bp" = { value = 4000, min = 0, max = 10000, summary = "Chance that sleep takes from a victim." }
+"crime.known_max" = { value = 8, min = 1, max = 64, summary = "Greatest number of cases that one resident remembers as a victim or a witness." }
+
+# ---- Evidence ------------------------------------------------------------------
+
+"crime.evidence_victim" = { value = 40, min = 0, max = 1000, summary = "Evidence points for the report of a victim, or of the receiver of a bribe, that recognized the perpetrator." }
+"crime.evidence_witness" = { value = 25, min = 0, max = 1000, summary = "Evidence points for the report of a witness that recognized the perpetrator." }
+"crime.evidence_investigate" = { value = 30, min = 0, max = 1000, summary = "Evidence points that `investigate` finds in a new trace. An old trace gives less." }
+"crime.evidence_investigate_max" = { value = 60, min = 0, max = 1000, summary = "Greatest evidence points that investigations give in one case." }
+"crime.evidence_search" = { value = 50, min = 0, max = 1000, summary = "Evidence points when a search finds the loot of a case." }
+"crime.evidence_caught" = { value = 100, min = 0, max = 1000, summary = "Evidence points when an officer saw the crime." }
+"crime.evidence_watch" = { value = 60, min = 0, max = 1000, policy = true, summary = "Evidence points when the city watch saw the crime." }
+"crime.warrant_evidence" = { value = 40, min = 1, max = 1000, policy = true, summary = "Evidence points at which a case gets a warrant, and at which the engine charges a suspect in custody." }
+"crime.charge_evidence" = { value = 20, min = 1, max = 1000, policy = true, summary = "Evidence points that an officer needs to charge a suspect in custody." }
+"crime.convict_evidence" = { value = 60, min = 1, max = 1000, policy = true, summary = "Evidence points at which the engine convicts at the deadline of a trial." }
+"crime.trace_ticks" = { value = 2880, min = 1, max = 1000000, summary = "Ticks after which the trace of a crime is gone. It gets weaker in a straight line." }
+"crime.traces_max" = { value = 256, min = 1, max = 100000, summary = "Greatest number of traces that one zone keeps." }
+
+# ---- Police --------------------------------------------------------------------
+
+"crime.patrol_ticks" = { value = 60, min = 1, max = 1440, summary = "Length of a patrol without the argument `ticks`." }
+"crime.patrol_max_ticks" = { value = 240, min = 1, max = 1440, summary = "Greatest length of one patrol." }
+"crime.patrol_radius" = { value = 10, min = 0, max = 64, summary = "Distance in tiles at which an officer on patrol sees a crime and a wanted resident." }
+"crime.patrol_detect_bp" = { value = 8500, min = 0, max = 10000, summary = "Chance that an officer on patrol recognizes the perpetrator of a crime near it." }
+"crime.patrol_stealth_bp" = { value = 400, min = 0, max = 10000, summary = "Chance that each stealth level of the perpetrator takes from an officer on patrol." }
+"crime.patrol_xp_per_hour" = { value = 6, min = 0, max = 1000, summary = "Experience in investigation for each hour of patrol." }
+"crime.patrol_list_max" = { value = 5, min = 0, max = 64, summary = "Greatest number of wanted residents in the result of a patrol." }
+"crime.investigate_ticks" = { value = 30, min = 1, max = 480, summary = "Ticks that `investigate` takes." }
+"crime.investigate_radius" = { value = 6, min = 0, max = 64, summary = "Distance in tiles at which an officer can read a trace." }
+"crime.investigate_base_bp" = { value = 5000, min = 0, max = 10000, summary = "Chance that `investigate` reads a trace, before the skills." }
+"crime.investigate_level_bp" = { value = 700, min = 0, max = 10000, summary = "Chance that each investigation level gives to the officer." }
+"crime.investigate_stealth_bp" = { value = 500, min = 0, max = 10000, summary = "Chance that each stealth level of the perpetrator takes from the officer." }
+"crime.investigate_xp" = { value = 10, min = 0, max = 1000, summary = "Experience in investigation for a trace that was read. Half of it for a try that failed." }
+"crime.search_ticks" = { value = 5, min = 1, max = 240, summary = "Ticks that `search` takes." }
+"crime.search_range" = { value = 1, min = 0, max = 8, summary = "Greatest distance in tiles between an officer and the resident that it searches." }
+"crime.search_xp" = { value = 4, min = 0, max = 1000, summary = "Experience in investigation for one `search`." }
+"crime.arrest_ticks" = { value = 5, min = 1, max = 240, summary = "Ticks that `arrest` and `release` take." }
+"crime.arrest_range" = { value = 1, min = 0, max = 8, summary = "Greatest distance in tiles between an officer and the resident that it arrests or releases." }
+"crime.arrest_xp" = { value = 8, min = 0, max = 1000, summary = "Experience in law for one `arrest`." }
+"crime.caught_ticks" = { value = 120, min = 1, max = 100000, summary = "Ticks during which an officer that saw a crime, or found its loot, can arrest without a warrant." }
+"crime.hold_ticks" = { value = 720, min = 1, max = 100000, policy = true, summary = "Ticks that an officer can hold a suspect without a charge. Then the engine charges or frees the suspect." }
+"crime.contraband_illegal" = { value = 1, min = 0, max = 1, policy = true, summary = "1: it is a crime to carry goods with the tag `contraband`. 0: it is legal." }
+
+# ---- Courts --------------------------------------------------------------------
+
+"crime.trial_ticks" = { value = 720, min = 1, max = 100000, policy = true, summary = "Ticks from a charge to the deadline at which the engine decides the trial." }
+"crime.trial_bench_ticks" = { value = 240, min = 0, max = 100000, policy = true, summary = "Ticks that the engine waits for a judge of the government before it calls a jury." }
+"crime.jury_size" = { value = 5, min = 0, max = 15, policy = true, summary = "Number of jurors of a trial." }
+"crime.jury_quorum" = { value = 3, min = 1, max = 15, policy = true, summary = "Number of votes that a jury needs to decide. With fewer votes at the deadline, the evidence decides." }
+"crime.jury_draws" = { value = 64, min = 1, max = 4096, summary = "Greatest number of draws when the engine looks for jurors." }
+"crime.fine_due_ticks" = { value = 1440, min = 1, max = 1000000, policy = true, summary = "Ticks that a convict has to pay a fine and a restitution." }
+"crime.fine_cents_per_jail_tick" = { value = 10, min = 1, max = 1000000, policy = true, summary = "Cents of a debt that one tick in jail replaces when the debt is not paid in time." }
+"crime.fine_jail_max_ticks" = { value = 2880, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for one debt that is not paid in time." }
+"crime.conviction_standing" = { value = 60, min = 0, max = 2000, summary = "Standing that a conviction takes." }
+"crime.court_xp" = { value = 5, min = 0, max = 1000, summary = "Experience in law for a charge, a ruling or a vote in a jury." }
+
+# ---- Jail ----------------------------------------------------------------------
+
+"crime.jail_meal_below" = { value = 500, min = 0, max = 1000, summary = "An inmate with less food than this gets a meal in the hourly round of the jail." }
+"crime.jail_meal_food" = { value = 300, min = 0, max = 1000, summary = "Food points of a jail meal." }
+"crime.jail_rest_below" = { value = 250, min = 0, max = 1000, summary = "An inmate with less energy than this gets rest in the hourly round of the jail." }
+"crime.jail_rest_energy" = { value = 150, min = 0, max = 1000, summary = "Energy points of the rest in jail." }
+
+# ---- The city watch ------------------------------------------------------------
+
+"crime.watch_detect_bp" = { value = 1000, min = 0, max = 10000, policy = true, summary = "Chance that the city watch sees a crime that no officer saw." }
+"crime.watch_arrest_bp" = { value = 2500, min = 0, max = 10000, policy = true, summary = "Chance in each game hour that the city watch arrests a wanted resident that is in a public building." }
+"crime.watch_contraband_bp" = { value = 200, min = 0, max = 10000, policy = true, summary = "Chance in each game hour that the city watch finds the contraband of a resident that is in a public building." }
+
+# ---- Cases ---------------------------------------------------------------------
+
+"crime.case_ttl_ticks" = { value = 20160, min = 1, max = 10000000, policy = true, summary = "Ticks after which a case without a charge goes cold and its warrant ends." }
+"crime.case_keep_ticks" = { value = 2880, min = 1, max = 10000000, summary = "Ticks that a closed case stays in the registry." }
+"crime.case_list_max" = { value = 10, min = 1, max = 100, summary = "Greatest number of cases in the answer of `case_list`." }
+"crime.heist_value" = { value = 50000, min = 0, max = 100000000000, summary = "A crime with a loss of this many cents or more is a heist for viewers." }
+
+# ---- Bounties ------------------------------------------------------------------
+
+"crime.bounty_min" = { value = 500, min = 1, max = 100000000, summary = "Least amount of a bounty in cents." }
+"crime.bounty_ticks" = { value = 4320, min = 1, max = 1000000, summary = "Ticks that a bounty stays open without the argument `ticks`." }
+"crime.bounty_max_ticks" = { value = 20160, min = 1, max = 1000000, summary = "Greatest number of ticks that a bounty stays open." }
+"crime.bounties_open_max" = { value = 3, min = 0, max = 100, summary = "Greatest number of open bounties of one resident." }
+
+# ---- Observation ---------------------------------------------------------------
+
+"crime.observe_list_max" = { value = 3, min = 1, max = 64, summary = "Greatest number of entries in each list of the `law` section with brief detail." }
+
+# ---- Sentences -----------------------------------------------------------------
+#
+# For each kind of crime: the fine and the jail time that the engine gives,
+# the limits for a judge, the notoriety of a conviction and the drama score
+# of the event of the crime.
+
+"crime.theft.fine" = { value = 3000, min = 0, max = 100000000, policy = true, summary = "Fine for a theft that the engine gives." }
+"crime.theft.jail_ticks" = { value = 240, min = 0, max = 1000000, policy = true, summary = "Jail time for a theft that the engine gives." }
+"crime.theft.fine_max" = { value = 12000, min = 0, max = 100000000, policy = true, summary = "Greatest fine for a theft." }
+"crime.theft.jail_max_ticks" = { value = 1440, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for a theft." }
+"crime.theft.notoriety" = { value = 20, min = 0, max = 10000, summary = "Notoriety of a conviction for theft." }
+"crime.theft.drama" = { value = 45, min = 0, max = 100, summary = "Drama score of a theft." }
+
+"crime.burglary.fine" = { value = 8000, min = 0, max = 100000000, policy = true, summary = "Fine for a burglary that the engine gives." }
+"crime.burglary.jail_ticks" = { value = 720, min = 0, max = 1000000, policy = true, summary = "Jail time for a burglary that the engine gives." }
+"crime.burglary.fine_max" = { value = 30000, min = 0, max = 100000000, policy = true, summary = "Greatest fine for a burglary." }
+"crime.burglary.jail_max_ticks" = { value = 4320, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for a burglary." }
+"crime.burglary.notoriety" = { value = 40, min = 0, max = 10000, summary = "Notoriety of a conviction for burglary." }
+"crime.burglary.drama" = { value = 55, min = 0, max = 100, summary = "Drama score of a burglary." }
+
+"crime.robbery.fine" = { value = 10000, min = 0, max = 100000000, policy = true, summary = "Fine for a robbery that the engine gives." }
+"crime.robbery.jail_ticks" = { value = 1440, min = 0, max = 1000000, policy = true, summary = "Jail time for a robbery that the engine gives." }
+"crime.robbery.fine_max" = { value = 40000, min = 0, max = 100000000, policy = true, summary = "Greatest fine for a robbery." }
+"crime.robbery.jail_max_ticks" = { value = 7200, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for a robbery." }
+"crime.robbery.notoriety" = { value = 60, min = 0, max = 10000, summary = "Notoriety of a conviction for robbery." }
+"crime.robbery.drama" = { value = 60, min = 0, max = 100, summary = "Drama score of a robbery." }
+
+"crime.assault.fine" = { value = 6000, min = 0, max = 100000000, policy = true, summary = "Fine for an assault that the engine gives." }
+"crime.assault.jail_ticks" = { value = 720, min = 0, max = 1000000, policy = true, summary = "Jail time for an assault that the engine gives." }
+"crime.assault.fine_max" = { value = 25000, min = 0, max = 100000000, policy = true, summary = "Greatest fine for an assault." }
+"crime.assault.jail_max_ticks" = { value = 4320, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for an assault." }
+"crime.assault.notoriety" = { value = 50, min = 0, max = 10000, summary = "Notoriety of a conviction for assault." }
+"crime.assault.drama" = { value = 60, min = 0, max = 100, summary = "Drama score of an assault." }
+
+"crime.homicide.fine" = { value = 50000, min = 0, max = 100000000, policy = true, summary = "Fine for a homicide that the engine gives." }
+"crime.homicide.jail_ticks" = { value = 14400, min = 0, max = 1000000, policy = true, summary = "Jail time for a homicide that the engine gives." }
+"crime.homicide.fine_max" = { value = 200000, min = 0, max = 100000000, policy = true, summary = "Greatest fine for a homicide." }
+"crime.homicide.jail_max_ticks" = { value = 40320, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for a homicide." }
+"crime.homicide.notoriety" = { value = 200, min = 0, max = 10000, summary = "Notoriety of a conviction for homicide." }
+"crime.homicide.drama" = { value = 85, min = 0, max = 100, summary = "Drama score of an assault that killed." }
+
+"crime.vandalism.fine" = { value = 4000, min = 0, max = 100000000, policy = true, summary = "Fine for vandalism that the engine gives." }
+"crime.vandalism.jail_ticks" = { value = 240, min = 0, max = 1000000, policy = true, summary = "Jail time for vandalism that the engine gives." }
+"crime.vandalism.fine_max" = { value = 16000, min = 0, max = 100000000, policy = true, summary = "Greatest fine for vandalism." }
+"crime.vandalism.jail_max_ticks" = { value = 1440, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for vandalism." }
+"crime.vandalism.notoriety" = { value = 15, min = 0, max = 10000, summary = "Notoriety of a conviction for vandalism." }
+"crime.vandalism.drama" = { value = 42, min = 0, max = 100, summary = "Drama score of an act of vandalism." }
+
+"crime.bribery.fine" = { value = 5000, min = 0, max = 100000000, policy = true, summary = "Fine for a bribe that the engine gives." }
+"crime.bribery.jail_ticks" = { value = 480, min = 0, max = 1000000, policy = true, summary = "Jail time for a bribe that the engine gives." }
+"crime.bribery.fine_max" = { value = 50000, min = 0, max = 100000000, policy = true, summary = "Greatest fine for a bribe." }
+"crime.bribery.jail_max_ticks" = { value = 2880, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for a bribe." }
+"crime.bribery.notoriety" = { value = 30, min = 0, max = 10000, summary = "Notoriety of a conviction for bribery." }
+"crime.bribery.drama" = { value = 50, min = 0, max = 100, summary = "Drama score of a bribe. A bribe has no event of its own; the number is here for the same shape as the other kinds." }
+
+"crime.smuggling.fine" = { value = 4000, min = 0, max = 100000000, policy = true, summary = "Fine for carried contraband that the engine gives." }
+"crime.smuggling.jail_ticks" = { value = 240, min = 0, max = 1000000, policy = true, summary = "Jail time for carried contraband that the engine gives." }
+"crime.smuggling.fine_max" = { value = 20000, min = 0, max = 100000000, policy = true, summary = "Greatest fine for carried contraband." }
+"crime.smuggling.jail_max_ticks" = { value = 1440, min = 0, max = 1000000, policy = true, summary = "Greatest jail time for carried contraband." }
+"crime.smuggling.notoriety" = { value = 15, min = 0, max = 10000, summary = "Notoriety of a conviction for smuggling." }
+"crime.smuggling.drama" = { value = 45, min = 0, max = 100, summary = "Drama score of a seizure of contraband." }
+
+# ---- Drama scores of the other events -------------------------------------------
+
+"crime.drama.attempt" = { value = 30, min = 0, max = 100, summary = "Drama score of a crime that failed." }
+"crime.drama.heist" = { value = 75, min = 0, max = 100, summary = "Drama score of a crime with a loss of `crime.heist_value` or more." }
+"crime.drama.warrant_issued" = { value = 40, min = 0, max = 100, summary = "Drama score of `crime.warrant_issued`." }
+"crime.drama.search_made" = { value = 20, min = 0, max = 100, summary = "Drama score of `crime.search_made`." }
+"crime.drama.arrest_made" = { value = 55, min = 0, max = 100, summary = "Drama score of `crime.arrest_made`." }
+"crime.drama.suspect_charged" = { value = 45, min = 0, max = 100, summary = "Drama score of `crime.suspect_charged`." }
+"crime.drama.suspect_released" = { value = 30, min = 0, max = 100, summary = "Drama score of `crime.suspect_released`." }
+"crime.drama.jury_summoned" = { value = 35, min = 0, max = 100, summary = "Drama score of `crime.jury_summoned`." }
+"crime.drama.verdict_given" = { value = 65, min = 0, max = 100, summary = "Drama score of `crime.verdict_given`." }
+"crime.drama.sentence_served" = { value = 30, min = 0, max = 100, summary = "Drama score of `crime.sentence_served`." }
+"crime.drama.fine_paid" = { value = 10, min = 0, max = 100, summary = "Drama score of `crime.fine_paid`." }
+"crime.drama.fine_defaulted" = { value = 40, min = 0, max = 100, summary = "Drama score of `crime.fine_defaulted`." }
+"crime.drama.goods_fenced" = { value = 20, min = 0, max = 100, summary = "Drama score of `crime.goods_fenced`." }
+"crime.drama.site_repaired" = { value = 10, min = 0, max = 100, summary = "Drama score of `crime.site_repaired`." }
+"crime.drama.bounty_posted" = { value = 40, min = 0, max = 100, summary = "Drama score of `crime.bounty_posted`." }
+"crime.drama.bounty_paid" = { value = 50, min = 0, max = 100, summary = "Drama score of `crime.bounty_paid`." }
+"crime.drama.bounty_expired" = { value = 10, min = 0, max = 100, summary = "Drama score of `crime.bounty_expired`." }
