@@ -1,6 +1,6 @@
 [package]
 name = "unsup-loadtest"
-description = "Bot swarm and benchmarks."
+description = "Load generation and benchmarks: bench, soak and swarm."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,10 +11,25 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+futures.workspace = true
+hdrhistogram.workspace = true
+rayon.workspace = true
+reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+toml.workspace = true
 unsup-kernel.workspace = true
 unsup-protocol.workspace = true
+unsup-runtime.workspace = true
 unsup-server.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+unsup-gateway.workspace = true
+unsup-spectator.workspace = true
+unsup-store.workspace = true
 
 [lints]
 workspace = true

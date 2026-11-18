@@ -1,0 +1,213 @@
+# Daily life: what a newcomer can do in the full game.
+#
+# A new resident has full needs, a bed in a shelter, no cash and no goods.
+# It can earn a wage with public works at the city hall or the depot. It
+# can gather goods on the land of the city. The depot sells food and buys
+# goods. The resident eats, sleeps in a shelter, talks, and puts money in
+# the bank.
+#
+# An action with `at` works only at a site of one of the kinds. A resident
+# that is somewhere else walks to one of the nearest such sites first: it
+# sends a plan of `move_to { site }` and the action.
+#
+# The numbers in `when` follow the data files of the game (prices of the
+# depot, the wage, the needs). When the game changes them, the world refuses
+# more actions. The run then shows the refusals by error code.
+#
+# Not in this profile: jobs of other residents, property, business, loans,
+# shares, the exchange, organizations, contracts, marriage and households,
+# `travel`, `heal`, `use_item` and `opine`. A newcomer cannot use most of
+# them, and the others need more than one argument that depends on the
+# state of the resident.
+
+name = "daily_life"
+summary = "Newcomers walk, do public works, gather, trade at the depot, eat, sleep, talk and use the bank."
+
+observe_share = 0.5
+wait_share = 0.9
+
+[think]
+kind = "exponential"
+mean = 6.0
+max = 60
+
+# --- Walk, wait, rest ---------------------------------------------------------
+
+[[action]]
+verb = "move_to"
+weight = 10
+args = { gen = "near_tile", radius = 16 }
+
+[[action]]
+verb = "move_to"
+weight = 3
+args = { site = { gen = "nearby_site", radius = 12 } }
+
+[[action]]
+verb = "wait"
+weight = 2
+args = { ticks = { gen = "int", min = 1, max = 10 } }
+
+[[action]]
+verb = "rest"
+weight = 2
+at = ["park"]
+args = { ticks = { gen = "int", min = 10, max = 40 } }
+
+# --- Earn ---------------------------------------------------------------------
+
+# One shift of public works. The wage comes from the faucet
+# `gov.public_works`. Each city pays a fixed sum each day; after that the
+# world refuses the shift with `insufficient`.
+[[action]]
+verb = "work"
+weight = 12
+at = ["city_hall", "depot"]
+when = { attr_above = { "need.energy" = 100 } }
+
+[[action]]
+verb = "gather"
+weight = 8
+at = ["farm"]
+when = { attr_above = { "need.energy" = 100 } }
+args = { item = { gen = "choice", of = ["vegetables", "grain", "cotton"] }, minutes = { gen = "int", min = 30, max = 90 } }
+
+[[action]]
+verb = "gather"
+weight = 2
+at = ["forest"]
+when = { attr_above = { "need.energy" = 100 } }
+args = { item = { gen = "choice", of = ["wood", "herbs"] }, minutes = { gen = "int", min = 30, max = 60 } }
+
+[[action]]
+verb = "gather"
+weight = 1
+at = ["mine"]
+when = { attr_above = { "need.energy" = 100 } }
+args = { minutes = { gen = "int", min = 30, max = 60 } }
+
+[[action]]
+verb = "list_jobs"
+weight = 2
+
+# --- Trade with the depot -----------------------------------------------------
+
+# The depot pays the floor price. The money comes from the faucet
+# `export.sale`.
+[[action]]
+verb = "sell"
+weight = 8
+at = ["depot"]
+when = { carries_tag = "raw" }
+args = { gen = "carried", tag = "raw" }
+
+# The depot takes the ceiling price. The money goes to the sink
+# `import.purchase`.
+[[action]]
+verb = "buy"
+weight = 6
+at = ["depot"]
+when = { cash_min = 1500, lacks_tag = "food" }
+args = { item = "vegetables", qty = { gen = "int", min = 1, max = 2 } }
+
+[[action]]
+verb = "buy"
+weight = 2
+at = ["depot"]
+when = { cash_min = 2000, lacks_tag = "food" }
+args = { item = "bread", qty = 1 }
+
+# --- Needs --------------------------------------------------------------------
+
+[[action]]
+verb = "eat"
+weight = 10
+when = { carries_tag = "food", attr_below = { "need.food" = 995 } }
+
+[[action]]
+verb = "sleep"
+weight = 4
+at = ["shelter"]
+when = { attr_below = { "need.energy" = 850 } }
+
+# --- Talk and look ------------------------------------------------------------
+
+[[action]]
+verb = "say"
+weight = 8
+args = { text = { gen = "text", words = 6 } }
+
+[[action]]
+verb = "message"
+weight = 3
+args = { to = { gen = "nearby_resident", radius = 12 }, text = { gen = "text", words = 8 } }
+
+[[action]]
+verb = "post"
+weight = 1
+args = { text = { gen = "text", words = 12 } }
+
+[[action]]
+verb = "relate"
+weight = 1
+args = { resident = { gen = "nearby_resident", radius = 12 }, label = { gen = "choice", of = ["friend", "rival", "ally", "enemy"] } }
+
+[[action]]
+verb = "inspect"
+weight = 2
+args = { resident = { gen = "nearby_resident", radius = 8 } }
+
+[[action]]
+verb = "inspect"
+weight = 1
+args = { site = { gen = "nearby_site", radius = 12 } }
+
+[[action]]
+verb = "inspect"
+weight = 1
+
+[[action]]
+verb = "list_property"
+weight = 1
+args = { offer = "rent", limit = 5 }
+
+# --- Money --------------------------------------------------------------------
+
+[[action]]
+verb = "open_account"
+weight = 4
+at = ["bank"]
+once = true
+when = { cash_min = 600 }
+
+[[action]]
+verb = "deposit"
+weight = 4
+at = ["bank"]
+when = { did = "open_account", cash_min = 500 }
+args = { amount = { gen = "cash", percent = 50 } }
+
+[[action]]
+verb = "withdraw"
+weight = 1
+at = ["bank"]
+when = { did = "deposit" }
+args = { amount = { gen = "int", min = 100, max = 300 } }
+
+[[action]]
+verb = "give"
+weight = 1
+when = { cash_min = 200 }
+args = { to = { gen = "nearby_resident", radius = 1 }, money = { gen = "cash", percent = 10 } }
+
+[[action]]
+verb = "train"
+weight = 1
+at = ["school"]
+when = { cash_min = 1000 }
+args = { skill = { gen = "choice", of = ["labor", "farming", "trading"] } }
+
+[[action]]
+verb = "write_will"
+weight = 1
+args = { heir = { gen = "nearby_resident", radius = 12 } }

@@ -1,0 +1,23 @@
+# Rush: a stress load. Every resident takes short walks with almost no think
+# time. Use it to find the greatest rate of actions.
+
+name = "rush"
+summary = "Residents take short walks with almost no think time."
+
+observe_share = 0.1
+wait_share = 1.0
+
+[think]
+kind = "uniform"
+min = 0
+max = 2
+
+[[action]]
+verb = "move_to"
+weight = 19
+args = { gen = "near_tile", radius = 3 }
+
+[[action]]
+verb = "wait"
+weight = 1
+args = { ticks = { gen = "int", min = 1, max = 2 } }

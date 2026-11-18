@@ -1,0 +1,32 @@
+# Walkers: every resident walks to a random tile near it that it can reach,
+# thinks, and walks again. Sometimes it stands still.
+#
+# A walk target is a walkable tile inside the city of the resident. The way
+# to it can go around walls and through a door, so a walk takes more ticks
+# than the distance in tiles. A walk into another district is acknowledged
+# with `pending`.
+
+name = "walkers"
+summary = "Residents walk to random walkable tiles near them and sometimes stand still."
+
+# Chance that a resident observes after an action.
+observe_share = 0.25
+# Swarm only: chance that an agent waits for the end of its action before it
+# acts again. An agent that does not wait fills the queue of its resident.
+wait_share = 0.5
+
+# Ticks between the end of one action and the next action (bench and soak).
+[think]
+kind = "uniform"
+min = 0
+max = 10
+
+[[action]]
+verb = "move_to"
+weight = 9
+args = { gen = "near_tile", radius = 12 }
+
+[[action]]
+verb = "wait"
+weight = 1
+args = { ticks = { gen = "int", min = 1, max = 5 } }

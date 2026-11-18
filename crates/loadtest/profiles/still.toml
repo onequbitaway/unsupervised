@@ -1,0 +1,21 @@
+# Still: every resident stands where it is, and observes after each action.
+# The residents do not move, so the number of residents in sight stays as
+# the placement made it. Use it to measure the cost of one observation:
+# with `--placement scatter` in a spread world, with `--placement spawn` in
+# a crowd.
+
+name = "still"
+summary = "Residents stand still and observe after each action."
+
+observe_share = 1.0
+wait_share = 1.0
+
+[think]
+kind = "uniform"
+min = 0
+max = 4
+
+[[action]]
+verb = "wait"
+weight = 1
+args = { ticks = { gen = "int", min = 1, max = 3 } }
