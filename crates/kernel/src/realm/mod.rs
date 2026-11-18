@@ -15,15 +15,15 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unsup_protocol::{
-    CityId, Clock, Event, Money, OrgId, OwnerId, Pos, RealmId, ResidentId, ResidentView, Tick,
-    ZoneDelta, ZoneId,
+    CityId, Clock, Event, Money, OrgId, OwnerId, Pos, RealmId, Rect, ResidentId, ResidentView,
+    Tick, ZoneDelta, ZoneId,
 };
 
 use self::border::Border;
 pub(crate) use self::border::BorderNews;
 pub use self::border::Outsider;
 pub(crate) use self::state::{RealmState, Transfer};
-use crate::agenda::{Agenda, Inbox, NoticeBody};
+use crate::agenda::{Agenda, Inbox, NoticeBody, PackedBody};
 use crate::codec;
 use crate::column::{AnyColumn, AnyResource, Column, Component, Resource};
 use crate::directory::Directory;
@@ -713,6 +713,33 @@ impl Realm {
         out.sort_unstable_by_key(|idx| ids[idx.index()]);
     }
 
+    /// Returns the `k` residents of this zone that are nearest to `pos`,
+    /// among those within `radius` tiles: nearest first, and residents at
+    /// the same distance in `ResidentId` order.
+    ///
+    /// The distance is [`Pos::dist`]. A resident that stands on `pos` is in
+    /// the list, at distance zero. Like [`Realm::nearby`], it finds only
+    /// residents of this zone.
+    ///
+    /// Use it when a few neighbours are enough. It does not collect or sort
+    /// the residents in sight: it searches outward from `pos` and stops
+    /// when it has the `k` nearest, so a crowd around `pos` costs little.
+    /// Residents that share one tile are the exception: the kernel must
+    /// read each of them to find the lowest ids.
+    #[must_use]
+    pub fn nearest(&self, pos: Pos, radius: u32, k: usize) -> Vec<Idx> {
+        let mut found = Vec::new();
+        self.grid.borrow().nearest(
+            pos,
+            radius,
+            k,
+            &self.pos.borrow(),
+            &self.ids.borrow(),
+            &mut found,
+        );
+        found.into_iter().map(|near| Idx(near.idx)).collect()
+    }
+
     fn attr_cell(&self, a: AttrId) -> &RefCell<Vec<i64>> {
         match self.attrs.get(a.index()) {
             Some(cell) => cell,
@@ -1060,6 +1087,31 @@ impl Realm {
         self.sites_epoch.get()
     }
 
+    /// Returns the tile of a spawn site on which its newcomer number
+    /// `turn`, from 0, appears.
+    ///
+    /// The tiles of the site with a code of the parameter
+    /// `kernel.spawn_tiles` (the walkable codes) take turns, row by row.
+    /// The first turn has the centre of the site, or the next such tile
+    /// after it; after the last tile comes the first. A site without such a
+    /// tile gives its centre.
+    pub(crate) fn spawn_tile(&self, site: Rect, turn: u64) -> Pos {
+        let kinds = self.param(self.bp.kernel_ids().spawn_tiles).cast_unsigned();
+        let tiles = self.tiles.borrow();
+        let centre = site.centre();
+        let free = tiles.count_in(site, kinds) as u64;
+        if free == 0 {
+            return centre;
+        }
+        // The tiles that come before the centre: the rows above it, and
+        // the tiles to its left in its own row.
+        let above = Rect::new(site.x0, site.y0, site.x1, centre.y);
+        let left = Rect::new(site.x0, centre.y, centre.x, centre.y.saturating_add(1));
+        let before = (tiles.count_in(above, kinds) + tiles.count_in(left, kinds)) as u64;
+        let number = (before + turn % free) % free;
+        tiles.nth_in(site, kinds, number as usize).unwrap_or(centre)
+    }
+
     /// Borrows the tile map of the zone. The global realm has an empty map.
     #[must_use]
     pub fn tiles(&self) -> Ref<'_, TileMap> {
@@ -1132,7 +1184,8 @@ impl Realm {
                 let actor_idx = meta.actor.and_then(|a| self.idx_of(a));
                 let place = meta.pos.or_else(|| actor_idx.map(|idx| self.pos(idx)));
                 if let Some(place) = place {
-                    let body = Arc::new(NoticeBody::Notice {
+                    // One body for everybody that hears it.
+                    let body = PackedBody::new(&NoticeBody::Notice {
                         tick,
                         kind: meta.kind.into(),
                         from: meta.actor,
@@ -1140,7 +1193,7 @@ impl Realm {
                     });
                     for idx in self.nearby(place, *radius) {
                         if Some(idx) != actor_idx {
-                            self.push_inbox(idx, Arc::clone(&body));
+                            self.push_inbox(idx, body.clone());
                         }
                     }
                     // The residents on the other side of a border that this
@@ -1210,7 +1263,7 @@ impl Realm {
         self.guard_write();
         match self.idx_of(to) {
             Some(idx) => {
-                let body = Arc::new(NoticeBody::Notice {
+                let body = PackedBody::new(&NoticeBody::Notice {
                     tick: self.tick.get(),
                     kind: kind.into(),
                     from,
@@ -1308,7 +1361,7 @@ impl Realm {
 
     /// Adds an entry to the inbox of a resident of this zone and records
     /// that the resident has news.
-    fn push_inbox(&self, idx: Idx, body: Arc<NoticeBody>) {
+    fn push_inbox(&self, idx: Idx, body: PackedBody) {
         let max = usize::try_from(self.param(self.bp.kernel_ids().inbox_max)).unwrap_or(1);
         self.inbox.borrow_mut()[idx.index()].push(body, max);
         self.woke.borrow_mut().push(self.id_of(idx));

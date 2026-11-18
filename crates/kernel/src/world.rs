@@ -533,18 +533,28 @@ impl World {
             .map(|(_, city)| city)
     }
 
-    /// Returns where a new resident of a city appears: the centre of a site
-    /// with the tag `spawn` when the city has one (the residents are spread
-    /// over all such sites by id), else the centre of the first zone of the
-    /// city.
+    /// Returns where a new resident of a city appears: a tile of a site
+    /// with the tag `spawn` when the city has one, else the centre of the
+    /// first zone of the city.
+    ///
+    /// The id decides the place, so that it is the same in every run.
+    /// Resident `id` gets site number `id % count` of the `count` spawn
+    /// sites of the city. The newcomers of one site take its walkable tiles
+    /// in turn, from the centre (see [`Realm::spawn_tile`]): resident `id`
+    /// has turn `(id - 1) / count`. So a busy site does not get a crowd on
+    /// one tile.
     ///
     /// The list of spawn sites comes from a cache (see [`SpawnSites`]), so
     /// a spawn does not scan the sites of the city.
     fn spawn_point(&mut self, city: CityId, id: ResidentId) -> Result<(ZoneId, Pos), SimError> {
         let city = self.layout.city(city).ok_or(SimError::Invalid)?;
-        let points = self.spawn_sites.of_city(city, &self.zones);
-        if !points.is_empty() {
-            return Ok(points[(id.0 % points.len() as u64) as usize]);
+        let sites = self.spawn_sites.of_city(city, &self.zones);
+        if !sites.is_empty() {
+            let count = sites.len() as u64;
+            let (zone, site) = sites[(id.0 % count) as usize];
+            // The list holds only sites of hosted zones.
+            let realm = self.zone(zone).ok_or(SimError::NotHosted)?;
+            return Ok((zone, realm.spawn_tile(site, id.0.saturating_sub(1) / count)));
         }
         let first = city.zones.first().copied().ok_or(SimError::Invalid)?;
         let info = self.layout.zone(first).ok_or(SimError::Invalid)?;
@@ -908,6 +918,113 @@ impl World {
             global.observe_global(r, opts, &mut observation.sections);
         }
         Ok(observation)
+    }
+
+    /// Builds many observations at once, on all processor cores. The answer
+    /// to each request is what [`World::observe`] gives for it, in the
+    /// order of the requests. It does not change state.
+    ///
+    /// The work is split by zone: the requests for the residents of one
+    /// zone run on one thread, and the zones run in parallel on the rayon
+    /// thread pool of the caller. So a batch that covers many zones uses
+    /// many cores, and a batch for one zone uses one.
+    ///
+    /// The sections of the global realm are built by one more task, which
+    /// runs at the same time as the zones. A realm serves one thread at a
+    /// time, so this task cannot be split. It does not wait for the zones
+    /// and the zones do not wait for it: the batch takes as long as the
+    /// slower of the two, not their sum. With no observer in the global
+    /// realm the task does not exist.
+    ///
+    /// The call takes `&mut self` for one reason: a realm is not shared
+    /// between threads, and the unique borrow lets each thread have its own
+    /// realm for the time of the call.
+    pub fn observe_batch(
+        &mut self,
+        requests: &[(ResidentId, ObserveOpts)],
+    ) -> Vec<Result<Observation, SimError>> {
+        if let [(resident, opts)] = requests {
+            return vec![self.observe(*resident, opts)];
+        }
+        // 1. The zone of each resident, as `find` gives it. The map of
+        //    locations can be read by many threads; the realms cannot.
+        let hosted: Vec<bool> = self.zones.iter().map(Option::is_some).collect();
+        let (locations, away) = (&self.locations, &self.away);
+        let place = |(resident, _): &(ResidentId, ObserveOpts)| match locations.get(resident) {
+            Some(zone) if hosted.get(zone.0 as usize) == Some(&true) => Ok(zone.0 as usize),
+            Some(_) => Err(SimError::NotHosted),
+            None if away.contains(resident) => Err(SimError::NotHosted),
+            None => Err(SimError::UnknownResident),
+        };
+        let places: Vec<Result<usize, SimError>> = requests.par_iter().map(place).collect();
+
+        // 2. The requests of each zone, in the order of the batch.
+        let mut by_zone: Vec<Vec<usize>> = vec![Vec::new(); self.zones.len()];
+        for (request, place) in places.iter().enumerate() {
+            if let Ok(zone) = place {
+                by_zone[*zone].push(request);
+            }
+        }
+        let work: Vec<(&mut Realm, Vec<usize>)> = self
+            .zones
+            .iter_mut()
+            .zip(by_zone)
+            .filter_map(|(slot, list)| {
+                slot.as_mut().filter(|_| !list.is_empty()).map(|realm| (realm, list))
+            })
+            .collect();
+
+        // 3. The zones in parallel, and the global realm beside them.
+        let in_zones = || -> Vec<Vec<(usize, Option<Observation>)>> {
+            work.into_par_iter()
+                .map(|(realm, list)| {
+                    list.into_iter()
+                        .map(|request| {
+                            let (resident, opts) = &requests[request];
+                            (request, realm.observe(*resident, opts))
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+        let global = self.global.as_mut().filter(|_| !self.bp.global.global_observers.is_empty());
+        let in_global = || -> Vec<BTreeMap<String, serde_json::Value>> {
+            let Some(global) = global else {
+                return Vec::new();
+            };
+            requests
+                .iter()
+                .zip(&places)
+                .map(|((resident, opts), place)| {
+                    let mut sections = BTreeMap::new();
+                    if place.is_ok() {
+                        global.observe_global(*resident, opts, &mut sections);
+                    }
+                    sections
+                })
+                .collect()
+        };
+        let (zone_answers, global_sections) = rayon::join(in_zones, in_global);
+
+        // 4. One answer for each request. A resident that its zone does not
+        //    know is unknown, as in `observe`.
+        let mut answers: Vec<Result<Observation, SimError>> = places
+            .into_iter()
+            .map(|place| Err(place.err().unwrap_or(SimError::UnknownResident)))
+            .collect();
+        for (request, observation) in zone_answers.into_iter().flatten() {
+            if let Some(observation) = observation {
+                answers[request] = Ok(observation);
+            }
+        }
+        if !global_sections.is_empty() {
+            answers.par_iter_mut().zip(global_sections).for_each(|(answer, sections)| {
+                if let Ok(observation) = answer {
+                    observation.sections.extend(sections);
+                }
+            });
+        }
+        answers
     }
 
     /// Returns the sequence number that the next notice of a resident will

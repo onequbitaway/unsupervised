@@ -230,8 +230,11 @@ fn indices_are_stable_during_a_tick_and_removal_happens_at_its_end() {
     // `nearby` still finds the right residents after the table was packed.
     let near = w.zone(ZoneId(3)).nearby(Pos::new(70, 70), 0);
     assert_eq!(near.len(), 3);
-    let near = w.zone(ZoneId(0)).nearby(Pos::new(32, 32), 2);
-    assert_eq!(near.len(), 3);
+    // The three that stayed stand in the row of the centre of the plaza,
+    // where they appeared: 1, 3 and 4 tiles to the east of it.
+    let zone = w.zone(ZoneId(0));
+    assert_eq!(zone.nearby(Pos::new(32, 32), 4).len(), 3);
+    assert_eq!(zone.nearby(Pos::new(32, 32), 2).len(), 1);
 }
 
 #[test]

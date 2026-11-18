@@ -16,15 +16,6 @@ use crate::defs::AttrShow;
 use crate::ids::Idx;
 use crate::ledger::Holder;
 
-/// Where a resident in sight is.
-#[derive(Clone, Copy)]
-enum Seen {
-    /// A row of this zone.
-    Here(Idx),
-    /// An entry of the list of residents on the other side of a border.
-    Outside(usize),
-}
-
 impl Realm {
     /// Builds the observation of a resident of this zone: the kernel
     /// sections, the sections of the zone observers, and the notices.
@@ -191,7 +182,7 @@ impl Realm {
                     json!({
                         "name": slot.routine.name,
                         "when": slot.routine.when,
-                        "then": slot.routine.then,
+                        "then": slot.then(),
                         "runs": slot.runs,
                         "failures": slot.failures,
                     })
@@ -211,53 +202,63 @@ impl Realm {
     /// each list bounded by `kernel.nearby_max`. The residents on the other
     /// side of a zone border are in the list too, as this zone last heard
     /// of them; each has the key `zone`.
+    ///
+    /// The residents are in the order of distance, then of id. The section
+    /// does not sort everybody in sight to find them: it asks for the
+    /// nearest of this zone and the nearest across the border, and merges
+    /// the two short lists.
     fn section_nearby(&self, idx: Idx) -> Value {
         let kernel = self.bp.kernel_ids();
         let radius = u32::try_from(self.param(kernel.sight_radius)).unwrap_or(0);
         let max = usize::try_from(self.param(kernel.nearby_max)).unwrap_or(0);
         let pos = self.pos(idx);
 
-        let outside = self.nearby_outside(pos, radius);
-        let here = self
-            .nearby(pos, radius)
-            .into_iter()
-            .filter(|&other| other != idx)
-            .map(|other| (self.pos(other).dist(pos), self.id_of(other), Seen::Here(other)));
-        let across = outside
-            .iter()
-            .enumerate()
-            .map(|(at, outsider)| (outsider.pos.dist(pos), outsider.id, Seen::Outside(at)));
-        let mut seen: Vec<(u32, ResidentId, Seen)> = here.chain(across).collect();
-        seen.sort_unstable_by_key(|&(distance, id, _)| (distance, id));
-        let total_residents = seen.len();
+        let (here, total_here) = {
+            let positions = self.pos.borrow();
+            let ids = self.ids.borrow();
+            let grid = self.grid.borrow();
+            // One more than the list holds: the observer is its own
+            // nearest resident and is not in the list.
+            let mut here = Vec::new();
+            grid.nearest(pos, radius, max.saturating_add(1), &positions, &ids, &mut here);
+            here.retain(|near| near.idx != idx.0);
+            here.truncate(max);
+            (here, grid.count(pos, radius, &positions).saturating_sub(1))
+        };
+        let (outside, total_outside) = self.nearest_outsiders(pos, radius, max);
+        let total_residents = total_here + total_outside;
+
         let identity = self.identity.borrow();
-        let residents: Vec<Value> = seen
-            .iter()
-            .take(max)
-            .map(|&(_, id, place)| {
-                let mut entry = Map::new();
-                entry.insert("id".into(), json!(id));
-                match place {
-                    Seen::Here(other) => {
-                        entry.insert("name".into(), json!(identity[other.index()].name));
-                        entry.insert("pos".into(), json!(self.pos(other)));
-                        if let Some(activity) = self.activity(other) {
-                            entry.insert("activity".into(), json!(activity.verb));
-                        }
-                    }
-                    Seen::Outside(at) => {
-                        let outsider = &outside[at];
-                        entry.insert("name".into(), json!(outsider.name));
-                        entry.insert("pos".into(), json!(outsider.pos));
-                        if let Some(activity) = outsider.activity {
-                            entry.insert("activity".into(), json!(activity));
-                        }
-                        entry.insert("zone".into(), json!(outsider.zone));
-                    }
+        let mut residents: Vec<Value> = Vec::with_capacity(max.min(total_residents));
+        let mut here = here.iter().peekable();
+        let mut outside = outside.iter().peekable();
+        while residents.len() < max {
+            let next_is_here = match (here.peek(), outside.peek()) {
+                (Some(near), Some((dist, outsider))) => (near.dist, near.id) < (*dist, outsider.id),
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            let mut entry = Map::new();
+            if next_is_here && let Some(near) = here.next() {
+                let other = Idx(near.idx);
+                entry.insert("id".into(), json!(near.id));
+                entry.insert("name".into(), json!(identity[other.index()].name));
+                entry.insert("pos".into(), json!(self.pos(other)));
+                if let Some(activity) = self.activity(other) {
+                    entry.insert("activity".into(), json!(activity.verb));
                 }
-                Value::Object(entry)
-            })
-            .collect();
+            } else if let Some((_, outsider)) = outside.next() {
+                entry.insert("id".into(), json!(outsider.id));
+                entry.insert("name".into(), json!(outsider.name));
+                entry.insert("pos".into(), json!(outsider.pos));
+                if let Some(activity) = outsider.activity {
+                    entry.insert("activity".into(), json!(activity));
+                }
+                entry.insert("zone".into(), json!(outsider.zone));
+            }
+            residents.push(Value::Object(entry));
+        }
 
         let sites = self.sites.borrow();
         let within = sites.within(pos, radius);

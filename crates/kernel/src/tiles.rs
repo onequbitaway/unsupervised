@@ -95,6 +95,55 @@ impl TileMap {
     pub fn as_slice(&self) -> &[u8] {
         &self.tiles
     }
+
+    /// Returns the rows of `rect` that are inside the map, each as its
+    /// first position and its tiles.
+    fn rows_in(&self, rect: Rect) -> impl Iterator<Item = (Pos, &[u8])> + '_ {
+        let x0 = rect.x0.max(self.bounds.x0);
+        let x1 = rect.x1.min(self.bounds.x1);
+        let y0 = rect.y0.max(self.bounds.y0);
+        let y1 = rect.y1.min(self.bounds.y1);
+        let width = self.bounds.width() as usize;
+        let rows = if x0 < x1 { y0..y1 } else { 0..0 };
+        rows.map(move |y| {
+            let start =
+                y.abs_diff(self.bounds.y0) as usize * width + x0.abs_diff(self.bounds.x0) as usize;
+            (Pos::new(x0, y), &self.tiles[start..start + x1.abs_diff(x0) as usize])
+        })
+    }
+
+    /// Returns how many tiles of `rect` inside the map have a kind in
+    /// `kinds`. Bit `n` of `kinds` stands for kind `n`; a kind above 63 is
+    /// never in it.
+    pub(crate) fn count_in(&self, rect: Rect, kinds: u64) -> usize {
+        self.rows_in(rect)
+            .map(|(_, row)| row.iter().filter(|&&kind| has_kind(kinds, kind)).count())
+            .sum()
+    }
+
+    /// Returns the position of tile number `n`, from 0, among the tiles of
+    /// `rect` inside the map that have a kind in `kinds`, counted row by
+    /// row. Returns `None` when there are not that many.
+    pub(crate) fn nth_in(&self, rect: Rect, kinds: u64, n: usize) -> Option<Pos> {
+        let mut left = n;
+        for (first, row) in self.rows_in(rect) {
+            for (column, &kind) in row.iter().enumerate() {
+                if has_kind(kinds, kind) {
+                    if left == 0 {
+                        return Some(first.offset(column as i32, 0));
+                    }
+                    left -= 1;
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Returns true when bit `kind` of `kinds` is set.
+#[inline]
+fn has_kind(kinds: u64, kind: u8) -> bool {
+    kind < 64 && kinds >> kind & 1 == 1
 }
 
 #[cfg(test)]
@@ -124,6 +173,58 @@ mod tests {
         map.fill(Rect::new(10, 10, 20, 20), 5);
         map.fill(Rect::new(3, 3, 3, 9), 5);
         assert_eq!(map.count(5), 0);
+    }
+
+    #[test]
+    fn tiles_of_some_kinds_are_counted_and_found_row_by_row() {
+        // Kinds 1 and 3 in a 5 x 4 map at (10, 20):
+        //   . 1 . 3 .
+        //   9 . . . 1
+        //   . . 3 . .
+        //   1 . . . 70
+        let mut map = TileMap::new(Rect::sized(10, 20, 5, 4));
+        for (x, y, kind) in [
+            (11, 20, 1),
+            (13, 20, 3),
+            (10, 21, 9),
+            (14, 21, 1),
+            (12, 22, 3),
+            (10, 23, 1),
+            (14, 23, 70),
+        ] {
+            assert!(map.set(Pos::new(x, y), kind));
+        }
+        let kinds = 1 << 1 | 1 << 3;
+        let all = Rect::sized(10, 20, 5, 4);
+        assert_eq!(map.count_in(all, kinds), 5);
+        let found: Vec<Pos> = (0..5).map(|n| map.nth_in(all, kinds, n).unwrap()).collect();
+        assert_eq!(
+            found,
+            [
+                Pos::new(11, 20),
+                Pos::new(13, 20),
+                Pos::new(14, 21),
+                Pos::new(12, 22),
+                Pos::new(10, 23)
+            ]
+        );
+        assert_eq!(map.nth_in(all, kinds, 5), None);
+        // A part of the map, and a rectangle that is partly outside it.
+        let part = Rect::new(12, 21, 15, 23);
+        assert_eq!(map.count_in(part, kinds), 2);
+        assert_eq!(map.nth_in(part, kinds, 1), Some(Pos::new(12, 22)));
+        let wide = Rect::new(-100, 22, 100, 100);
+        assert_eq!(map.count_in(wide, kinds), 2);
+        assert_eq!(map.nth_in(wide, kinds, 1), Some(Pos::new(10, 23)));
+        // Kind 0 is a kind like any other. Kinds above 63 are never found.
+        assert_eq!(map.count_in(all, 1), 13);
+        assert_eq!(map.count_in(all, u64::MAX), 19);
+        assert_eq!(map.count_in(all, 0), 0);
+        // Outside the map, and an empty rectangle.
+        assert_eq!(map.count_in(Rect::new(15, 20, 30, 30), u64::MAX), 0);
+        assert_eq!(map.nth_in(Rect::new(0, 0, 10, 20), u64::MAX, 0), None);
+        assert_eq!(map.count_in(Rect::new(12, 21, 12, 23), u64::MAX), 0);
+        assert_eq!(map.count_in(Rect::new(14, 23, 10, 20), u64::MAX), 0);
     }
 
     #[test]

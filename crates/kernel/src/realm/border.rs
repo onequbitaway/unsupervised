@@ -23,8 +23,8 @@
 //! The copy, and what the sender knows about the copies of its watchers,
 //! are simulation state. They are in the snapshot and in the state hash.
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::cell::{Ref, RefCell, RefMut};
+use std::collections::{BTreeMap, BinaryHeap};
 
 use serde::{Deserialize, Serialize};
 use unsup_protocol::{Pos, Rect, ResidentId, ZoneId};
@@ -68,6 +68,15 @@ pub(crate) struct Ghost {
     name: String,
     #[serde(rename = "a", default, skip_serializing_if = "Option::is_none")]
     activity: Option<VerbId>,
+}
+
+/// Where the copy of one resident of another zone is: what a search for
+/// the residents near a place needs to know.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct GhostAt {
+    pos: Pos,
+    id: ResidentId,
+    zone: ZoneId,
 }
 
 /// One change that a zone tells a watcher about a resident near it.
@@ -126,8 +135,15 @@ pub(super) struct Border {
     /// the order in which they changed. Each has the flag `F_BORDER`.
     pub(super) dirty: RefCell<Vec<u32>>,
     /// The copy: residents of other zones near this zone, by the zone in
-    /// which they are and their id.
-    pub(super) ghosts: RefCell<BTreeMap<(ZoneId, ResidentId), Ghost>>,
+    /// which they are and their id. Change it only through
+    /// [`Border::ghosts_mut`].
+    ghosts: RefCell<BTreeMap<(ZoneId, ResidentId), Ghost>>,
+    /// The copies that a search can find, in the order of `ghosts`: every
+    /// copy but those of residents that have a row in this zone. A search
+    /// reads this dense list instead of the map. `None` means that the
+    /// copies or the rows changed since the list was made; the next search
+    /// makes it again. It is derived, so it is not saved.
+    in_sight: RefCell<Option<Vec<GhostAt>>>,
     /// For each resident that moves to another zone in this step: the zones
     /// that hold a copy of it under its new home. The resident takes the
     /// list with it.
@@ -157,6 +173,7 @@ impl Border {
             shown: RefCell::new(Vec::new()),
             dirty: RefCell::new(Vec::new()),
             ghosts: RefCell::new(BTreeMap::new()),
+            in_sight: RefCell::new(None),
             handoff: RefCell::new(BTreeMap::new()),
             ended: RefCell::new(BTreeMap::new()),
         }
@@ -172,6 +189,25 @@ impl Border {
         self.handoff.borrow_mut().remove(&id).unwrap_or_default()
     }
 
+    /// Borrows the copies of the residents of other zones.
+    pub(super) fn ghosts(&self) -> Ref<'_, BTreeMap<(ZoneId, ResidentId), Ghost>> {
+        self.ghosts.borrow()
+    }
+
+    /// Borrows the copies for a change. The list that searches read is out
+    /// of date from now on.
+    pub(super) fn ghosts_mut(&self) -> RefMut<'_, BTreeMap<(ZoneId, ResidentId), Ghost>> {
+        self.forget_in_sight();
+        self.ghosts.borrow_mut()
+    }
+
+    /// Records that a row was added to the zone or removed from it. A copy
+    /// of a resident that has a row is not in sight, so the list that
+    /// searches read is out of date.
+    pub(super) fn forget_in_sight(&self) {
+        *self.in_sight.borrow_mut() = None;
+    }
+
     /// Returns an estimate of the heap bytes of the border state.
     pub(super) fn memory_estimate(&self) -> usize {
         let ghosts: usize = self
@@ -180,8 +216,10 @@ impl Border {
             .values()
             .map(|ghost| size_of::<(ZoneId, ResidentId)>() + size_of::<Ghost>() + ghost.name.len())
             .sum();
+        let in_sight = self.in_sight.borrow().as_ref().map_or(0, Vec::capacity);
         (self.shown.borrow().capacity() + self.dirty.borrow().capacity()) * size_of::<u32>()
             + ghosts
+            + in_sight * size_of::<GhostAt>()
     }
 }
 
@@ -200,30 +238,76 @@ impl Realm {
     /// this zone. The distance is [`Pos::dist`].
     #[must_use]
     pub fn nearby_outside(&self, pos: Pos, radius: u32) -> Vec<Outsider> {
-        let mut out = Vec::new();
-        self.for_each_outsider(pos, radius, |zone, id, ghost| {
-            out.push(Outsider {
-                id,
-                zone,
-                pos: ghost.pos,
-                name: ghost.name.clone(),
-                activity: ghost.activity.map(|verb| self.bp.verb_name(verb)),
-            });
-        });
+        let mut found = Vec::new();
+        self.for_each_outsider(pos, radius, |zone, id, _| found.push((zone, id)));
+        let ghosts = self.border.ghosts();
+        let mut out: Vec<Outsider> =
+            found.into_iter().filter_map(|(zone, id)| self.outsider(&ghosts, zone, id)).collect();
         out.sort_unstable_by_key(|outsider| outsider.id);
         out
     }
 
+    /// Makes the public form of the copy of a resident.
+    fn outsider(
+        &self,
+        ghosts: &BTreeMap<(ZoneId, ResidentId), Ghost>,
+        zone: ZoneId,
+        id: ResidentId,
+    ) -> Option<Outsider> {
+        let ghost = ghosts.get(&(zone, id))?;
+        Some(Outsider {
+            id,
+            zone,
+            pos: ghost.pos,
+            name: ghost.name.clone(),
+            activity: ghost.activity.map(|verb| self.bp.verb_name(verb)),
+        })
+    }
+
+    /// Returns the residents of other zones within `radius` tiles of `pos`
+    /// that this zone knows of: the `k` nearest with their distance,
+    /// nearest first and residents at the same distance in `ResidentId`
+    /// order, and the number of all of them. Only the `k` that it returns
+    /// are copied.
+    pub(super) fn nearest_outsiders(
+        &self,
+        pos: Pos,
+        radius: u32,
+        k: usize,
+    ) -> (Vec<(u32, Outsider)>, usize) {
+        // The best `k` so far, the worst of them on top.
+        let mut best: BinaryHeap<(u32, ResidentId, ZoneId)> = BinaryHeap::new();
+        let mut total = 0usize;
+        self.for_each_outsider(pos, radius, |zone, id, at| {
+            total += 1;
+            let found = (at.dist(pos), id, zone);
+            if best.len() < k {
+                best.push(found);
+            } else if let Some(mut worst) = best.peek_mut()
+                && found < *worst
+            {
+                *worst = found;
+            }
+        });
+        let ghosts = self.border.ghosts();
+        let nearest = best
+            .into_sorted_vec()
+            .into_iter()
+            .filter_map(|(dist, id, zone)| Some((dist, self.outsider(&ghosts, zone, id)?)))
+            .collect();
+        (nearest, total)
+    }
+
     /// Calls `f` for every copy of a resident of another zone within
-    /// `radius` tiles of `pos`, ordered by zone and id.
+    /// `radius` tiles of `pos`, ordered by zone and id, with the zone, the
+    /// id and the position of the copy.
     pub(super) fn for_each_outsider(
         &self,
         pos: Pos,
         radius: u32,
-        mut f: impl FnMut(ZoneId, ResidentId, &Ghost),
+        mut f: impl FnMut(ZoneId, ResidentId, Pos),
     ) {
-        let ghosts = self.border.ghosts.borrow();
-        if ghosts.is_empty() {
+        if self.border.ghosts.borrow().is_empty() {
             return;
         }
         // Every copy is of a resident outside this zone. A circle that
@@ -240,14 +324,31 @@ impl Realm {
                 return;
             }
         }
-        let index = self.index.borrow();
-        for (&(zone, id), ghost) in ghosts.iter() {
-            // A resident that came into this zone is here itself; its copy
-            // leaves with the next message of its old zone.
-            if ghost.pos.dist(pos) <= radius && !index.contains_key(&id) {
-                f(zone, id, ghost);
+        if self.border.in_sight.borrow().is_none() {
+            *self.border.in_sight.borrow_mut() = Some(self.copies_in_sight());
+        }
+        let in_sight = self.border.in_sight.borrow();
+        let copies = in_sight.as_deref().unwrap_or_default();
+        debug_assert!(copies == self.copies_in_sight(), "the list of copies in sight is stale");
+        for copy in copies {
+            if copy.pos.dist(pos) <= radius {
+                f(copy.zone, copy.id, copy.pos);
             }
         }
+    }
+
+    /// Lists the copies that a search can find, in the order of the map.
+    fn copies_in_sight(&self) -> Vec<GhostAt> {
+        let index = self.index.borrow();
+        self.border
+            .ghosts
+            .borrow()
+            .iter()
+            // A resident that came into this zone is here itself; its copy
+            // leaves with the next message of its old zone.
+            .filter(|((_, id), _)| !index.contains_key(id))
+            .map(|(&(zone, id), ghost)| GhostAt { pos: ghost.pos, id, zone })
+            .collect()
     }
 
     /// Returns how far into this zone its watchers see: the sight radius,
@@ -452,7 +553,7 @@ impl Realm {
                         // in sight of it.
                         let watched = border.watchers.iter().any(|(watcher, _)| *watcher == zone);
                         if band > 0 && watched && here.bounds.dist_to(pos) <= band {
-                            border.ghosts.borrow_mut().insert((zone, id), ghost());
+                            border.ghosts_mut().insert((zone, id), ghost());
                             holders.push(here.id);
                         }
                         if !holders.is_empty() {
@@ -475,7 +576,7 @@ impl Realm {
         let Some(here) = self.zone.as_ref().map(|zone| zone.id) else {
             return;
         };
-        let mut ghosts = self.border.ghosts.borrow_mut();
+        let mut ghosts = self.border.ghosts_mut();
         for item in news {
             match item {
                 BorderNews::Enter { id, home, ghost } => {

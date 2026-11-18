@@ -23,8 +23,6 @@
 //! only records the end; the next action starts at the next settle point,
 //! when no module borrow is alive.
 
-use std::sync::Arc;
-
 use serde_json::{Value, json};
 use unsup_protocol::{
     ActionAck, ActionError, ActionRequest, ActionStatus, Condition, ErrorCode, ResidentId, Routine,
@@ -33,8 +31,8 @@ use unsup_protocol::{
 
 use super::{F_ACTIVITY, F_BUSY, F_ROUTINES, Realm};
 use crate::agenda::{
-    ActivityView, CONDITION_NODES_MAX, Cond, Lapsed, NoticeBody, Queued, RECENT_MAX,
-    REQUEST_ID_MAX, RoutineSlot, Running, hour_between,
+    ActivityView, CONDITION_NODES_MAX, Cond, Lapsed, NoticeBody, PackedArgs, PackedBody, Queued,
+    RECENT_FIRST, RECENT_MAX, REQUEST_ID_MAX, Remembered, RoutineSlot, Running, hour_between,
 };
 use crate::defs::AttrShow;
 use crate::event::EventMeta;
@@ -178,8 +176,8 @@ impl Realm {
                 };
             }
             let agenda = self.agenda.borrow();
-            if let Some((_, ack)) = agenda[idx.index()].recent.iter().find(|(k, _)| k == key) {
-                return ack.clone();
+            if let Some(first) = agenda[idx.index()].recent.iter().find(|r| r.has_key(key)) {
+                return first.ack();
             }
         }
         let action_id = self.alloc_id();
@@ -188,13 +186,22 @@ impl Realm {
         let ack = ActionAck { request_id, action_id, verb, status };
         // A rejected request changed nothing, so the same key may be tried
         // again. Only an accepted request is remembered.
-        if let (Some(key), true) = (&ack.request_id, ack.status.is_accepted()) {
+        if ack.status.is_accepted()
+            && let Some(remembered) = Remembered::new(&ack)
+        {
             let mut agenda = self.agenda.borrow_mut();
             let recent = &mut agenda[idx.index()].recent;
             if recent.len() >= RECENT_MAX {
                 recent.remove(0);
             }
-            recent.push((key.clone(), ack.clone()));
+            // Room for a few, then room for all: a client that sends keys
+            // fills the list soon, and a list that grows step by step
+            // leaves its smaller buffers behind.
+            if recent.len() == recent.capacity() {
+                let room = if recent.is_empty() { RECENT_FIRST } else { RECENT_MAX };
+                recent.reserve_exact(room.saturating_sub(recent.len()));
+            }
+            recent.push(remembered);
         }
         ack
     }
@@ -257,6 +264,7 @@ impl Realm {
                         format!("The queue holds at most {max} planned actions."),
                     ));
                 }
+                let args = PackedArgs::new(&args);
                 a.queue.push(Queued { action_id, verb: verb_id, request_id, args });
                 let position = a.queue.len() as u32;
                 if a.current.is_none() {
@@ -333,7 +341,7 @@ impl Realm {
                         action_id,
                         verb,
                         request_id,
-                        args,
+                        args: PackedArgs::new(&args),
                         started: tick,
                         ends,
                         wait,
@@ -369,7 +377,7 @@ impl Realm {
                             action_id,
                             verb,
                             request_id,
-                            args: Value::Null,
+                            args: PackedArgs::default(),
                             started: tick,
                             ends: tick + timeout,
                             wait: true,
@@ -425,7 +433,7 @@ impl Realm {
     ) {
         let body =
             NoticeBody::Report { tick: self.tick.get(), action_id, request_id, verb, result };
-        self.push_inbox(idx, Arc::new(body));
+        self.push_inbox(idx, PackedBody::new(&body));
     }
 
     /// Records the end of an action that occupied the resident: the report,
@@ -516,7 +524,7 @@ impl Realm {
         let result = match &entry.kind {
             VerbKind::Zone { finish, .. } => {
                 let ctx = ActionCtx { resident, idx, action_id, started: Tick(running.started) };
-                finish(self, &ctx, &running.args)
+                finish(self, &ctx, &running.args.open())
             }
             _ => Err(ActionError::internal(format!("The verb `{}` no longer exists.", entry.name))),
         };
@@ -550,7 +558,7 @@ impl Realm {
                     idx,
                     queued.verb,
                     queued.request_id.clone(),
-                    queued.args,
+                    queued.args.open(),
                     queued.action_id,
                     None,
                 ),
@@ -581,7 +589,7 @@ impl Realm {
             a.routines
                 .iter()
                 .position(|slot| slot.retry_at <= tick && self.eval(idx, &slot.cond))
-                .map(|i| (i, a.routines[i].verb, a.routines[i].routine.then.args.clone()))
+                .map(|i| (i, a.routines[i].verb, a.routines[i].args.open()))
         };
         let Some((slot, verb, args)) = pick else {
             return;
@@ -742,7 +750,7 @@ impl Realm {
             (self.bp.verb(verb).validate)(&routine.then.args)?;
             let mut routine = routine.clone();
             routine.then.id = None;
-            slots.push(RoutineSlot { routine, cond, verb, retry_at: 0, failures: 0, runs: 0 });
+            slots.push(RoutineSlot::new(routine, cond, verb));
         }
         let count = slots.len();
         let had = {

@@ -400,6 +400,7 @@ impl Realm {
         self.members.borrow_mut().push(Vec::new());
         self.grid.borrow_mut().insert(idx.0, pos);
         self.border.shown.borrow_mut().push(0);
+        self.border.forget_in_sight();
         drop(ids);
         self.border_moved(idx, pos);
         idx
@@ -466,6 +467,7 @@ impl Realm {
         self.inbox.borrow_mut().swap_remove(i);
         self.members.borrow_mut().swap_remove(i);
         self.border.shown.borrow_mut().swap_remove(i);
+        self.border.forget_in_sight();
     }
 
     /// Removes the residents that leave: runs the lifecycle hooks, then
