@@ -1,0 +1,41 @@
+# Numbers of the showcase world (`cargo run -p unsup-spectator --example
+# showcase`). The showcase is a tool for work on the viewer. It is not the
+# game.
+
+[walk]
+# Chance in 1,000 per tick that an idle resident starts a new walk.
+start_per_mille = 60
+# Chance in 100 that a new walk leads to a neighbour district.
+leave_zone_percent = 8
+# Longest path of one walk, in tiles.
+max_path = 160
+
+[driver]
+# One resident in this many gets a request in each frame.
+one_in = 25
+# Weights of the requests. The driver draws one by weight.
+work = 300
+eat = 120
+rest = 120
+sleep = 60
+train = 60
+say = 300
+rob = 14
+marry = 6
+open_business = 6
+die = 3
+# Shortest and longest duration of a busy action, in ticks.
+min_ticks = 8
+max_ticks = 45
+# Frames between two elections.
+election_every = 240
+
+[drama]
+# Drama scores of the events of the showcase (docs/design/game-design.md, 6).
+said = 3
+shift_completed = 5
+business_opened = 25
+married = 30
+theft_committed = 55
+resident_died = 75
+election_decided = 85

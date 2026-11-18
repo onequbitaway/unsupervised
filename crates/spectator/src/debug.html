@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Unsupervised: debug view</title>
+<style>body{margin:0;background:#111;color:#ccc;font:12px monospace}canvas{display:block}#s{position:fixed;left:8px;top:8px}</style>
+<div id="s">connecting</div><canvas id="c"></canvas>
+<script>
+// Draws every resident of the subscribed zones as a dot. It speaks the
+// viewer feed of docs/design/protocol.md and nothing else.
+const c = document.getElementById('c'), g = c.getContext('2d'), s = document.getElementById('s');
+const zones = new Map(); let bounds = null, frame = 0, note = '';
+function fit() { c.width = innerWidth; c.height = innerHeight; } fit(); onresize = fit;
+async function load() {
+  const world = await (await fetch('/v1/world')).json();
+  for (const z of world.zones) {
+    const b = z.bounds;
+    bounds = bounds ? { x0: Math.min(bounds.x0, b.x0), y0: Math.min(bounds.y0, b.y0), x1: Math.max(bounds.x1, b.x1), y1: Math.max(bounds.y1, b.y1) } : { ...b };
+  }
+  // The server limits the zones of one viewer. Take the fullest zones first.
+  const wanted = world.zones.slice().sort((a, b) => b.residents - a.residents).slice(0, 32).map((z) => z.id);
+  if (wanted.length < world.zones.length) note = ', ' + wanted.length + ' of ' + world.zones.length + ' zones';
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/v1/spectate');
+  ws.onopen = () => ws.send(JSON.stringify({ op: 'subscribe', zones: wanted }));
+  ws.onclose = () => { note = ', disconnected'; };
+  ws.onmessage = (m) => {
+    const f = JSON.parse(m.data);
+    if (f.op === 'world' || f.op === 'frame') frame = f.frame;
+    if (f.op === 'error') note = ', ' + f.error.code;
+    if (f.op === 'snapshot') zones.set(f.zone, new Map(f.residents.map((r) => [r.id, r.pos])));
+    if (f.op === 'delta') {
+      const z = zones.get(f.zone); if (!z) return;
+      for (const id of f.left || []) z.delete(id);
+      for (const r of f.entered || []) z.set(r.id, r.pos);
+      for (const [id, x, y] of f.moved || []) if (z.has(id)) z.set(id, { x, y });
+    }
+  };
+}
+function draw() {
+  g.fillStyle = '#111'; g.fillRect(0, 0, c.width, c.height);
+  let count = 0;
+  if (bounds) {
+    const k = Math.min(c.width / (bounds.x1 - bounds.x0), c.height / (bounds.y1 - bounds.y0));
+    g.fillStyle = '#6cf';
+    for (const z of zones.values()) for (const p of z.values()) { count++; g.fillRect((p.x - bounds.x0) * k, (p.y - bounds.y0) * k, Math.max(2, k), Math.max(2, k)); }
+  }
+  s.textContent = 'frame ' + frame + ', residents ' + count + note;
+  requestAnimationFrame(draw);
+}
+load(); draw();
+</script>
