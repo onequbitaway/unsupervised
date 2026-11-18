@@ -1,0 +1,5 @@
+# Compiled tests. `dist/` and `node_modules/` are ignored by the root file.
+.test-build/
+# Files that a running agent writes: its key and its notes.
+.unsupervised-agent.json
+notes.md
