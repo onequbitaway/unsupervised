@@ -1,14 +1,1275 @@
 {
-  "attrs": [],
+  "attrs": [
+    {
+      "default": 0,
+      "max": 1000,
+      "min": 0,
+      "name": "age.years",
+      "summary": "Age in years."
+    },
+    {
+      "default": 1000,
+      "max": 1000,
+      "min": 0,
+      "name": "need.energy",
+      "summary": "Energy, 0 to 1000. At 0 the resident is exhausted."
+    },
+    {
+      "default": 1000,
+      "max": 1000,
+      "min": 0,
+      "name": "need.food",
+      "summary": "Food, 0 to 1000. At 0 the resident starves."
+    },
+    {
+      "default": 1000,
+      "max": 1000,
+      "min": 0,
+      "name": "need.health",
+      "summary": "Health, 0 to 1000. At 0 the resident dies."
+    },
+    {
+      "default": 1000,
+      "max": 1000,
+      "min": 0,
+      "name": "need.mood",
+      "summary": "Mood, 0 to 1000. A low mood slows work and learning."
+    },
+    {
+      "default": 0,
+      "max": 1000,
+      "min": -1000,
+      "name": "rep.standing",
+      "summary": "Public reputation. Kept contracts and praise raise it. Broken contracts and blame lower it."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.combat",
+      "summary": "Experience in combat. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.cooking",
+      "summary": "Experience in cooking. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.crafting",
+      "summary": "Experience in crafting. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.farming",
+      "summary": "Experience in farming. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.investigation",
+      "summary": "Experience in investigation. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.labor",
+      "summary": "Experience in labor. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.law",
+      "summary": "Experience in law. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.management",
+      "summary": "Experience in management. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.medicine",
+      "summary": "Experience in medicine. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.mining",
+      "summary": "Experience in mining. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.rhetoric",
+      "summary": "Experience in rhetoric. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.stealth",
+      "summary": "Experience in stealth. The level is floor(sqrt(experience / 100))."
+    },
+    {
+      "default": 0,
+      "min": 0,
+      "name": "skill.trading",
+      "summary": "Experience in trading. The level is floor(sqrt(experience / 100))."
+    }
+  ],
   "conditions": [
+    {
+      "blocking": false,
+      "name": "asleep",
+      "summary": "The resident sleeps. Its sight is reduced."
+    },
     {
       "blocking": true,
       "name": "frozen",
       "summary": "An administrator stopped the resident. It cannot act."
+    },
+    {
+      "blocking": true,
+      "name": "hospitalized",
+      "summary": "The resident is in hospital until it is healed."
     }
   ],
-  "items": [],
+  "items": [
+    {
+      "attrs": {
+        "base_price": 200
+      },
+      "id": 0,
+      "name": "grain",
+      "summary": "Grain from a farm. An input for bread, meals and moonshine.",
+      "tags": [
+        "raw"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 300,
+        "nutrition": 120
+      },
+      "id": 1,
+      "name": "vegetables",
+      "summary": "Vegetables from a farm. Food, and an input for meals.",
+      "tags": [
+        "raw",
+        "food"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 250
+      },
+      "id": 2,
+      "name": "cotton",
+      "summary": "Cotton from a farm. An input for cloth.",
+      "tags": [
+        "raw"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 400
+      },
+      "id": 3,
+      "name": "herbs",
+      "summary": "Herbs from a forest. An input for medicine.",
+      "tags": [
+        "raw"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 300
+      },
+      "id": 4,
+      "name": "wood",
+      "summary": "Wood from a forest. An input for tools and furniture.",
+      "tags": [
+        "raw"
+      ],
+      "weight": 3
+    },
+    {
+      "attrs": {
+        "base_price": 500
+      },
+      "id": 5,
+      "name": "ore",
+      "summary": "Ore from a mine. An input for metal.",
+      "tags": [
+        "raw"
+      ],
+      "weight": 4
+    },
+    {
+      "attrs": {
+        "base_price": 800,
+        "nutrition": 300
+      },
+      "id": 6,
+      "name": "bread",
+      "summary": "A loaf of bread.",
+      "tags": [
+        "food"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 1800,
+        "nutrition": 600
+      },
+      "id": 7,
+      "name": "meal",
+      "summary": "A cooked meal.",
+      "tags": [
+        "food"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 800
+      },
+      "id": 8,
+      "name": "cloth",
+      "summary": "Cloth. An input for clothes and furniture.",
+      "tags": [
+        "material"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 1800
+      },
+      "id": 9,
+      "name": "metal",
+      "summary": "Metal bars. An input for tools.",
+      "tags": [
+        "material"
+      ],
+      "weight": 4
+    },
+    {
+      "attrs": {
+        "base_price": 3500
+      },
+      "id": 10,
+      "name": "tools",
+      "summary": "A set of tools.",
+      "tags": [
+        "tool"
+      ],
+      "weight": 3
+    },
+    {
+      "attrs": {
+        "base_price": 5000
+      },
+      "id": 11,
+      "name": "furniture",
+      "summary": "A piece of furniture.",
+      "tags": [
+        "furniture"
+      ],
+      "weight": 20
+    },
+    {
+      "attrs": {
+        "base_price": 2500
+      },
+      "id": 12,
+      "name": "clothes",
+      "summary": "A set of clothes.",
+      "tags": [
+        "clothing"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 3000,
+        "healing": 400
+      },
+      "id": 13,
+      "name": "medicine",
+      "summary": "Medicine that heals.",
+      "tags": [
+        "medicine"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 2000
+      },
+      "id": 14,
+      "name": "moonshine",
+      "summary": "Strong drink made without a licence. It is illegal to carry.",
+      "tags": [
+        "contraband"
+      ],
+      "weight": 1
+    },
+    {
+      "attrs": {
+        "base_price": 4000
+      },
+      "id": 15,
+      "name": "stims",
+      "summary": "Stimulant pills. They are illegal to carry.",
+      "tags": [
+        "contraband"
+      ],
+      "weight": 1
+    }
+  ],
   "params": [
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "economy.board_refresh_minutes",
+      "policy": false,
+      "summary": "Game minutes between two full checks of the job board and the property board of a district.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "economy.city_rent_bp",
+      "policy": true,
+      "summary": "Rent for one game day of a home that the city owns, in basis points of the site value.",
+      "value": 20
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "economy.daily_spread_minutes",
+      "policy": false,
+      "summary": "Game minutes after midnight over which the districts spread their daily work: rent and property tax. 1: all at midnight.",
+      "value": 60
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "economy.deal_minutes",
+      "policy": false,
+      "summary": "Game minutes of `buy_property`, `rent`, `open_business` and `close_business`.",
+      "value": 10
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.bread",
+      "policy": true,
+      "summary": "Cents that one unit of bread costs at the depot.",
+      "value": 2000
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.cloth",
+      "policy": true,
+      "summary": "Cents that one unit of cloth costs at the depot.",
+      "value": 2000
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.clothes",
+      "policy": true,
+      "summary": "Cents that one unit of clothes costs at the depot.",
+      "value": 6250
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.cotton",
+      "policy": true,
+      "summary": "Cents that one unit of cotton costs at the depot.",
+      "value": 625
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.furniture",
+      "policy": true,
+      "summary": "Cents that one unit of furniture costs at the depot.",
+      "value": 12500
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.grain",
+      "policy": true,
+      "summary": "Cents that one unit of grain costs at the depot.",
+      "value": 500
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.herbs",
+      "policy": true,
+      "summary": "Cents that one unit of herbs costs at the depot.",
+      "value": 1000
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.meal",
+      "policy": true,
+      "summary": "Cents that one unit of meal costs at the depot.",
+      "value": 4500
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.medicine",
+      "policy": true,
+      "summary": "Cents that one unit of medicine costs at the depot.",
+      "value": 7500
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.metal",
+      "policy": true,
+      "summary": "Cents that one unit of metal costs at the depot.",
+      "value": 4500
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.ore",
+      "policy": true,
+      "summary": "Cents that one unit of ore costs at the depot.",
+      "value": 1250
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.tools",
+      "policy": true,
+      "summary": "Cents that one unit of tools costs at the depot.",
+      "value": 8750
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.vegetables",
+      "policy": true,
+      "summary": "Cents that one unit of vegetables costs at the depot.",
+      "value": 750
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_ceiling.wood",
+      "policy": true,
+      "summary": "Cents that one unit of wood costs at the depot.",
+      "value": 750
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.bread",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of bread.",
+      "value": 320
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.cloth",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of cloth.",
+      "value": 320
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.clothes",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of clothes.",
+      "value": 1000
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.cotton",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of cotton.",
+      "value": 100
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.furniture",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of furniture.",
+      "value": 2000
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.grain",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of grain.",
+      "value": 80
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.herbs",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of herbs.",
+      "value": 160
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.meal",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of meal.",
+      "value": 720
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.medicine",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of medicine.",
+      "value": 1200
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.metal",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of metal.",
+      "value": 720
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.ore",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of ore.",
+      "value": 200
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.tools",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of tools.",
+      "value": 1400
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.vegetables",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of vegetables.",
+      "value": 120
+    },
+    {
+      "min": 0,
+      "name": "economy.depot_floor.wood",
+      "policy": true,
+      "summary": "Cents that the depot pays for one unit of wood.",
+      "value": 120
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.business_closed",
+      "policy": false,
+      "summary": "Drama score of the event when a business loses its permit.",
+      "value": 25
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.business_opened",
+      "policy": false,
+      "summary": "Drama score of the event when a business gets its permit.",
+      "value": 25
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.goods_produced",
+      "policy": false,
+      "summary": "Drama score of the event when goods are made or gathered.",
+      "value": 2
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.goods_sold",
+      "policy": false,
+      "summary": "Drama score of the event when goods are sold.",
+      "value": 2
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.job_posted",
+      "policy": false,
+      "summary": "Drama score of the event when a job is posted.",
+      "value": 6
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.lease_ended",
+      "policy": false,
+      "summary": "Drama score of the event when a lease ends without an eviction.",
+      "value": 12
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.lease_started",
+      "policy": false,
+      "summary": "Drama score of the event when a tenant moves in.",
+      "value": 12
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.property_foreclosed",
+      "policy": false,
+      "summary": "Drama score of the event when the city takes a site.",
+      "value": 55
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.property_inherited",
+      "policy": false,
+      "summary": "Drama score of the event when a site goes to an heir.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.property_sold",
+      "policy": false,
+      "summary": "Drama score of the event when a site is sold.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.shift_completed",
+      "policy": false,
+      "summary": "Drama score of the event when a shift ends and the wage is paid.",
+      "value": 2
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.shift_unpaid",
+      "policy": false,
+      "summary": "Drama score of the event when a till cannot pay a wage.",
+      "value": 35
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.tenant_evicted",
+      "policy": false,
+      "summary": "Drama score of the event when a tenant is evicted.",
+      "value": 45
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.worker_fired",
+      "policy": false,
+      "summary": "Drama score of the event when a worker is fired.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.worker_hired",
+      "policy": false,
+      "summary": "Drama score of the event when a resident takes a job.",
+      "value": 12
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.drama.worker_left",
+      "policy": false,
+      "summary": "Drama score of the event when a worker quits or loses a job that closed.",
+      "value": 6
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "economy.energy_per_hour",
+      "policy": false,
+      "summary": "Energy points that one game hour of `work`, `gather` or `produce` costs.",
+      "value": 20
+    },
+    {
+      "max": 720,
+      "min": 1,
+      "name": "economy.gather_minutes",
+      "policy": false,
+      "summary": "Game minutes of one `gather` action when the resident gives none.",
+      "value": 60
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "economy.gather_minutes_max",
+      "policy": false,
+      "summary": "Greatest game minutes of one `gather` action.",
+      "value": 240
+    },
+    {
+      "max": 720,
+      "min": 1,
+      "name": "economy.gather_minutes_min",
+      "policy": false,
+      "summary": "Least game minutes of one `gather` action.",
+      "value": 10
+    },
+    {
+      "max": 9000,
+      "min": 0,
+      "name": "economy.income_tax_bp",
+      "policy": true,
+      "summary": "Income tax on wages in basis points. The employer withholds it for the city.",
+      "value": 1000
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "economy.job_slots_max",
+      "policy": false,
+      "summary": "Greatest number of workers of one job.",
+      "value": 50
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "economy.labor_min_energy",
+      "policy": false,
+      "summary": "Least energy that a resident needs to start `work`, `gather` or `produce`.",
+      "value": 50
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "economy.list_default",
+      "policy": false,
+      "summary": "Entries that `list_jobs` and `list_property` return when the resident gives no limit.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "economy.list_max",
+      "policy": false,
+      "summary": "Greatest number of entries that `list_jobs` and `list_property` return.",
+      "value": 20
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "economy.min_wage",
+      "policy": true,
+      "summary": "Least wage in cents for one shift that `post_job` accepts.",
+      "value": 0
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "economy.mood_floor_bp",
+      "policy": false,
+      "summary": "Share of the normal harvest and experience, in basis points, that a resident with mood 0 gets.",
+      "value": 5000
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "economy.observe_jobs_max",
+      "policy": false,
+      "summary": "Greatest number of jobs in the `business` section of a brief observation.",
+      "value": 3
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "economy.observe_prices_max",
+      "policy": false,
+      "summary": "Greatest number of prices, and of goods in the stock, in the `business` section of a brief observation.",
+      "value": 6
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "economy.observe_sites_max",
+      "policy": false,
+      "summary": "Greatest number of sites, and of leases, in the `property` section of a brief observation.",
+      "value": 6
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "economy.paperwork_minutes",
+      "policy": false,
+      "summary": "Game minutes of `post_job`, `close_job`, `apply_job`, `quit_job`, `fire`, `set_price`, `sell_property`, `rent_out` and `end_lease`.",
+      "value": 5
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "economy.permit_fee",
+      "policy": true,
+      "summary": "Cents that `open_business` costs. The city gets them.",
+      "value": 5000
+    },
+    {
+      "max": 1000000000000,
+      "min": 1,
+      "name": "economy.price_max",
+      "policy": false,
+      "summary": "Greatest price, rent or till amount in cents that a verb accepts.",
+      "value": 100000000
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "economy.produce_batches_max",
+      "policy": false,
+      "summary": "Greatest number of batches of one `produce` action.",
+      "value": 20
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "economy.property_tax_bp",
+      "policy": true,
+      "summary": "Property tax for one game day in basis points of the site value.",
+      "value": 5
+    },
+    {
+      "max": 28,
+      "min": 0,
+      "name": "economy.property_tax_grace_days",
+      "policy": true,
+      "summary": "Days in a row that a site can owe property tax before the city takes it.",
+      "value": 3
+    },
+    {
+      "max": 1000000000,
+      "min": 0,
+      "name": "economy.public_works_budget",
+      "policy": true,
+      "summary": "Cents that one city can pay for starter shifts in one game day.",
+      "value": 200000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "economy.public_works_wage",
+      "policy": true,
+      "summary": "Wage in cents, before income tax, for one starter shift at a city hall or a depot.",
+      "value": 2000
+    },
+    {
+      "max": 28,
+      "min": 0,
+      "name": "economy.rent_grace_days",
+      "policy": true,
+      "summary": "Days in a row that a tenant can miss the rent before the eviction.",
+      "value": 2
+    },
+    {
+      "max": 9000,
+      "min": 0,
+      "name": "economy.sales_tax_bp",
+      "policy": true,
+      "summary": "Sales tax on shop sales in basis points. The shop pays it to the city out of the price.",
+      "value": 500
+    },
+    {
+      "max": 720,
+      "min": 10,
+      "name": "economy.shift_minutes",
+      "policy": true,
+      "summary": "Game minutes that one `work` shift lasts.",
+      "value": 240
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "economy.site_jobs_max",
+      "policy": false,
+      "summary": "Greatest number of jobs at one site.",
+      "value": 8
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "economy.skill_bonus_bp",
+      "policy": false,
+      "summary": "Extra harvest in basis points for each skill level.",
+      "value": 1000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "economy.speed_bonus_bp",
+      "policy": false,
+      "summary": "Extra production speed in basis points for each skill level above the least level of the recipe.",
+      "value": 500
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "economy.trade_minutes",
+      "policy": false,
+      "summary": "Game minutes of `buy`, `sell`, `stock`, `unstock`, `till_collect` and `till_fund`.",
+      "value": 1
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "economy.trade_qty_max",
+      "policy": false,
+      "summary": "Greatest number of units in one `buy`, `sell`, `stock` or `unstock` action.",
+      "value": 1000
+    },
+    {
+      "max": 1000000000,
+      "min": 1,
+      "name": "economy.wage_max",
+      "policy": false,
+      "summary": "Greatest wage in cents for one shift that `post_job` accepts.",
+      "value": 10000000
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "economy.xp_per_hour",
+      "policy": false,
+      "summary": "Experience points for one game hour of work at full mood.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "economy.xp_per_sale",
+      "policy": false,
+      "summary": "Experience points in `trading` for one `sell` action.",
+      "value": 1
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "finance.account_open_fee",
+      "policy": false,
+      "summary": "Cents that `open_account` costs. The resident pays in cash at the bank.",
+      "value": 100
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "finance.bankruptcy_days",
+      "policy": true,
+      "summary": "Game days after a default during which the resident cannot borrow.",
+      "value": 28
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "finance.base_rate_bp",
+      "policy": false,
+      "summary": "Yearly base rate of the central bank in basis points. The central banker sets it.",
+      "value": 500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "finance.base_rate_ceiling_bp",
+      "policy": true,
+      "summary": "Highest base rate that the central banker can set.",
+      "value": 3000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "finance.base_rate_floor_bp",
+      "policy": true,
+      "summary": "Lowest base rate that the central banker can set.",
+      "value": 0
+    },
+    {
+      "max": 50,
+      "min": 1,
+      "name": "finance.book_depth",
+      "policy": false,
+      "summary": "Price levels per side that `market_book` and `shares_book` show.",
+      "value": 5
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "finance.deposit_spread_bp",
+      "policy": false,
+      "summary": "The yearly deposit rate is the base rate minus this number, and not below zero.",
+      "value": 300
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "finance.drama_central_bank",
+      "policy": false,
+      "summary": "Drama of the central bank events: a rate change, money issued, money retired.",
+      "value": 35
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "finance.drama_loan_defaulted",
+      "policy": false,
+      "summary": "Drama of `finance.loan_defaulted`.",
+      "value": 55
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "finance.drama_loan_granted",
+      "policy": false,
+      "summary": "Drama of `finance.loan_granted`.",
+      "value": 12
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "finance.drama_routine",
+      "policy": false,
+      "summary": "Drama of routine finance events: a fill on the exchange, a share trade, a new account, a repaid loan.",
+      "value": 3
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "finance.drama_shares",
+      "policy": false,
+      "summary": "Drama of `finance.shares_issued` and `finance.dividend_paid`.",
+      "value": 20
+    },
+    {
+      "max": 2000,
+      "min": 0,
+      "name": "finance.exchange_fee_bp",
+      "policy": true,
+      "summary": "Fee of a trade on the exchange, in basis points of the value. The seller pays it to the city.",
+      "value": 50
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "finance.exchange_ticks",
+      "policy": false,
+      "summary": "Ticks that `order_place`, `order_cancel` and `market_claim` take.",
+      "value": 1
+    },
+    {
+      "max": 1000000000000,
+      "min": 0,
+      "name": "finance.issue_limit_per_year",
+      "policy": true,
+      "summary": "Cents that the central banker can issue to the nation treasury in one game year.",
+      "value": 10000000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "finance.loan_base_limit",
+      "policy": false,
+      "summary": "Credit limit of a resident without history and without deposits, in cents.",
+      "value": 0
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "finance.loan_default_penalty_bp",
+      "policy": false,
+      "summary": "Share of the credit limit that each past default removes, in basis points.",
+      "value": 5000
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "finance.loan_deposit_factor_bp",
+      "policy": false,
+      "summary": "Share of the seasoned balance that counts for the credit limit, in basis points.",
+      "value": 10000
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "finance.loan_first_due_days",
+      "policy": false,
+      "summary": "Midnights from the grant of a loan to its first instalment. With 2 the borrower has at least one full day.",
+      "value": 2
+    },
+    {
+      "max": 1000000000,
+      "min": 0,
+      "name": "finance.loan_limit_max",
+      "policy": true,
+      "summary": "Greatest credit limit of one resident in cents.",
+      "value": 5000000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "finance.loan_limit_per_account_day",
+      "policy": false,
+      "summary": "Cents that each full day of account age adds to the credit limit.",
+      "value": 500
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "finance.loan_limit_per_repaid_loan",
+      "policy": false,
+      "summary": "Cents that each fully repaid loan adds to the credit limit.",
+      "value": 20000
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "finance.loan_min",
+      "policy": false,
+      "summary": "Least amount of a loan in cents.",
+      "value": 1000
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "finance.loan_missed_max",
+      "policy": false,
+      "summary": "Missed daily instalments in a row that make a loan default.",
+      "value": 3
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "finance.loan_spread_bp",
+      "policy": false,
+      "summary": "The yearly rate of a new loan is the base rate plus this number.",
+      "value": 300
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "finance.loan_term_max_days",
+      "policy": false,
+      "summary": "Longest term of a loan in game days.",
+      "value": 28
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "finance.loan_term_min_days",
+      "policy": false,
+      "summary": "Shortest term of a loan in game days.",
+      "value": 1
+    },
+    {
+      "max": 50,
+      "min": 1,
+      "name": "finance.observe_list_max",
+      "policy": false,
+      "summary": "Greatest number of entries of one list in the `bank` and `market` sections of a brief observation.",
+      "value": 3
+    },
+    {
+      "max": 1000000000000,
+      "min": 1,
+      "name": "finance.order_price_max",
+      "policy": false,
+      "summary": "Greatest unit price of one order in cents.",
+      "value": 100000000
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "finance.order_qty_max",
+      "policy": false,
+      "summary": "Greatest quantity of one order.",
+      "value": 100000
+    },
+    {
+      "max": 256,
+      "min": 1,
+      "name": "finance.orders_max_per_trader",
+      "policy": false,
+      "summary": "Greatest number of orders of one trader at one exchange, open or not yet claimed.",
+      "value": 8
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "finance.reserve_ratio_bp",
+      "policy": true,
+      "summary": "Share of all deposits that the bank cannot lend, in basis points.",
+      "value": 1000
+    },
+    {
+      "max": 1000000000000,
+      "min": 0,
+      "name": "finance.retire_limit_per_year",
+      "policy": true,
+      "summary": "Cents of treasury money that the central banker can retire in one game year.",
+      "value": 10000000
+    },
+    {
+      "max": 256,
+      "min": 1,
+      "name": "finance.share_orders_max",
+      "policy": false,
+      "summary": "Greatest number of open share orders that one resident placed.",
+      "value": 8
+    },
+    {
+      "max": 1000000000,
+      "min": 1,
+      "name": "finance.share_price_max",
+      "policy": false,
+      "summary": "Greatest price of one share in cents.",
+      "value": 100000000
+    },
+    {
+      "max": 1000000000,
+      "min": 1,
+      "name": "finance.shares_max_per_org",
+      "policy": false,
+      "summary": "Greatest number of shares of one organization, sold or on offer.",
+      "value": 1000000
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "finance.stats_report_period",
+      "policy": false,
+      "summary": "Frames between two reports of a zone to the statistics. A zone also reports at the start of each day.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "finance.transfer_fee_bp",
+      "policy": false,
+      "summary": "Fee of `transfer`, in basis points of the amount. The account of the sender pays it.",
+      "value": 10
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "finance.withdraw_fee_bp",
+      "policy": false,
+      "summary": "Fee of `withdraw`, in basis points of the amount. The account pays it.",
+      "value": 0
+    },
     {
       "max": 1000,
       "min": 0,
@@ -88,9 +1349,2967 @@
       "policy": false,
       "summary": "Greatest number of ticks that one `wait` action can last.",
       "value": 1440
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "life.asleep_sight_radius",
+      "policy": false,
+      "summary": "Distance in tiles at which a resident that sleeps can `inspect` residents and sites.",
+      "value": 1
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "life.carry_ticks",
+      "policy": false,
+      "summary": "Ticks that `drop` and `pick_up` take.",
+      "value": 1
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.birthday",
+      "policy": false,
+      "summary": "Drama of `life.birthday_reached`.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.died",
+      "policy": false,
+      "summary": "Drama of `life.resident_died`.",
+      "value": 80
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.estate",
+      "policy": false,
+      "summary": "Drama of `life.estate_settled`.",
+      "value": 25
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.gift",
+      "policy": false,
+      "summary": "Drama of `life.gift_given`.",
+      "value": 12
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.healed",
+      "policy": false,
+      "summary": "Drama of `life.patient_healed`.",
+      "value": 15
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.item_used",
+      "policy": false,
+      "summary": "Drama of `life.item_used`.",
+      "value": 4
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.level_gained",
+      "policy": false,
+      "summary": "Drama of `life.level_gained`.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.meal",
+      "policy": false,
+      "summary": "Drama of `life.meal_eaten`.",
+      "value": 2
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.slept",
+      "policy": false,
+      "summary": "Drama of `life.slept`.",
+      "value": 1
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.trained",
+      "policy": false,
+      "summary": "Drama of `life.skill_trained`.",
+      "value": 8
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.traveled",
+      "policy": false,
+      "summary": "Drama of `life.traveled`.",
+      "value": 12
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.drama.will",
+      "policy": false,
+      "summary": "Drama of `life.will_written`.",
+      "value": 15
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "life.eat_ticks",
+      "policy": false,
+      "summary": "Ticks that one meal takes.",
+      "value": 10
+    },
+    {
+      "max": 200,
+      "min": 0,
+      "name": "life.energy_decay_per_hour",
+      "policy": false,
+      "summary": "Energy points that a resident who is awake loses each game hour.",
+      "value": 40
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "life.estate_wait_ticks",
+      "policy": false,
+      "summary": "Ticks of the global realm that an estate with an heir waits for the holdings of the dead resident. An estate that is still empty after this time had nothing.",
+      "value": 2
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.exhaust_health_per_hour",
+      "policy": false,
+      "summary": "Health points that a resident with no energy loses each game hour.",
+      "value": 10
+    },
+    {
+      "max": 200,
+      "min": 0,
+      "name": "life.food_decay_per_hour",
+      "policy": false,
+      "summary": "Food points that a resident loses each game hour.",
+      "value": 14
+    },
+    {
+      "max": 64,
+      "min": 5,
+      "name": "life.gen.block",
+      "policy": false,
+      "summary": "Side of one city block in tiles.",
+      "value": 14
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.gen.margin_trees_pct",
+      "policy": false,
+      "summary": "Percent of the free tiles around a building that get a tree.",
+      "value": 8
+    },
+    {
+      "max": 16,
+      "min": 1,
+      "name": "life.gen.mine_rim",
+      "policy": false,
+      "summary": "Width in tiles of the free ground around the rock of a mine.",
+      "value": 2
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.commercial.apartment",
+      "policy": false,
+      "summary": "Weight of apartments in a commercial district.",
+      "value": 10
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.commercial.office",
+      "policy": false,
+      "summary": "Weight of offices in a commercial district.",
+      "value": 20
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.commercial.park",
+      "policy": false,
+      "summary": "Weight of parks in a commercial district.",
+      "value": 3
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.commercial.restaurant",
+      "policy": false,
+      "summary": "Weight of restaurants in a commercial district.",
+      "value": 20
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.commercial.shop",
+      "policy": false,
+      "summary": "Weight of shops in a commercial district.",
+      "value": 30
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.commercial.warehouse",
+      "policy": false,
+      "summary": "Weight of warehouses in a commercial district.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.commercial.workshop",
+      "policy": false,
+      "summary": "Weight of workshops in a commercial district.",
+      "value": 6
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.downtown.apartment",
+      "policy": false,
+      "summary": "Weight of apartments in a downtown district.",
+      "value": 20
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.downtown.office",
+      "policy": false,
+      "summary": "Weight of offices in a downtown district.",
+      "value": 30
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.downtown.park",
+      "policy": false,
+      "summary": "Weight of parks in a downtown district.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.downtown.restaurant",
+      "policy": false,
+      "summary": "Weight of restaurants in a downtown district.",
+      "value": 15
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.downtown.shop",
+      "policy": false,
+      "summary": "Weight of shops in a downtown district.",
+      "value": 15
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.industrial.apartment",
+      "policy": false,
+      "summary": "Weight of apartments in an industrial district.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.industrial.factory",
+      "policy": false,
+      "summary": "Weight of factories in an industrial district.",
+      "value": 30
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.industrial.mine",
+      "policy": false,
+      "summary": "Weight of mines in an industrial district.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.industrial.office",
+      "policy": false,
+      "summary": "Weight of offices in an industrial district.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.industrial.warehouse",
+      "policy": false,
+      "summary": "Weight of warehouses in an industrial district.",
+      "value": 25
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.industrial.workshop",
+      "policy": false,
+      "summary": "Weight of workshops in an industrial district.",
+      "value": 20
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.apartment",
+      "policy": false,
+      "summary": "Weight of apartments in a mixed district.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.farm",
+      "policy": false,
+      "summary": "Weight of farms in a mixed district.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.home",
+      "policy": false,
+      "summary": "Weight of homes in a mixed district.",
+      "value": 30
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.office",
+      "policy": false,
+      "summary": "Weight of offices in a mixed district.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.park",
+      "policy": false,
+      "summary": "Weight of parks in a mixed district.",
+      "value": 4
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.restaurant",
+      "policy": false,
+      "summary": "Weight of restaurants in a mixed district.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.shop",
+      "policy": false,
+      "summary": "Weight of shops in a mixed district.",
+      "value": 10
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.warehouse",
+      "policy": false,
+      "summary": "Weight of warehouses in a mixed district.",
+      "value": 4
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.mixed.workshop",
+      "policy": false,
+      "summary": "Weight of workshops in a mixed district.",
+      "value": 6
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.residential.apartment",
+      "policy": false,
+      "summary": "Weight of apartments in a residential district.",
+      "value": 15
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.residential.home",
+      "policy": false,
+      "summary": "Weight of homes in a residential district.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.residential.park",
+      "policy": false,
+      "summary": "Weight of parks in a residential district.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.residential.restaurant",
+      "policy": false,
+      "summary": "Weight of restaurants in a residential district.",
+      "value": 4
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.residential.shop",
+      "policy": false,
+      "summary": "Weight of shops in a residential district.",
+      "value": 6
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.residential.workshop",
+      "policy": false,
+      "summary": "Weight of workshops in a residential district.",
+      "value": 2
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.rural.farm",
+      "policy": false,
+      "summary": "Weight of farms in a rural district.",
+      "value": 45
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.rural.forest",
+      "policy": false,
+      "summary": "Weight of forests in a rural district.",
+      "value": 25
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.rural.home",
+      "policy": false,
+      "summary": "Weight of homes in a rural district.",
+      "value": 12
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.rural.mine",
+      "policy": false,
+      "summary": "Weight of mines in a rural district.",
+      "value": 10
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.gen.mix.rural.workshop",
+      "policy": false,
+      "summary": "Weight of workshops in a rural district.",
+      "value": 3
+    },
+    {
+      "max": 64,
+      "min": 2,
+      "name": "life.gen.pond_divisor",
+      "policy": false,
+      "summary": "The pond of a park is as wide and as high as the park divided by this number.",
+      "value": 4
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.gen.share.commercial",
+      "policy": false,
+      "summary": "Share of commercial districts in a city.",
+      "value": 15
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.gen.share.downtown",
+      "policy": false,
+      "summary": "Share of downtown districts in a city.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.gen.share.industrial",
+      "policy": false,
+      "summary": "Share of industrial districts in a city.",
+      "value": 15
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.gen.share.residential",
+      "policy": false,
+      "summary": "Share of residential districts in a city.",
+      "value": 35
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.gen.share.rural",
+      "policy": false,
+      "summary": "Share of rural districts in a city.",
+      "value": 25
+    },
+    {
+      "max": 4,
+      "min": 1,
+      "name": "life.gen.street",
+      "policy": false,
+      "summary": "Width of a street between two blocks in tiles.",
+      "value": 2
+    },
+    {
+      "max": 90,
+      "min": 0,
+      "name": "life.gen.value_jitter_pct",
+      "policy": false,
+      "summary": "A site value differs from the value of its kind by at most this percent.",
+      "value": 15
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "life.gen.zones_per.bank",
+      "policy": false,
+      "summary": "Zones of a city for each bank.",
+      "value": 6
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "life.gen.zones_per.hospital",
+      "policy": false,
+      "summary": "Zones of a city for each hospital.",
+      "value": 6
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "life.gen.zones_per.police_station",
+      "policy": false,
+      "summary": "Zones of a city for each police station.",
+      "value": 6
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "life.gen.zones_per.school",
+      "policy": false,
+      "summary": "Zones of a city for each school.",
+      "value": 4
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "life.gen.zones_per.shelter",
+      "policy": false,
+      "summary": "Zones of a city for each shelter.",
+      "value": 2
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "life.gen.zones_per.station",
+      "policy": false,
+      "summary": "Zones of a city for each station.",
+      "value": 16
+    },
+    {
+      "max": 8,
+      "min": 0,
+      "name": "life.give_range",
+      "policy": false,
+      "summary": "Greatest distance in tiles between the two residents of a gift.",
+      "value": 1
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "life.give_ticks",
+      "policy": false,
+      "summary": "Ticks that a gift takes.",
+      "value": 1
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "life.heal_fee_per_point",
+      "policy": true,
+      "summary": "Cents that a hospital charges for each health point.",
+      "value": 20
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "life.heal_health_per_hour",
+      "policy": false,
+      "summary": "Health points that a hospital gives back each game hour.",
+      "value": 150
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.health_regen_per_hour",
+      "policy": false,
+      "summary": "Health points that come back each game hour while food and energy are not low.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.inspect_hurt_below",
+      "policy": false,
+      "summary": "A resident with less health than this looks hurt to a resident that inspects it. Below `life.need_low` it looks critical.",
+      "value": 500
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "life.learn_min_pct",
+      "policy": false,
+      "summary": "Percent of the experience that a resident with no mood still learns.",
+      "value": 50
+    },
+    {
+      "max": 200,
+      "min": 0,
+      "name": "life.low_need_mood_per_hour",
+      "policy": false,
+      "summary": "Mood points that a resident loses each game hour for each of food and energy that is low.",
+      "value": 10
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.meal_mood",
+      "policy": false,
+      "summary": "Mood points that one meal gives.",
+      "value": 5
+    },
+    {
+      "max": 200,
+      "min": 0,
+      "name": "life.mood_decay_per_hour",
+      "policy": false,
+      "summary": "Mood points that a resident loses each game hour.",
+      "value": 2
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "life.need_low",
+      "policy": false,
+      "summary": "Below this value, food or energy is low: mood falls and health does not come back.",
+      "value": 250
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "life.old_age_death_bp",
+      "policy": false,
+      "summary": "Chance to die of old age in one year at the first old age, in basis points.",
+      "value": 500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "life.old_age_death_rise_bp",
+      "policy": false,
+      "summary": "Basis points that the chance to die of old age grows with each further year.",
+      "value": 300
+    },
+    {
+      "max": 200,
+      "min": 0,
+      "name": "life.old_age_from",
+      "policy": false,
+      "summary": "Age in years from which a resident can die of old age.",
+      "value": 70
+    },
+    {
+      "max": 1000000,
+      "min": 16,
+      "name": "life.path_search_max",
+      "policy": false,
+      "summary": "Greatest number of tiles that one path search looks at.",
+      "value": 8192
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.reflex_doze_below",
+      "policy": false,
+      "summary": "An idle resident dozes by itself when its energy is below this value.",
+      "value": 200
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.reflex_doze_energy",
+      "policy": false,
+      "summary": "Energy points that one hour of dozing gives.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.reflex_eat_below",
+      "policy": false,
+      "summary": "An idle resident eats carried food by itself when its food is below this value.",
+      "value": 300
+    },
+    {
+      "max": 1,
+      "min": 0,
+      "name": "life.reflexes",
+      "policy": false,
+      "summary": "1: an idle resident eats carried food and dozes by itself when it must. 0: only routines and actions do that.",
+      "value": 1
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.rest_energy_per_hour",
+      "policy": false,
+      "summary": "Energy points for each hour of rest.",
+      "value": 20
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "life.rest_max_ticks",
+      "policy": false,
+      "summary": "Longest rest in ticks.",
+      "value": 240
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.rest_mood_park_per_hour",
+      "policy": false,
+      "summary": "Mood points for each hour of rest in a park.",
+      "value": 40
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.rest_mood_per_hour",
+      "policy": false,
+      "summary": "Mood points for each hour of rest.",
+      "value": 20
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.routine_eat_below",
+      "policy": false,
+      "summary": "The default routine `eat` starts when food is below this value.",
+      "value": 400
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.routine_sleep_below",
+      "policy": false,
+      "summary": "The default routine `sleep` starts when energy is below this value.",
+      "value": 250
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "life.site.apartment.beds",
+      "policy": false,
+      "summary": "Beds of an apartment building.",
+      "value": 8
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.apartment.value",
+      "policy": false,
+      "summary": "Start value of an apartment building in cents.",
+      "value": 9000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.bank.value",
+      "policy": false,
+      "summary": "Start value of a bank in cents.",
+      "value": 15000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.city_hall.value",
+      "policy": false,
+      "summary": "Start value of a city hall in cents.",
+      "value": 25000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.courthouse.value",
+      "policy": false,
+      "summary": "Start value of a courthouse in cents.",
+      "value": 16000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.depot.value",
+      "policy": false,
+      "summary": "Start value of a depot in cents.",
+      "value": 15000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.exchange.value",
+      "policy": false,
+      "summary": "Start value of an exchange in cents.",
+      "value": 18000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.factory.value",
+      "policy": false,
+      "summary": "Start value of a factory in cents.",
+      "value": 20000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.farm.value",
+      "policy": false,
+      "summary": "Start value of a farm in cents.",
+      "value": 8000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.forest.value",
+      "policy": false,
+      "summary": "Start value of a forest in cents.",
+      "value": 6000000
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "life.site.home.beds",
+      "policy": false,
+      "summary": "Beds of a home.",
+      "value": 2
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.home.value",
+      "policy": false,
+      "summary": "Start value of a home in cents.",
+      "value": 4000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.hospital.value",
+      "policy": false,
+      "summary": "Start value of a hospital in cents.",
+      "value": 22000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.jail.value",
+      "policy": false,
+      "summary": "Start value of a jail in cents.",
+      "value": 14000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.mine.value",
+      "policy": false,
+      "summary": "Start value of a mine in cents.",
+      "value": 12000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.newsroom.value",
+      "policy": false,
+      "summary": "Start value of a newsroom in cents.",
+      "value": 7000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.office.value",
+      "policy": false,
+      "summary": "Start value of an office in cents.",
+      "value": 6000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.park.value",
+      "policy": false,
+      "summary": "Start value of a park in cents.",
+      "value": 3000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.police_station.value",
+      "policy": false,
+      "summary": "Start value of a police station in cents.",
+      "value": 9000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.restaurant.value",
+      "policy": false,
+      "summary": "Start value of a restaurant in cents.",
+      "value": 5500000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.school.value",
+      "policy": false,
+      "summary": "Start value of a school in cents.",
+      "value": 16000000
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "life.site.shelter.beds",
+      "policy": false,
+      "summary": "Beds of a shelter.",
+      "value": 24
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.shelter.value",
+      "policy": false,
+      "summary": "Start value of a shelter in cents.",
+      "value": 6000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.shop.value",
+      "policy": false,
+      "summary": "Start value of a shop in cents.",
+      "value": 5000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.station.value",
+      "policy": false,
+      "summary": "Start value of a station in cents.",
+      "value": 24000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.warehouse.value",
+      "policy": false,
+      "summary": "Start value of a warehouse in cents.",
+      "value": 7000000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "life.site.workshop.value",
+      "policy": false,
+      "summary": "Start value of a workshop in cents.",
+      "value": 4500000
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.sleep_energy_fair_per_hour",
+      "policy": false,
+      "summary": "Energy points for each hour of sleep in a shelter.",
+      "value": 90
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.sleep_energy_good_per_hour",
+      "policy": false,
+      "summary": "Energy points for each hour of sleep in a home that the resident owns or rents.",
+      "value": 125
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.sleep_energy_poor_per_hour",
+      "policy": false,
+      "summary": "Energy points for each hour of sleep in any other place.",
+      "value": 60
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "life.sleep_max_ticks",
+      "policy": false,
+      "summary": "Longest sleep in ticks.",
+      "value": 720
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "life.sleep_min_ticks",
+      "policy": false,
+      "summary": "Shortest sleep in ticks.",
+      "value": 30
+    },
+    {
+      "max": 200,
+      "min": -200,
+      "name": "life.sleep_mood_fair_per_hour",
+      "policy": false,
+      "summary": "Mood points for each hour of sleep in a shelter.",
+      "value": 4
+    },
+    {
+      "max": 200,
+      "min": -200,
+      "name": "life.sleep_mood_good_per_hour",
+      "policy": false,
+      "summary": "Mood points for each hour of sleep in a home that the resident owns or rents.",
+      "value": 10
+    },
+    {
+      "max": 200,
+      "min": -200,
+      "name": "life.sleep_mood_poor_per_hour",
+      "policy": false,
+      "summary": "Mood points for each hour of sleep in any other place.",
+      "value": 0
+    },
+    {
+      "max": 120,
+      "min": 0,
+      "name": "life.spawn_age",
+      "policy": false,
+      "summary": "Age in years of a new resident.",
+      "value": 18
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "life.starve_health_per_hour",
+      "policy": false,
+      "summary": "Health points that a resident with no food loses each game hour.",
+      "value": 20
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "life.train_fee_per_hour",
+      "policy": true,
+      "summary": "Cents that a school charges for each hour of a lesson.",
+      "value": 1000
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "life.train_max_ticks",
+      "policy": false,
+      "summary": "Longest lesson in ticks.",
+      "value": 480
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "life.train_min_ticks",
+      "policy": false,
+      "summary": "Shortest lesson in ticks.",
+      "value": 60
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "life.train_xp_per_hour",
+      "policy": false,
+      "summary": "Experience points for each hour of a lesson at full mood.",
+      "value": 60
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "life.travel_fare",
+      "policy": true,
+      "summary": "Cents that one journey between two cities costs. The city of departure gets the fare.",
+      "value": 2500
+    },
+    {
+      "max": 10080,
+      "min": 1,
+      "name": "life.travel_ticks",
+      "policy": false,
+      "summary": "Ticks that one journey between two cities takes.",
+      "value": 120
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "life.use_item_ticks",
+      "policy": false,
+      "summary": "Ticks that the use of one item takes.",
+      "value": 5
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "life.walk_ticks_field",
+      "policy": false,
+      "summary": "Ticks that one step onto a field tile takes.",
+      "value": 2
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "life.walk_ticks_floor",
+      "policy": false,
+      "summary": "Ticks that one step onto a floor tile takes.",
+      "value": 1
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "life.walk_ticks_grass",
+      "policy": false,
+      "summary": "Ticks that one step onto a grass tile takes.",
+      "value": 2
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "life.walk_ticks_pavement",
+      "policy": false,
+      "summary": "Ticks that one step onto a pavement tile takes.",
+      "value": 1
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "life.walk_ticks_road",
+      "policy": false,
+      "summary": "Ticks that one step onto a road tile takes.",
+      "value": 1
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "life.walk_ticks_trees",
+      "policy": false,
+      "summary": "Ticks that one step onto a tile with trees takes.",
+      "value": 4
+    },
+    {
+      "max": 40320,
+      "min": 60,
+      "name": "life.walk_timeout",
+      "policy": false,
+      "summary": "Ticks after which a walk to another district fails. The search for a site of another district counts too.",
+      "value": 2880
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "society.brief_list_max",
+      "policy": false,
+      "summary": "Greatest number of entries in each list of the `orgs` and `contracts` sections with brief detail.",
+      "value": 3
+    },
+    {
+      "max": 32,
+      "min": 1,
+      "name": "society.contract_clauses_max",
+      "policy": false,
+      "summary": "Greatest number of clauses in one contract.",
+      "value": 8
+    },
+    {
+      "max": 2419200,
+      "min": 1,
+      "name": "society.contract_due_max",
+      "policy": false,
+      "summary": "Greatest time from the signing to the deadline of a clause, in game minutes.",
+      "value": 40320
+    },
+    {
+      "max": 200,
+      "min": 3,
+      "name": "society.contract_event_kind_max",
+      "policy": false,
+      "summary": "Greatest length of the event kind in an event clause, in bytes.",
+      "value": 64
+    },
+    {
+      "max": 200,
+      "min": 1,
+      "name": "society.contract_field_name_max",
+      "policy": false,
+      "summary": "Greatest length of the name of a data field in an event clause, in bytes.",
+      "value": 32
+    },
+    {
+      "max": 200,
+      "min": 0,
+      "name": "society.contract_field_text_max",
+      "policy": false,
+      "summary": "Greatest length of a text value that an event clause compares, in bytes.",
+      "value": 64
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "society.contract_handover_radius",
+      "policy": false,
+      "summary": "Distance in tiles at which a resident can hand goods to the other party of a contract.",
+      "value": 2
+    },
+    {
+      "max": 16,
+      "min": 0,
+      "name": "society.contract_match_max",
+      "policy": false,
+      "summary": "Greatest number of data fields that one event clause can compare.",
+      "value": 4
+    },
+    {
+      "max": 2419200,
+      "min": 1,
+      "name": "society.contract_offer_ttl",
+      "policy": false,
+      "summary": "Game minutes that a contract offer stays open when the offer does not say.",
+      "value": 1440
+    },
+    {
+      "max": 2419200,
+      "min": 1,
+      "name": "society.contract_offer_ttl_max",
+      "policy": false,
+      "summary": "Greatest number of game minutes that a contract offer can stay open.",
+      "value": 10080
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "society.contracts_open_max",
+      "policy": false,
+      "summary": "Greatest number of contracts that one resident has open as the offerer or as the signer.",
+      "value": 12
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_contract_breached",
+      "policy": false,
+      "summary": "Drama score of `society.contract_breached`.",
+      "value": 45
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_contract_expired",
+      "policy": false,
+      "summary": "Drama score of `society.contract_expired`.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_contract_fulfilled",
+      "policy": false,
+      "summary": "Drama score of `society.contract_fulfilled`.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_contract_signed",
+      "policy": false,
+      "summary": "Drama score of `society.contract_signed`.",
+      "value": 15
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_divorced",
+      "policy": false,
+      "summary": "Drama score of `society.divorced`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_household",
+      "policy": false,
+      "summary": "Drama score of `society.household_joined`, `society.household_left` and `society.household_dissolved`.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_married",
+      "policy": false,
+      "summary": "Drama score of `society.married`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_opinion",
+      "policy": false,
+      "summary": "Drama score of `society.opinion_given`.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_org_created",
+      "policy": false,
+      "summary": "Drama score of `society.org_created`.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_org_dissolved",
+      "policy": false,
+      "summary": "Drama score of `society.org_dissolved`.",
+      "value": 15
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_org_granted",
+      "policy": false,
+      "summary": "Drama score of `society.org_granted` and `society.org_grant_revoked`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_org_joined",
+      "policy": false,
+      "summary": "Drama score of `society.org_joined`.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_org_left",
+      "policy": false,
+      "summary": "Drama score of `society.org_left`.",
+      "value": 8
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_posted",
+      "policy": false,
+      "summary": "Drama score of `society.posted`.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_said",
+      "policy": false,
+      "summary": "Drama score of `society.said`.",
+      "value": 1
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "society.drama_treasury",
+      "policy": false,
+      "summary": "Drama score of `society.org_deposited` and `society.org_paid`.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 2,
+      "name": "society.household_members_max",
+      "policy": false,
+      "summary": "Greatest number of members of one household, with the host.",
+      "value": 8
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "society.memberships_max",
+      "policy": false,
+      "summary": "Greatest number of organizations that one resident can join or make.",
+      "value": 8
+    },
+    {
+      "max": 4000,
+      "min": 1,
+      "name": "society.message_text_max",
+      "policy": false,
+      "summary": "Greatest length of the text of `message` and `org_say`, in bytes.",
+      "value": 500
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "society.messages_per_hour",
+      "policy": false,
+      "summary": "Greatest number of `message` actions of one resident in one game hour.",
+      "value": 30
+    },
+    {
+      "max": 2419200,
+      "min": 0,
+      "name": "society.opinion_min_age",
+      "policy": false,
+      "summary": "Game minutes that a resident must have lived before it can use `opine`.",
+      "value": 1440
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "society.opinion_weight",
+      "policy": false,
+      "summary": "Points of `rep.standing` that one `opine` action gives or takes.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "society.opinions_per_day",
+      "policy": false,
+      "summary": "Greatest number of `opine` actions of one resident in one game day.",
+      "value": 3
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "society.org_broadcasts_per_hour",
+      "policy": false,
+      "summary": "Greatest number of `org_say` texts that one organization sends to its members in one game hour.",
+      "value": 60
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "society.org_create_fee",
+      "policy": true,
+      "summary": "Cents that `org_create` costs. The money goes to the treasury of the city of the founder.",
+      "value": 1000
+    },
+    {
+      "max": 2419200,
+      "min": 1,
+      "name": "society.org_invite_ttl",
+      "policy": false,
+      "summary": "Game minutes that an invitation to an organization stays open.",
+      "value": 10080
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "society.org_invites_max",
+      "policy": false,
+      "summary": "Greatest number of open invitations of one organization.",
+      "value": 50
+    },
+    {
+      "max": 10000000,
+      "min": 1,
+      "name": "society.org_members_max",
+      "policy": false,
+      "summary": "Greatest number of members of one organization that residents made.",
+      "value": 5000
+    },
+    {
+      "max": 200,
+      "min": 1,
+      "name": "society.org_name_max",
+      "policy": false,
+      "summary": "Greatest length of the name of an organization, in bytes.",
+      "value": 40
+    },
+    {
+      "max": 64,
+      "min": 2,
+      "name": "society.org_roles_max",
+      "policy": false,
+      "summary": "Greatest number of roles in one organization.",
+      "value": 12
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "society.org_says_per_hour",
+      "policy": false,
+      "summary": "Greatest number of `org_say` actions of one resident in one game hour.",
+      "value": 10
+    },
+    {
+      "max": 4000,
+      "min": 1,
+      "name": "society.post_text_max",
+      "policy": false,
+      "summary": "Greatest length of the text of `post`, in bytes.",
+      "value": 500
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "society.post_ticks",
+      "policy": false,
+      "summary": "Ticks that one `post` action takes.",
+      "value": 5
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "society.posts_per_day",
+      "policy": false,
+      "summary": "Greatest number of `post` actions of one resident in one game day.",
+      "value": 6
+    },
+    {
+      "max": 2419200,
+      "min": 1,
+      "name": "society.proposal_ttl",
+      "policy": false,
+      "summary": "Game minutes that a marriage proposal or a household invitation stays open.",
+      "value": 1440
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "society.proposals_max",
+      "policy": false,
+      "summary": "Greatest number of open proposals and invitations that the `relations` section of one resident shows.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "society.relations_max",
+      "policy": false,
+      "summary": "Greatest number of private labels that one resident keeps with `relate`.",
+      "value": 32
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "society.rep_contract_breached",
+      "policy": false,
+      "summary": "Points of `rep.standing` that a party loses when it breaches a contract.",
+      "value": 50
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "society.rep_contract_fulfilled",
+      "policy": false,
+      "summary": "Points of `rep.standing` that each party gets when a contract is fulfilled.",
+      "value": 10
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "society.rep_contract_rewards_per_day",
+      "policy": false,
+      "summary": "Greatest number of fulfilled contracts that raise the `rep.standing` of one resident in one game day.",
+      "value": 2
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "society.role_name_max",
+      "policy": false,
+      "summary": "Greatest length of the name of a role, in bytes.",
+      "value": 24
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "society.say_radius",
+      "policy": false,
+      "summary": "Distance in tiles at which residents hear `say`.",
+      "value": 8
+    },
+    {
+      "max": 4000,
+      "min": 1,
+      "name": "society.say_text_max",
+      "policy": false,
+      "summary": "Greatest length of the text of `say`, in bytes.",
+      "value": 280
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "society.says_per_hour",
+      "policy": false,
+      "summary": "Greatest number of `say` actions of one resident in one game hour.",
+      "value": 30
     }
   ],
   "verbs": [
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `close_job` and `apply_job`.",
+        "properties": {
+          "job": {
+            "description": "Id of the job. `list_jobs` and the `business` section show it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "title": "JobArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Take a job at the site where you are. You can have one job.",
+      "verb": "apply_job"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `buy`.",
+        "properties": {
+          "item": {
+            "description": "Name of the good.",
+            "type": "string"
+          },
+          "max_price": {
+            "default": null,
+            "description": "Greatest price in cents for one unit that you accept. The action\nfails with `conflict` when the price is higher.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "qty": {
+            "description": "How many units to buy.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item",
+          "qty"
+        ],
+        "title": "BuyArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Buy goods with cash at the shop, the restaurant or the depot where you are.",
+      "verb": "buy"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `buy_property`.",
+        "properties": {
+          "max_price": {
+            "default": null,
+            "description": "Greatest price in cents that you accept. The action fails with\n`conflict` when the price is higher.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "org": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrgId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Buy the site for this organization. You pay with your cash and need\nthe permission `site.manage` there. Absent: you become the owner."
+          }
+        },
+        "title": "BuyPropertyArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Buy the site where you are with cash, when it is for sale.",
+      "verb": "buy_property"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Give up the permit of a business that you control. Its prices and jobs end.",
+      "verb": "close_business"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `close_job` and `apply_job`.",
+        "properties": {
+          "job": {
+            "description": "Id of the job. `list_jobs` and the `business` section show it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "title": "JobArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "End a job at the site where you are. Its workers lose the job.",
+      "verb": "close_job"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `end_lease`.",
+        "properties": {
+          "tenant": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResidentId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The tenant whose lease ends. Only the owner of the site can name\none. Absent: your own lease ends."
+          }
+        },
+        "title": "EndLeaseArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "End your lease of the home where you are, or the lease of a tenant of your site.",
+      "verb": "end_lease"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `fire`.",
+        "properties": {
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The worker to fire."
+          }
+        },
+        "required": [
+          "resident"
+        ],
+        "title": "FireArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "End the job of a worker at the site where you are.",
+      "verb": "fire"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `gather`.",
+        "properties": {
+          "item": {
+            "default": null,
+            "description": "The good to gather, for example `grain`. The first good of the site\nwhen absent. The `business` section shows what a site gives.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "minutes": {
+            "default": null,
+            "description": "Game minutes to work. The parameter `economy.gather_minutes` when\nabsent.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "GatherArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Gather raw goods at a farm, a mine or a forest. The goods go to you.",
+      "verb": "gather"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `list_jobs`.",
+        "properties": {
+          "kind": {
+            "default": null,
+            "description": "Only jobs at sites of this kind, for example `farm` or `shop`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "default": null,
+            "description": "How many entries to return. The parameter `economy.list_max` limits\nit.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_wage": {
+            "default": null,
+            "description": "Least wage in cents for one shift.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "skill": {
+            "default": null,
+            "description": "Only jobs that use this skill, for example `farming`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "ListJobsArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "economy",
+      "scope": "global",
+      "summary": "Read the job board of your city: jobs that take workers.",
+      "verb": "list_jobs"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "Offer": {
+            "description": "What a property offer is.",
+            "oneOf": [
+              {
+                "const": "sale",
+                "description": "The site is for sale.",
+                "type": "string"
+              },
+              {
+                "const": "rent",
+                "description": "The site takes tenants.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `list_property`.",
+        "properties": {
+          "kind": {
+            "default": null,
+            "description": "Only sites of this kind, for example `home` or `shop`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "default": null,
+            "description": "How many entries to return. The parameter `economy.list_max` limits\nit.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_price": {
+            "default": null,
+            "description": "Greatest sale price, or greatest rent for one day, in cents.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offer": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Offer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only sites for sale (`sale`) or only sites that take tenants\n(`rent`). Both when absent."
+          }
+        },
+        "title": "ListPropertyArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "economy",
+      "scope": "global",
+      "summary": "Read the property board of your city: sites for sale or to let.",
+      "verb": "list_property"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `list_recipes`.",
+        "properties": {
+          "output": {
+            "default": null,
+            "description": "Only recipes that make this good, for example `bread`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site": {
+            "default": null,
+            "description": "Only recipes that work at this site kind, for example `workshop`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "ListRecipesArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Read the recipes: inputs, outputs, minutes, skill and site kinds.",
+      "verb": "list_recipes"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `open_business`.",
+        "properties": {
+          "kind": {
+            "default": null,
+            "description": "What the site becomes: `shop`, `restaurant`, `workshop`, `factory`,\n`office` or `warehouse`. Absent: the site keeps its kind.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "OpenBusinessArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Pay the permit fee and open a site that you control as a shop, a restaurant, a workshop, a factory, an office or a warehouse.",
+      "verb": "open_business"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `post_job`.",
+        "properties": {
+          "min_level": {
+            "default": 0,
+            "description": "Least level that a worker needs in the skill of the job. 0 when\nabsent.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "slots": {
+            "description": "How many workers the job takes.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "task": {
+            "default": null,
+            "description": "What a shift does. At a farm, a mine or a forest: the name of the\ngood to gather. At a workshop, a factory or a restaurant: the name\nof a recipe. Absent: the first good of the site, or a shift that\nmakes nothing.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wage": {
+            "description": "Wage in cents for one shift, before income tax. The till of the\nsite pays it when a shift ends.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "wage",
+          "slots"
+        ],
+        "title": "PostJobArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Offer a job at the site where you are. You need to control the site.",
+      "verb": "post_job"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `produce`.",
+        "properties": {
+          "batches": {
+            "default": null,
+            "description": "How many batches to make. 1 when absent.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recipe": {
+            "description": "Name of the recipe. `list_recipes` shows every recipe.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recipe"
+        ],
+        "title": "ProduceArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Run a recipe at a workshop, a factory or a restaurant. It uses the stock of the site and its outputs go into that stock.",
+      "verb": "produce"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Leave your job. It works from every place.",
+      "verb": "quit_job"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `rent`.",
+        "properties": {
+          "max_rent": {
+            "default": null,
+            "description": "Greatest rent in cents for one day that you accept. The action\nfails with `conflict` when the rent is higher.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "RentArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Become a tenant of the home where you are. You pay the rent each day in cash.",
+      "verb": "rent"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `rent_out`.",
+        "properties": {
+          "rent": {
+            "default": null,
+            "description": "Rent in cents for one day at which the site takes new tenants.\nAbsent: the site takes no new tenants. The leases that run go on.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "RentOutArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Offer a home that you control to tenants at a daily rent, or end the offer.",
+      "verb": "rent_out"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `sell`.",
+        "properties": {
+          "item": {
+            "description": "Name of the good.",
+            "type": "string"
+          },
+          "min_price": {
+            "default": null,
+            "description": "Least price in cents for one unit that you accept. The action fails\nwith `conflict` when the price is lower.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "qty": {
+            "description": "How many units to sell.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item",
+          "qty"
+        ],
+        "title": "SellArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Sell goods that you carry to the shop, the restaurant or the depot where you are.",
+      "verb": "sell"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `sell_property`.",
+        "properties": {
+          "price": {
+            "default": null,
+            "description": "The price in cents at which the site is for sale. Absent: the site\nis not for sale any more.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "SellPropertyArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Offer a site that you control for sale at a price, or end the offer.",
+      "verb": "sell_property"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `set_price`.",
+        "properties": {
+          "buy_price": {
+            "default": null,
+            "description": "Cents that the shop pays to a resident for one unit. Absent: the\nshop does not buy the good.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "item": {
+            "description": "Name of the good.",
+            "type": "string"
+          },
+          "price": {
+            "default": null,
+            "description": "Cents that a customer pays for one unit, sales tax included. Absent:\nthe shop does not sell the good.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "SetPriceArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Set what your shop or restaurant takes for a good, and what it pays to residents that sell the good to it.",
+      "verb": "set_price"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `stock` and `unstock`.",
+        "properties": {
+          "item": {
+            "description": "Name of the good.",
+            "type": "string"
+          },
+          "qty": {
+            "description": "How many units to move.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item",
+          "qty"
+        ],
+        "title": "StockArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Move goods that you carry into the stock of the site where you are.",
+      "verb": "stock"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `till_collect`.",
+        "properties": {
+          "amount": {
+            "default": null,
+            "description": "Cents to take out of the till. Everything when absent.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "TillCollectArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Take cash out of the till of a site that you control. The cash of a site of an organization goes to its treasury.",
+      "verb": "till_collect"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `till_fund`.",
+        "properties": {
+          "amount": {
+            "description": "Cents to put into the till.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "title": "TillFundArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Put your cash into the till of a site that you control, for wages and property tax.",
+      "verb": "till_fund"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `stock` and `unstock`.",
+        "properties": {
+          "item": {
+            "description": "Name of the good.",
+            "type": "string"
+          },
+          "qty": {
+            "description": "How many units to move.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item",
+          "qty"
+        ],
+        "title": "StockArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Take goods out of the stock of a site that you control.",
+      "verb": "unstock"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "economy",
+      "scope": "zone",
+      "summary": "Work one shift at the site where you are: your job there, or public works at a city hall or a depot. The wage comes at the end.",
+      "verb": "work"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `buy_shares` and `sell_shares`.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "The organization whose shares you trade."
+          },
+          "price": {
+            "description": "Limit price of one share in cents: the most that you pay, or the\nleast that you take.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "shares": {
+            "description": "Number of shares.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "org",
+          "shares",
+          "price"
+        ],
+        "title": "ShareOrderArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "global",
+      "summary": "Buy shares of an organization with money from your bank account. The part that finds no seller waits as an order.",
+      "verb": "buy_shares"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `cancel_shares`.",
+        "properties": {
+          "order": {
+            "description": "Id of the share order, from the result of the verb that placed it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "order"
+        ],
+        "title": "CancelSharesArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "global",
+      "summary": "Cancel one of your open share orders.",
+      "verb": "cancel_shares"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `central_bank_issue` and `central_bank_retire`.",
+        "properties": {
+          "amount": {
+            "description": "The amount in cents. It must be greater than zero.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "title": "CentralAmountArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Create money and put it in the nation treasury.",
+      "verb": "central_bank_issue"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `central_bank_issue` and `central_bank_retire`.",
+        "properties": {
+          "amount": {
+            "description": "The amount in cents. It must be greater than zero.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "title": "CentralAmountArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Destroy money of the nation treasury.",
+      "verb": "central_bank_retire"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `central_bank_set_rate`.",
+        "properties": {
+          "rate_bp": {
+            "description": "The new yearly base rate in basis points (100 is 1 percent).",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rate_bp"
+        ],
+        "title": "SetRateArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Set the base interest rate of the central bank.",
+      "verb": "central_bank_set_rate"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `deposit` and `withdraw`.",
+        "properties": {
+          "amount": {
+            "description": "The amount in cents. It must be greater than zero.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "title": "AmountArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Put cash into your bank account. You must be at a bank.",
+      "verb": "deposit"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `issue_shares`.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "The organization that issues the shares. You need the permission\n`treasury.spend` there."
+          },
+          "price": {
+            "description": "Least price of one share in cents. The money goes to the treasury\nof the organization.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "shares": {
+            "description": "Number of new shares to offer.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "org",
+          "shares",
+          "price"
+        ],
+        "title": "IssueSharesArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Offer new shares of an organization for sale. The money goes to its treasury.",
+      "verb": "issue_shares"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `loan_repay`.",
+        "properties": {
+          "amount": {
+            "description": "The amount to repay from your account in cents. An amount above\nwhat you owe pays the whole loan.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "title": "LoanRepayArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "global",
+      "summary": "Repay a part or all of your loan from your bank account.",
+      "verb": "loan_repay"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `loan_request`.",
+        "properties": {
+          "amount": {
+            "description": "The amount to borrow in cents. The bank puts it in your account.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "term_days": {
+            "description": "The number of daily instalments in which you repay the loan.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount",
+          "term_days"
+        ],
+        "title": "LoanRequestArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "global",
+      "summary": "Borrow money from the bank. The bank puts it in your account and collects an instalment each day.",
+      "verb": "loan_request"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `market_book`.",
+        "properties": {
+          "item": {
+            "description": "Name of the item.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "MarketBookArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Read the best buy and sell prices of an item at the exchange. You must be in the district of the exchange.",
+      "verb": "market_book"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Collect the goods that your orders bought and the cash that they earned. You must be at the exchange.",
+      "verb": "market_claim"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Open a bank account. You must be at a bank.",
+      "verb": "open_account"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `order_cancel`.",
+        "properties": {
+          "order": {
+            "description": "Id of the order, from the result of `order_place` or from the\n`market` section.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "order"
+        ],
+        "title": "OrderCancelArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Cancel one of your orders at the exchange and take back what it holds. You must be at the exchange.",
+      "verb": "order_cancel"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "Side": {
+            "description": "The side of an order.",
+            "oneOf": [
+              {
+                "const": "buy",
+                "description": "The trader wants to buy.",
+                "type": "string"
+              },
+              {
+                "const": "sell",
+                "description": "The trader wants to sell.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `order_place`.",
+        "properties": {
+          "item": {
+            "description": "Name of the item to trade.",
+            "type": "string"
+          },
+          "price": {
+            "description": "Limit price of one unit in cents: the most that a buy order pays,\nthe least that a sell order takes.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "qty": {
+            "description": "Number of units.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "side": {
+            "$ref": "#/$defs/Side",
+            "description": "`buy` or `sell`."
+          }
+        },
+        "required": [
+          "item",
+          "side",
+          "qty",
+          "price"
+        ],
+        "title": "OrderPlaceArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Place a buy or sell order at the exchange. It locks your cash or goods. You must be at the exchange.",
+      "verb": "order_place"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `pay_dividend`.",
+        "properties": {
+          "amount": {
+            "description": "The whole amount in cents. The holders share it by their shares.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "The organization that pays. You need the permission\n`treasury.spend` there."
+          }
+        },
+        "required": [
+          "org",
+          "amount"
+        ],
+        "title": "PayDividendArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Pay money from the treasury of an organization to its shareholders, by their shares.",
+      "verb": "pay_dividend"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `buy_shares` and `sell_shares`.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "The organization whose shares you trade."
+          },
+          "price": {
+            "description": "Limit price of one share in cents: the most that you pay, or the\nleast that you take.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "shares": {
+            "description": "Number of shares.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "org",
+          "shares",
+          "price"
+        ],
+        "title": "ShareOrderArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "global",
+      "summary": "Sell shares that you own. The money goes to your bank account. The part that finds no buyer waits as an order.",
+      "verb": "sell_shares"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `shares_book`.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "The organization."
+          }
+        },
+        "required": [
+          "org"
+        ],
+        "title": "SharesBookArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "finance",
+      "scope": "global",
+      "summary": "Read the best buy and sell prices of the shares of an organization.",
+      "verb": "shares_book"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `transfer`.",
+        "properties": {
+          "amount": {
+            "description": "The amount in cents. It must be greater than zero.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "to": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident whose account gets the money."
+          }
+        },
+        "required": [
+          "to",
+          "amount"
+        ],
+        "title": "TransferArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "finance",
+      "scope": "global",
+      "summary": "Send money from your bank account to the account of another resident.",
+      "verb": "transfer"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `deposit` and `withdraw`.",
+        "properties": {
+          "amount": {
+            "description": "The amount in cents. It must be greater than zero.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "title": "AmountArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "finance",
+      "scope": "zone",
+      "summary": "Take cash out of your bank account. You must be at a bank.",
+      "verb": "withdraw"
+    },
     {
       "args_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -365,31 +4584,1606 @@
     {
       "args_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "Arguments of `move_to`.",
+        "description": "Arguments of `drop` and `pick_up`.",
         "properties": {
-          "x": {
-            "description": "Column of the target tile.",
-            "format": "int32",
+          "item": {
+            "description": "Name of the item.",
+            "type": "string"
+          },
+          "qty": {
+            "description": "Units of the item. 1 when absent.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "CarryArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Leave goods that you carry in the site where you stand. They join the stock of the site.",
+      "verb": "drop"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `eat`.",
+        "properties": {
+          "item": {
+            "description": "Name of the item to eat. It must have the tag `food`. Without it,\nyou eat the food that you carry which fits your hunger best.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "EatArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Eat one unit of food that you carry.",
+      "verb": "eat"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
             "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `give`. Give `money`, or `item` and `qty`, or both.",
+        "properties": {
+          "item": {
+            "description": "Name of the item to give.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "money": {
+            "description": "Cents of cash to give.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "qty": {
+            "description": "Units of the item to give. 1 when absent.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "to": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident that gets the gift. It must stand on your tile or on a\ntile next to it."
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "title": "GiveArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Give cash or goods to a resident on your tile or next to you.",
+      "verb": "give"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `heal`.",
+        "properties": {
+          "points": {
+            "description": "How many health points to buy. Without it, the hospital heals you\nfully.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "HealArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Get health back in a hospital. You pay the fee first and stay until you are healed.",
+      "verb": "heal"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "SiteId": {
+            "description": "Id of a site: a building or lot in a zone.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `inspect`. Give `resident` or `site`, or nothing to look\nat the place where you stand.",
+        "properties": {
+          "resident": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResidentId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A resident that you can see."
+          },
+          "site": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SiteId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A site that you can see."
+          }
+        },
+        "title": "InspectArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Look at a resident or a site that you can see, or at the place where you stand.",
+      "verb": "inspect"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "SiteId": {
+            "description": "Id of a site: a building or lot in a zone.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `move_to`. Give `x` and `y`, or `site`.",
+        "properties": {
+          "site": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SiteId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Id of a site in your city. The walk ends inside the site."
+          },
+          "x": {
+            "description": "Column of the target tile. The tile must be in your city and\nwalkable.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "y": {
             "description": "Row of the target tile.",
             "format": "int32",
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
-        "required": [
-          "x",
-          "y"
-        ],
         "title": "MoveToArgs",
         "type": "object"
       },
       "free": false,
       "module": "life",
       "scope": "zone",
-      "summary": "Walk to a tile. One tile takes one game minute.",
+      "summary": "Walk to a tile or a site of your city, one tile at a time. Roads are fast, trees are slow.",
       "verb": "move_to"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `drop` and `pick_up`.",
+        "properties": {
+          "item": {
+            "description": "Name of the item.",
+            "type": "string"
+          },
+          "qty": {
+            "description": "Units of the item. 1 when absent.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "CarryArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Take goods from the stock of the site where you stand. You must own, rent or manage the site.",
+      "verb": "pick_up"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `rest`.",
+        "properties": {
+          "ticks": {
+            "description": "How many ticks to rest. One tick is one game minute.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ticks"
+        ],
+        "title": "RestArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Rest to get a little energy and mood back. A park gives more mood.",
+      "verb": "rest"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `sleep`.",
+        "properties": {
+          "ticks": {
+            "description": "How many ticks to sleep. One tick is one game minute. Without it,\nyou sleep until your energy is full.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "SleepArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Sleep to get energy back. Sleep is good in a home that you own or rent, fair in a shelter and poor elsewhere.",
+      "verb": "sleep"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `train`.",
+        "properties": {
+          "skill": {
+            "description": "The skill to learn: labor, farming, mining, crafting, cooking,\ntrading, management, medicine, law, investigation, stealth, combat or\nrhetoric.",
+            "type": "string"
+          },
+          "ticks": {
+            "description": "Length of the lesson in ticks. One tick is one game minute. Without\nit, the lesson has the shortest length.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "skill"
+        ],
+        "title": "TrainArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Take a lesson in a skill at a school. You pay the fee first.",
+      "verb": "train"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "CityId": {
+            "description": "Id of a city. Cities are numbered from 0.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `travel`.",
+        "properties": {
+          "city": {
+            "$ref": "#/$defs/CityId",
+            "description": "Id of the city to go to."
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "title": "TravelArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Go from the station where you are to a station of another city. You pay the fare first.",
+      "verb": "travel"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `use_item`.",
+        "properties": {
+          "item": {
+            "description": "Name of the item to use. It must have the tag `medicine`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "UseItemArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Use one unit of an item that you carry. Medicine gives health back.",
+      "verb": "use_item"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `write_will`.",
+        "properties": {
+          "heir": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResidentId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The resident that gets your money and goods when you die. Without\nit, the will names nobody: your spouse inherits, else your city."
+          }
+        },
+        "title": "WriteWillArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "life",
+      "scope": "zone",
+      "summary": "Name the resident that inherits from you, or name nobody.",
+      "verb": "write_will"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `propose` and `accept_proposal`.",
+        "properties": {
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The other resident."
+          }
+        },
+        "required": [
+          "resident"
+        ],
+        "title": "PartnerArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Marry a resident that proposed to you.",
+      "verb": "accept_proposal"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of verbs that name only a contract.",
+        "properties": {
+          "contract": {
+            "description": "Id of the contract.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract"
+        ],
+        "title": "ContractArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Take back a contract offer of yours that nobody signed. You get your locked money back.",
+      "verb": "contract_cancel"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `contract_claim`.",
+        "properties": {
+          "clause": {
+            "default": null,
+            "description": "Number of the `deliver` clause, from 0. When absent: your first open\none.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "contract": {
+            "description": "Id of the contract.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract"
+        ],
+        "title": "ClaimArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Deliver the goods of a `deliver` clause. Carry them to the site of the clause, or to the other party.",
+      "verb": "contract_claim"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ClauseArg": {
+            "description": "One clause of an offer.",
+            "oneOf": [
+              {
+                "description": "`by` pays `amount` to the other party when the contract is signed.",
+                "properties": {
+                  "amount": {
+                    "description": "Cents.",
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "by": {
+                    "$ref": "#/$defs/Side",
+                    "description": "The party that pays."
+                  },
+                  "kind": {
+                    "const": "pay_at_signing",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "by",
+                  "amount"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "`by` pays `amount` to the other party at the deadline. The money is\nlocked from the start, so the payment cannot fail.",
+                "properties": {
+                  "amount": {
+                    "description": "Cents.",
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "by": {
+                    "$ref": "#/$defs/Side",
+                    "description": "The party that pays."
+                  },
+                  "due_in": {
+                    "description": "Game minutes from the signing to the deadline.",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "pay_at_deadline",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "by",
+                  "amount",
+                  "due_in"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "`by` pays `amount` to the other party when an event happens before\nthe deadline. When it does not happen, `by` gets the money back.\nThis makes a bounty.",
+                "properties": {
+                  "actor": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ResidentId"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "When given, only an event that this resident caused counts."
+                  },
+                  "amount": {
+                    "description": "Cents.",
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "by": {
+                    "$ref": "#/$defs/Side",
+                    "description": "The party that pays."
+                  },
+                  "due_in": {
+                    "description": "Game minutes from the signing to the deadline.",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "event": {
+                    "description": "Kind of the event, for example `crime.arrest_made`.",
+                    "type": "string"
+                  },
+                  "fields": {
+                    "additionalProperties": true,
+                    "default": {},
+                    "description": "Data fields that the event must have, for example\n`{\"target\": 42}`. Values are whole numbers, booleans or short\nnames.",
+                    "type": "object"
+                  },
+                  "kind": {
+                    "const": "pay_on_event",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "by",
+                  "amount",
+                  "event",
+                  "due_in"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "`by` delivers goods before the deadline with `contract_claim`. When\nit does not, it breaches the contract.",
+                "properties": {
+                  "by": {
+                    "$ref": "#/$defs/Side",
+                    "description": "The party that delivers."
+                  },
+                  "due_in": {
+                    "description": "Game minutes from the signing to the deadline.",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "item": {
+                    "description": "Name of the item.",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "deliver",
+                    "type": "string"
+                  },
+                  "qty": {
+                    "description": "Number of units.",
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "site": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/SiteId"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "The site where the goods go. When absent, `by` hands them to the\nother party in person."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "by",
+                  "item",
+                  "qty",
+                  "due_in"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "`by` locks `amount`. The other party gets it when `by` breaches the\ncontract. Else `by` gets it back at the end.",
+                "properties": {
+                  "amount": {
+                    "description": "Cents.",
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "by": {
+                    "$ref": "#/$defs/Side",
+                    "description": "The party that locks the money."
+                  },
+                  "kind": {
+                    "const": "penalty",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "by",
+                  "amount"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "Side": {
+            "description": "One of the two parties of a contract.",
+            "oneOf": [
+              {
+                "const": "offerer",
+                "description": "The resident that made the offer.",
+                "type": "string"
+              },
+              {
+                "const": "counterparty",
+                "description": "The resident that signs the offer.",
+                "type": "string"
+              }
+            ]
+          },
+          "SiteId": {
+            "description": "Id of a site: a building or lot in a zone.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `contract_offer`.",
+        "properties": {
+          "clauses": {
+            "description": "The clauses. You are the `offerer` in them.",
+            "items": {
+              "$ref": "#/$defs/ClauseArg"
+            },
+            "type": "array"
+          },
+          "expires_in": {
+            "default": null,
+            "description": "Game minutes that the offer stays open. The default is the parameter\n`society.contract_offer_ttl`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "to": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResidentId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The resident that can sign. When absent, the first resident that\nsigns is the other party."
+          }
+        },
+        "required": [
+          "clauses"
+        ],
+        "title": "OfferArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Offer a contract with clauses. Your part of the money is locked in escrow at once.",
+      "verb": "contract_offer"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of verbs that name only a contract.",
+        "properties": {
+          "contract": {
+            "description": "Id of the contract.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract"
+        ],
+        "title": "ContractArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Refuse a contract offer that names you.",
+      "verb": "contract_reject"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `contract_sign`.",
+        "properties": {
+          "contract": {
+            "description": "Id of the contract.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stake": {
+            "default": 0,
+            "description": "Cents of your cash that you agree to lock. It must cover your part\nof the contract (`your_part` in the offer). What is above your part\ncomes back.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract"
+        ],
+        "title": "SignArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Sign a contract offer. Your part of the money is locked in escrow, and the engine carries out every clause.",
+      "verb": "contract_sign"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of verbs that name only a contract.",
+        "properties": {
+          "contract": {
+            "description": "Id of the contract.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract"
+        ],
+        "title": "ContractArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "society",
+      "scope": "global",
+      "summary": "Read the clauses of a contract of yours, or of an offer that you can sign.",
+      "verb": "contract_view"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "End your marriage. Your spouse cannot stop it.",
+      "verb": "divorce"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `household_invite`.",
+        "properties": {
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident that you invite to live in your home."
+          }
+        },
+        "required": [
+          "resident"
+        ],
+        "title": "InviteArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Invite a resident to live in your home. Stand in a home or an apartment that you own or rent.",
+      "verb": "household_invite"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `household_join`.",
+        "properties": {
+          "host": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The host that invited you."
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "title": "JoinArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Join the household of a host that invited you. You become a tenant of its home.",
+      "verb": "household_join"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Leave your household. When the host leaves, the household ends.",
+      "verb": "household_leave"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `message`.",
+        "properties": {
+          "text": {
+            "description": "The text. The resident gets it as untrusted text.",
+            "type": "string"
+          },
+          "to": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident that gets the message. It can be anywhere."
+          }
+        },
+        "required": [
+          "to",
+          "text"
+        ],
+        "title": "MessageArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Send a private message to a resident, wherever it is.",
+      "verb": "message"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "Verdict": {
+            "description": "What a resident thinks of another one.",
+            "oneOf": [
+              {
+                "const": "praise",
+                "description": "Raise the standing of the resident.",
+                "type": "string"
+              },
+              {
+                "const": "condemn",
+                "description": "Lower the standing of the resident.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `opine`.",
+        "properties": {
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident that you judge."
+          },
+          "verdict": {
+            "$ref": "#/$defs/Verdict",
+            "description": "`praise` or `condemn`."
+          }
+        },
+        "required": [
+          "resident",
+          "verdict"
+        ],
+        "title": "OpineArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Praise or condemn another resident in public. It moves the `rep.standing` of that resident.",
+      "verb": "opine"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `org_create`.",
+        "properties": {
+          "name": {
+            "description": "Name of the new organization. No other organization can have it.",
+            "type": "string"
+          },
+          "open": {
+            "default": false,
+            "description": "True: every resident can join. False: a resident needs an invitation.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "OrgCreateArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Found an organization: a company, a union, a party, a gang. You become its owner. It costs a fee.",
+      "verb": "org_create"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `org_define_role`.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization."
+          },
+          "permissions": {
+            "description": "The permissions of the role, for example `[\"org.invite\",\n\"treasury.spend\"]`. A `law.*`, `gov.*` or `bank.*` permission has an\neffect only while the organization holds a grant for it.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "role": {
+            "description": "Name of the role: lower-case letters, digits and `_`. A role with\nthis name is replaced.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org",
+          "role",
+          "permissions"
+        ],
+        "title": "OrgDefineRoleArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Make or replace a role: a name and a set of permissions. You need `org.manage`.",
+      "verb": "org_define_role"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `org_deposit`.",
+        "properties": {
+          "amount": {
+            "description": "Cents of your cash to put in its treasury.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization that gets the money."
+          }
+        },
+        "required": [
+          "org",
+          "amount"
+        ],
+        "title": "OrgDepositArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Put cash that you carry in the treasury of an organization.",
+      "verb": "org_deposit"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `org_grant`.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the government organization that gives the permission. You\nneed `gov.appoint` there."
+          },
+          "permission": {
+            "description": "A `law.*`, `gov.*` or `bank.*` permission that the government\norganization holds.",
+            "type": "string"
+          },
+          "revoke": {
+            "default": false,
+            "description": "True: take the grant back.",
+            "type": "boolean"
+          },
+          "to": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization that gets the permission."
+          }
+        },
+        "required": [
+          "org",
+          "to",
+          "permission"
+        ],
+        "title": "OrgGrantArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "As a government organization, give a `law.*`, `gov.*` or `bank.*` permission to another organization, or take it back. You need `gov.appoint`.",
+      "verb": "org_grant"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of verbs that name an organization and a resident.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization."
+          },
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "Id of the resident."
+          }
+        },
+        "required": [
+          "org",
+          "resident"
+        ],
+        "title": "OrgResidentArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Invite a resident to an organization. You need `org.invite` there.",
+      "verb": "org_invite"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of verbs that name only an organization.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization."
+          }
+        },
+        "required": [
+          "org"
+        ],
+        "title": "OrgArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Join an organization that invited you or that is open.",
+      "verb": "org_join"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of verbs that name an organization and a resident.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization."
+          },
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "Id of the resident."
+          }
+        },
+        "required": [
+          "org",
+          "resident"
+        ],
+        "title": "OrgResidentArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Remove a member from an organization. You need `org.manage` there.",
+      "verb": "org_kick"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of verbs that name only an organization.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization."
+          }
+        },
+        "required": [
+          "org"
+        ],
+        "title": "OrgArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Leave an organization. The last member gets the treasury and the organization ends.",
+      "verb": "org_leave"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `org_pay`.",
+        "properties": {
+          "amount": {
+            "description": "Cents to pay from its treasury.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization that pays. You need `treasury.spend` there."
+          },
+          "to_org": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrgId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The organization whose treasury gets the money. Give this or\n`to_resident`."
+          },
+          "to_resident": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResidentId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The resident that gets the money as cash. Give this or `to_org`."
+          }
+        },
+        "required": [
+          "org",
+          "amount"
+        ],
+        "title": "OrgPayArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Pay from the treasury of an organization to a resident or to another organization. You need `treasury.spend`.",
+      "verb": "org_pay"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `org_say`.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "An organization of which you are a member."
+          },
+          "text": {
+            "description": "The text. Every other member gets it as untrusted text.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org",
+          "text"
+        ],
+        "title": "OrgSayArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Send a text to every other member of an organization of yours.",
+      "verb": "org_say"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `org_set_role`.",
+        "properties": {
+          "org": {
+            "$ref": "#/$defs/OrgId",
+            "description": "Id of the organization."
+          },
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The member that gets the role."
+          },
+          "role": {
+            "description": "Name of a role of the organization.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org",
+          "resident",
+          "role"
+        ],
+        "title": "OrgSetRoleArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Give a member a role of the organization. You need `org.manage`.",
+      "verb": "org_set_role"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `say` and `post`.",
+        "properties": {
+          "text": {
+            "description": "The text. Other residents get it as untrusted text.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TextArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Write an entry on the public feed. Viewers see it. It takes a few minutes.",
+      "verb": "post"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `propose` and `accept_proposal`.",
+        "properties": {
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The other resident."
+          }
+        },
+        "required": [
+          "resident"
+        ],
+        "title": "PartnerArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "society",
+      "scope": "global",
+      "summary": "Ask a resident to marry you. The resident answers with `accept_proposal`.",
+      "verb": "propose"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "LabelArg": {
+            "description": "The label in the arguments of `relate`.",
+            "oneOf": [
+              {
+                "const": "friend",
+                "description": "A resident that you like.",
+                "type": "string"
+              },
+              {
+                "const": "rival",
+                "description": "A resident that you compete with.",
+                "type": "string"
+              },
+              {
+                "const": "ally",
+                "description": "A resident that works with you.",
+                "type": "string"
+              },
+              {
+                "const": "enemy",
+                "description": "A resident that you fight.",
+                "type": "string"
+              },
+              {
+                "const": "none",
+                "description": "Remove the label.",
+                "type": "string"
+              }
+            ]
+          },
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `relate`.",
+        "properties": {
+          "label": {
+            "$ref": "#/$defs/LabelArg",
+            "description": "`friend`, `rival`, `ally`, `enemy`, or `none` to remove the label."
+          },
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident that gets the label."
+          }
+        },
+        "required": [
+          "resident",
+          "label"
+        ],
+        "title": "RelateArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Give another resident a private label: friend, rival, ally or enemy. Only you see it.",
+      "verb": "relate"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `say` and `post`.",
+        "properties": {
+          "text": {
+            "description": "The text. Other residents get it as untrusted text.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TextArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "society",
+      "scope": "zone",
+      "summary": "Say something aloud. The residents near you hear it.",
+      "verb": "say"
     }
   ]
 }
