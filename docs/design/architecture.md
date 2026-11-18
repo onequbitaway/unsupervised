@@ -47,12 +47,14 @@ same change.
 | `unsup-crime` | `crates/modules/crime` | Crime, police, courts, jail | kernel, base modules |
 | `unsup-politics` | `crates/modules/politics` | Offices, elections, laws | kernel, base modules |
 | `unsup-missions` | `crates/modules/missions` | Missions, seasons, leaderboards | kernel |
-| `unsup-runtime` | `crates/runtime` | Real-time driver, `SimHandle`, log, snapshots, replay | kernel |
-| `unsup-store` | `crates/store` | Accounts, API keys, object store | protocol |
-| `unsup-gateway` | `crates/gateway` | HTTPS, WebSocket, MCP, rate limits, webhooks | protocol, runtime, store |
-| `unsup-spectator` | `crates/spectator` | Viewer fan-out, director, chronicle | protocol, runtime |
+| `unsup-runtime` | `crates/runtime` | Real-time driver, `SimHandle`, log, snapshots, replay, cluster | kernel |
+| `unsup-store` | `crates/store` | Accounts, API keys, sanctions | protocol |
+| `unsup-gateway` | `crates/gateway` | HTTPS, WebSocket, MCP, limits, moderation, webhooks | protocol, runtime, store |
+| `unsup-spectator` | `crates/spectator` | Viewer feed, director, stories, life histories, clips | protocol, runtime |
 | `unsup-loadtest` | `crates/loadtest` | Bot swarm, benchmarks | everything |
 | `unsup-server` | `crates/server` | Composition root. The `unsupervised` binary | everything |
+| `unsup-scenarios` | `crates/scenarios` | Stories that play the full game in one process | kernel, protocol, server |
+| `unsup-e2e` | `crates/e2e` | Tests through the public API of a running server | protocol, server |
 
 Rules:
 
@@ -827,13 +829,26 @@ message before it is in the input log when no module takes it, and
 `World::observe_batch` to answer the observation requests of one batch of
 the mailbox on all processor cores (section 5.6).
 
-Status. The mailbox loop, real-time and manual stepping, `wait`, the frame
-broadcast and the statistics are implemented. The runtime answers each
-observation request with `World::observe` on its own thread; it does not
-call `World::observe_batch` yet. The input log, snapshots,
-replay and time dilation are not; they plug in through `Journal` (every
-input before it is applied, the world after every frame) and `Pacer` (the
-`skip` list of every frame). The defaults record nothing and never skip.
+Status. All of this is implemented in `crates/runtime`; its README has the
+formats and the rules. In short:
+
+- The input log is a set of segment files with framed MessagePack records
+  and a checksum. A torn last record is ignored. The sync policy is a
+  configuration value.
+- Snapshots are written on a schedule with their frame and state hash.
+  `recover` loads the newest valid one and replays the log after it.
+  `replay` audits a data directory.
+- The `Dilation` pacer makes an overloaded zone skip frames, never slower
+  than one frame in ten, and the log records the decision.
+- `SimHandle::rollback` takes the whole world back to a snapshot. A single
+  zone cannot be rolled back, because money moves between zones.
+- `SimHandle::post_global` sends a typed message from a service outside the
+  simulation to the global realm. It is logged and replayed.
+- The simulation thread answers the observation requests of one mailbox
+  batch with `World::observe_batch`, on all processor cores.
+- `unsup_runtime::cluster` runs the realms of one world in several
+  processes that step in lock-step over TCP. It is a proof that the split
+  works, with limits that the README lists. The server has no cluster mode.
 
 ## 7. Data files
 
@@ -842,7 +857,14 @@ Every balance number lives in a TOML file, not in code.
 - Each module has `data/balance.toml` (parameters) and optionally
   `data/items.toml` in its crate. The module embeds them with `include_str!`
   and passes them to `Builder::load_data`.
-- The server can override parameters at start with `--data-dir`.
+- The server can override parameters when it makes a new world. Give one or
+  more files with `--params <file>` (also `UNSUPERVISED_PARAMS`, or
+  `params = [...]` in the configuration file). Each file is TOML in the
+  format below. The server gives the files to `WorldConfig::data` in the
+  given order, after the data of all modules. A later file wins. A world
+  that the server recovers from its data directory keeps its parameters;
+  change those with `POST /admin/params`. `--data-dir` is the directory of
+  the store and the world, not of parameters.
 
 ```toml
 [params."life.food_decay_per_hour"]
