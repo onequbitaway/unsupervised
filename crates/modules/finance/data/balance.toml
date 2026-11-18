@@ -1,1 +1,293 @@
 # Balance numbers of the finance module. See docs/design/architecture.md, section 7.
+# Money is in cents. Rates are in basis points (1/10,000). A yearly rate is
+# divided by the days of the game year to get the rate of one day.
+
+# ---- Bank accounts ---------------------------------------------------------
+
+[params."finance.account_open_fee"]
+value = 100
+min = 0
+max = 100000
+policy = false
+summary = "Cents that `open_account` costs. The resident pays in cash at the bank."
+
+[params."finance.withdraw_fee_bp"]
+value = 0
+min = 0
+max = 1000
+policy = false
+summary = "Fee of `withdraw`, in basis points of the amount. The account pays it."
+
+[params."finance.transfer_fee_bp"]
+value = 10
+min = 0
+max = 1000
+policy = false
+summary = "Fee of `transfer`, in basis points of the amount. The account of the sender pays it."
+
+[params."finance.deposit_spread_bp"]
+value = 300
+min = 0
+max = 10000
+policy = false
+summary = "The yearly deposit rate is the base rate minus this number, and not below zero."
+
+# ---- Loans -----------------------------------------------------------------
+
+[params."finance.base_rate_bp"]
+value = 500
+min = 0
+max = 10000
+policy = false
+summary = "Yearly base rate of the central bank in basis points. The central banker sets it."
+
+[params."finance.loan_spread_bp"]
+value = 300
+min = 0
+max = 10000
+policy = false
+summary = "The yearly rate of a new loan is the base rate plus this number."
+
+[params."finance.reserve_ratio_bp"]
+value = 1000
+min = 0
+max = 10000
+policy = true
+summary = "Share of all deposits that the bank cannot lend, in basis points."
+
+[params."finance.loan_min"]
+value = 1000
+min = 1
+max = 1000000
+policy = false
+summary = "Least amount of a loan in cents."
+
+[params."finance.loan_limit_max"]
+value = 5000000
+min = 0
+max = 1000000000
+policy = true
+summary = "Greatest credit limit of one resident in cents."
+
+[params."finance.loan_base_limit"]
+value = 0
+min = 0
+max = 1000000
+policy = false
+summary = "Credit limit of a resident without history and without deposits, in cents."
+
+[params."finance.loan_limit_per_account_day"]
+value = 500
+min = 0
+max = 1000000
+policy = false
+summary = "Cents that each full day of account age adds to the credit limit."
+
+[params."finance.loan_limit_per_repaid_loan"]
+value = 20000
+min = 0
+max = 10000000
+policy = false
+summary = "Cents that each fully repaid loan adds to the credit limit."
+
+[params."finance.loan_deposit_factor_bp"]
+value = 10000
+min = 0
+max = 100000
+policy = false
+summary = "Share of the seasoned balance that counts for the credit limit, in basis points."
+
+[params."finance.loan_default_penalty_bp"]
+value = 5000
+min = 0
+max = 10000
+policy = false
+summary = "Share of the credit limit that each past default removes, in basis points."
+
+[params."finance.loan_term_min_days"]
+value = 1
+min = 1
+max = 1000
+policy = false
+summary = "Shortest term of a loan in game days."
+
+[params."finance.loan_term_max_days"]
+value = 28
+min = 1
+max = 10000
+policy = false
+summary = "Longest term of a loan in game days."
+
+[params."finance.loan_first_due_days"]
+value = 2
+min = 1
+max = 1000
+policy = false
+summary = "Midnights from the grant of a loan to its first instalment. With 2 the borrower has at least one full day."
+
+[params."finance.loan_missed_max"]
+value = 3
+min = 1
+max = 100
+policy = false
+summary = "Missed daily instalments in a row that make a loan default."
+
+[params."finance.bankruptcy_days"]
+value = 28
+min = 0
+max = 100000
+policy = true
+summary = "Game days after a default during which the resident cannot borrow."
+
+# ---- Exchange --------------------------------------------------------------
+
+[params."finance.exchange_fee_bp"]
+value = 50
+min = 0
+max = 2000
+policy = true
+summary = "Fee of a trade on the exchange, in basis points of the value. The seller pays it to the city."
+
+[params."finance.exchange_ticks"]
+value = 1
+min = 1
+max = 60
+policy = false
+summary = "Ticks that `order_place`, `order_cancel` and `market_claim` take."
+
+[params."finance.orders_max_per_trader"]
+value = 8
+min = 1
+max = 256
+policy = false
+summary = "Greatest number of orders of one trader at one exchange, open or not yet claimed."
+
+[params."finance.order_qty_max"]
+value = 100000
+min = 1
+max = 1000000
+policy = false
+summary = "Greatest quantity of one order."
+
+[params."finance.order_price_max"]
+value = 100000000
+min = 1
+max = 1000000000000
+policy = false
+summary = "Greatest unit price of one order in cents."
+
+[params."finance.book_depth"]
+value = 5
+min = 1
+max = 50
+policy = false
+summary = "Price levels per side that `market_book` and `shares_book` show."
+
+# ---- Shares ----------------------------------------------------------------
+
+[params."finance.shares_max_per_org"]
+value = 1000000
+min = 1
+max = 1000000000
+policy = false
+summary = "Greatest number of shares of one organization, sold or on offer."
+
+[params."finance.share_price_max"]
+value = 100000000
+min = 1
+max = 1000000000
+policy = false
+summary = "Greatest price of one share in cents."
+
+[params."finance.share_orders_max"]
+value = 8
+min = 1
+max = 256
+policy = false
+summary = "Greatest number of open share orders that one resident placed."
+
+# ---- Central bank ----------------------------------------------------------
+
+[params."finance.base_rate_floor_bp"]
+value = 0
+min = 0
+max = 10000
+policy = true
+summary = "Lowest base rate that the central banker can set."
+
+[params."finance.base_rate_ceiling_bp"]
+value = 3000
+min = 0
+max = 10000
+policy = true
+summary = "Highest base rate that the central banker can set."
+
+[params."finance.issue_limit_per_year"]
+value = 10000000
+min = 0
+max = 1000000000000
+policy = true
+summary = "Cents that the central banker can issue to the nation treasury in one game year."
+
+[params."finance.retire_limit_per_year"]
+value = 10000000
+min = 0
+max = 1000000000000
+policy = true
+summary = "Cents of treasury money that the central banker can retire in one game year."
+
+# ---- Statistics and observation -----------------------------------------------
+
+[params."finance.stats_report_period"]
+value = 60
+min = 1
+max = 1440
+policy = false
+summary = "Frames between two reports of a zone to the statistics. A zone also reports at the start of each day."
+
+# One order in the `market` section is about 35 tokens, one holding in the
+# `bank` section about 16. With 3 entries both sections stay below the 150
+# tokens that docs/design/game-design.md, section 9, asks for.
+[params."finance.observe_list_max"]
+value = 3
+min = 1
+max = 50
+policy = false
+summary = "Greatest number of entries of one list in the `bank` and `market` sections of a brief observation."
+
+# ---- Drama scores of events (0 to 100, see docs/design/game-design.md, section 6)
+
+[params."finance.drama_routine"]
+value = 3
+min = 0
+max = 100
+policy = false
+summary = "Drama of routine finance events: a fill on the exchange, a share trade, a new account, a repaid loan."
+
+[params."finance.drama_loan_granted"]
+value = 12
+min = 0
+max = 100
+policy = false
+summary = "Drama of `finance.loan_granted`."
+
+[params."finance.drama_loan_defaulted"]
+value = 55
+min = 0
+max = 100
+policy = false
+summary = "Drama of `finance.loan_defaulted`."
+
+[params."finance.drama_shares"]
+value = 20
+min = 0
+max = 100
+policy = false
+summary = "Drama of `finance.shares_issued` and `finance.dividend_paid`."
+
+[params."finance.drama_central_bank"]
+value = 35
+min = 0
+max = 100
+policy = false
+summary = "Drama of the central bank events: a rate change, money issued, money retired."
