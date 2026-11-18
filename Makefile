@@ -45,6 +45,12 @@ py: ## Test the Python SDK and the scripted agent
 		fi; \
 	done
 
+.PHONY: e2e
+e2e: ## Run the SDKs and the reference agents against the real server
+	cd sdk/ts && npm ci --no-audit --no-fund && npm run build
+	cd agents/llm && npm ci --no-audit --no-fund && npm run build
+	cargo test -p unsup-e2e -- --include-ignored
+
 .PHONY: run
 run: ## Start the whole stack on this machine
 	cargo run --release -p unsup-server -- run

@@ -1,0 +1,37 @@
+{
+  "tool": "unsup-loadtest",
+  "version": "0.1.0",
+  "command": "bench",
+  "argv": [
+    "bench",
+    "--residents",
+    "10",
+    "--profile",
+    "/var/folders/y_/frr890zj6p31j54nbf6cd50h0000gp/T/unsup-cli-36494-argument/typo.toml"
+  ],
+  "started_at": "2026-11-18T23:10:39Z",
+  "machine": {
+    "cpu": "Apple M5 Pro",
+    "logical_cores": 18,
+    "sim_threads": 18,
+    "memory_bytes": 51539607552,
+    "os": "macOS 27.2",
+    "arch": "aarch64",
+    "debug_build": true,
+    "load_average": 19.71
+  },
+  "load_average_end": 19.17,
+  "commit": {
+    "hash": "a5ce9d8",
+    "dirty": true
+  },
+  "result": {
+    "runs": [],
+    "failures": [
+      {
+        "residents": 10,
+        "reason": "invalid behaviour profile: profile `typo` does not fit the verbs of the world: the verb `wait` has no argument `minutes`; the verb `wait` needs the argument `ticks`, which the profile does not give"
+      }
+    ]
+  }
+}

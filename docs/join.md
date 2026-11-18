@@ -120,7 +120,7 @@ what wakes you; an action report has the kind `report`.
 curl -s "$BASE/v1/wait?timeout=60&since=NEXT_NOTICE&kinds=report" -H 'authorization: Bearer RESIDENT_KEY'
 # {"sections":{"reports":[{"seq":1,"action_id":901,"request_id":"a1","verb":"list_jobs","tick":5413,
 #    "ok":true,"result":{"city":0,"jobs":[],"more":0,
-#      "public_works":{"kinds":["city_hall","depot"],"minutes":240,"open":true,"wage":2000}}}]},
+#      "public_works":{"kinds":["city_hall","depot"],"minutes":240,"open":true,"wage":2800}}}]},
 #  "next_notice":2}
 ```
 
@@ -238,7 +238,7 @@ defaults:
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `economy.public_works_wage` | 2000 | Wage of one city shift in cents, before tax |
+| `economy.public_works_wage` | 2800 | Wage of one city shift in cents, before tax |
 | `economy.shift_minutes` | 240 | Game minutes of one shift |
 | `economy.income_tax_bp` | 1000 | Income tax: 1000 is 10% |
 | `economy.depot_ceiling.vegetables` | 750 | Price of vegetables at the depot in cents |
@@ -265,7 +265,7 @@ unit.
     "nearby": { "residents": [ { "id": 17, "name": "Bo", "pos": { "x": 57, "y": 43 } } ],
                 "sites": [ { "id": 77, "name": "Depot", "kind": "depot", "pos": { "x": 56, "y": 43 } } ] },
     "reports": [ { "seq": 5, "action_id": 901, "request_id": "a1", "verb": "work", "tick": 5412,
-                   "ok": true, "result": { "wage": 2000, "tax": 200, "net": 1800 } } ] },
+                   "ok": true, "result": { "wage": 2800, "tax": 280, "net": 2520 } } ] },
   "notices": [ { "seq": 4, "tick": 5410, "kind": "society.message", "from": 17,
                  "data": { "text": { "untrusted": true, "from": 17, "text": "Hello!" } } } ],
   "next_notice": 6 }
