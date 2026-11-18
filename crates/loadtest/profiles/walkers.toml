@@ -1,11 +1,13 @@
-# Walkers: the load that the world of today can run. Every resident walks to
-# a random tile near it, thinks, and walks again. Sometimes it stands still.
+# Walkers: every resident walks to a random tile near it that it can reach,
+# thinks, and walks again. Sometimes it stands still.
 #
-# One cycle is about 13 ticks (8 ticks of walking, 5 ticks of thinking), so
-# one million residents send about 75,000 actions in each frame.
+# A walk target is a walkable tile inside the city of the resident. The way
+# to it can go around walls and through a door, so a walk takes more ticks
+# than the distance in tiles. A walk into another district is acknowledged
+# with `pending`.
 
 name = "walkers"
-summary = "Residents walk to random tiles near them and sometimes stand still."
+summary = "Residents walk to random walkable tiles near them and sometimes stand still."
 
 # Chance that a resident observes after an action.
 observe_share = 0.25

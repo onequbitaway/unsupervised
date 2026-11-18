@@ -3,9 +3,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use reqwest::header::RETRY_AFTER;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use unsup_protocol::{ActionRequest, Observation};
+use serde_json::json;
+use unsup_protocol::{ActionRequest, Observation, ZoneId};
 
 use super::error::{RequestError, from_reqwest};
 use super::wire::ActAnswer;
@@ -22,7 +24,7 @@ pub struct Urls {
     pub observe: String,
     /// `GET /v1/wait`.
     pub wait: String,
-    /// `GET /v1/ws`, with the scheme `ws` or `wss`.
+    /// `GET /v1/ws`, with the scheme `ws`.
     pub ws: String,
     /// `GET /v1/catalogue`.
     pub catalogue: String,
@@ -32,8 +34,6 @@ pub struct Urls {
     pub owners: String,
     /// `POST /v1/residents`.
     pub residents: String,
-    /// `POST /v1/dev/residents`, the sign-up of the development server.
-    pub dev_residents: String,
     /// The route with the statistics of the server.
     pub stats: String,
 }
@@ -72,10 +72,16 @@ impl Urls {
             world: at("/v1/world"),
             owners: at("/v1/owners"),
             residents: at("/v1/residents"),
-            dev_residents: at("/v1/dev/residents"),
             stats: at(&format!("/{}", stats_path.trim_start_matches('/'))),
             base,
         })
+    }
+
+    /// Returns the address of `GET /v1/world/zones/{id}` without the
+    /// residents of the zone: its tiles and its sites.
+    #[must_use]
+    pub fn zone(&self, zone: ZoneId) -> String {
+        format!("{}/zones/{zone}?residents=false", self.world)
     }
 }
 
@@ -105,12 +111,18 @@ async fn exchange(request: reqwest::RequestBuilder) -> Result<(Vec<u8>, Duration
     let start = Instant::now();
     let response = request.send().await.map_err(|error| from_reqwest(&error))?;
     let status = response.status();
+    // The server gives the wait as a number of seconds.
+    let retry_after = response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|text| text.trim().parse().ok());
     let body = response.bytes().await.map_err(|error| from_reqwest(&error))?;
     let latency = start.elapsed();
     if status.is_success() {
         Ok((body.to_vec(), latency))
     } else {
-        Err(RequestError::from_status(status.as_u16(), &body))
+        Err(RequestError::from_status(status.as_u16(), &body, retry_after))
     }
 }
 
@@ -173,16 +185,23 @@ impl HttpLink {
         HttpLink { client, urls, key }
     }
 
-    /// Sends one action. The latency is the acknowledgement latency.
+    /// Sends one action, or a plan of several actions in sequence. The
+    /// latency is the acknowledgement latency. The observation in the
+    /// answer holds the notices and reports since `since`.
     ///
     /// # Errors
     ///
     /// Fails when the server gives no acknowledgement.
     pub async fn act(
         &self,
-        request: &ActionRequest,
+        requests: &[ActionRequest],
+        since: u64,
     ) -> Result<(ActAnswer, Duration), RequestError> {
-        post_json(&self.client, &self.urls.act, Some(&self.key), request).await
+        let url = format!("{}?since={since}", self.urls.act);
+        match requests {
+            [request] => post_json(&self.client, &url, Some(&self.key), request).await,
+            plan => post_json(&self.client, &url, Some(&self.key), &json!({ "plan": plan })).await,
+        }
     }
 
     /// Asks for an observation with the notices since `since`.
@@ -201,17 +220,18 @@ impl HttpLink {
     ///
     /// # Errors
     ///
-    /// Fails when the server gives no observation. An error for which
-    /// [`RequestError::route_absent`] is true means that the server has no
-    /// long poll.
+    /// Fails when the server gives no observation.
     pub async fn wait(
         &self,
         since: u64,
         timeout: Duration,
         patience: Duration,
     ) -> Result<Observation, RequestError> {
-        let url =
-            format!("{}?timeout={}&since={since}&kinds=report", self.urls.wait, timeout.as_secs());
+        let url = format!(
+            "{}?timeout={:.3}&since={since}&kinds=report",
+            self.urls.wait,
+            timeout.as_secs_f64()
+        );
         let request =
             self.client.get(url).bearer_auth(&self.key).timeout(timeout.saturating_add(patience));
         let (body, _) = exchange(request).await?;
@@ -225,21 +245,25 @@ mod tests {
 
     #[test]
     fn addresses_follow_the_protocol_document() {
-        let urls = Urls::new("http://127.0.0.1:8080/", "v1/stats").expect("a valid address");
+        let urls =
+            Urls::new("http://127.0.0.1:8080/", "v1/spectate/stats").expect("a valid address");
         assert_eq!(urls.base, "http://127.0.0.1:8080");
         assert_eq!(urls.act, "http://127.0.0.1:8080/v1/act");
         assert_eq!(urls.ws, "ws://127.0.0.1:8080/v1/ws");
-        assert_eq!(urls.dev_residents, "http://127.0.0.1:8080/v1/dev/residents");
-        assert_eq!(urls.stats, "http://127.0.0.1:8080/v1/stats");
+        assert_eq!(urls.owners, "http://127.0.0.1:8080/v1/owners");
+        assert_eq!(urls.residents, "http://127.0.0.1:8080/v1/residents");
+        assert_eq!(urls.stats, "http://127.0.0.1:8080/v1/spectate/stats");
+        assert_eq!(urls.zone(ZoneId(7)), "http://127.0.0.1:8080/v1/world/zones/7?residents=false");
     }
 
     #[test]
     fn an_address_that_this_build_cannot_reach_is_refused_with_a_reason() {
-        let tls = Urls::new("https://example.org", "/v1/stats").expect_err("TLS is not built in");
+        let tls = Urls::new("https://example.org", "/v1/spectate/stats")
+            .expect_err("TLS is not built in");
         assert!(tls.contains("TLS"), "{tls}");
-        let bare = Urls::new("localhost:8080", "/v1/stats").expect_err("no scheme");
+        let bare = Urls::new("localhost:8080", "/v1/spectate/stats").expect_err("no scheme");
         assert!(bare.contains("http://127.0.0.1:8080"), "{bare}");
-        let path = Urls::new("http://host/api", "/v1/stats").expect_err("a path");
+        let path = Urls::new("http://host/api", "/v1/spectate/stats").expect_err("a path");
         assert!(path.contains("without a path"), "{path}");
     }
 }

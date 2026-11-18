@@ -10,7 +10,7 @@ mod scene;
 mod setup;
 mod shape;
 
-pub use counters::ActionCounts;
+pub use counters::{ActionCounts, VerbCounts};
 pub use driver::{Driver, DriverOptions};
 pub use scene::{LocalScene, Scratch};
 pub use setup::{Placement, Population, WorldSpec, build_world, populate};

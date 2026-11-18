@@ -1,15 +1,15 @@
 //! Behaviour profiles: what residents do under load.
 //!
-//! A profile is a TOML file. It lists actions with weights, says how the
-//! arguments of each action are made, and gives the think time between two
-//! actions. The verbs of a profile are matched with the catalogue of the
-//! world at run time ([`Profile::resolve`]): a verb that the world does not
-//! have is skipped with a warning, so one profile works while the game
-//! grows.
+//! A profile is a TOML file. It lists actions with weights, says where and
+//! when each action is possible, how its arguments are made, and gives the
+//! think time between two actions. The verbs of a profile are matched with
+//! the catalogue of the world at run time ([`Profile::resolve`]). A verb
+//! that the world does not have is skipped with a warning. An argument
+//! that the verb does not have stops the run.
 //!
 //! ```toml
-//! name = "walkers"
-//! summary = "Residents walk to random tiles near them."
+//! name = "workers"
+//! summary = "Residents walk and do public works."
 //! observe_share = 0.25      # chance of an observation after an action
 //! wait_share = 0.5          # swarm: chance to wait for the end of an action
 //!
@@ -22,10 +22,17 @@
 //! verb = "move_to"
 //! weight = 9
 //! args = { gen = "near_tile", radius = 12 }
+//!
+//! [[action]]
+//! verb = "work"
+//! weight = 3
+//! at = ["city_hall", "depot"]                       # walk there first
+//! when = { attr_above = { "need.energy" = 100 } }   # only when this holds
 //! ```
 
 mod args;
 mod resolve;
+mod when;
 
 use std::fmt;
 use std::path::Path;
@@ -33,15 +40,17 @@ use std::path::Path;
 use serde::Deserialize;
 
 pub use args::{ArgSpec, Generator, ItemAs};
-pub use resolve::{Choice, Resolved};
+pub use resolve::{Choice, Memory, Resolved, WALK_SITE_ARG, WALK_VERB};
+pub use when::When;
 
 use crate::think::TickThink;
 
 /// The profiles that are part of the binary: name and TOML text.
-const BUILTIN: [(&str, &str); 3] = [
+const BUILTIN: [(&str, &str); 4] = [
     ("walkers", include_str!("../../profiles/walkers.toml")),
     ("rush", include_str!("../../profiles/rush.toml")),
     ("daily_life", include_str!("../../profiles/daily_life.toml")),
+    ("still", include_str!("../../profiles/still.toml")),
 ];
 
 /// A profile could not be read or is not valid.
@@ -63,6 +72,16 @@ fn invalid(message: impl Into<String>) -> ProfileError {
     ProfileError { message: message.into() }
 }
 
+/// Returns the percent of the first `cash` generator in a specification.
+fn cash_share(args: &ArgSpec) -> Option<u32> {
+    match args {
+        ArgSpec::Gen(Generator::Cash { percent }) => Some(*percent),
+        ArgSpec::Object(fields) => fields.iter().find_map(|(_, spec)| cash_share(spec)),
+        ArgSpec::List(specs) => specs.iter().find_map(cash_share),
+        _ => None,
+    }
+}
+
 /// One weighted action of a profile.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,6 +94,19 @@ pub struct ActionSpec {
     /// How the arguments are made.
     #[serde(default)]
     pub args: ArgSpec,
+    /// Kinds of the sites where the action works, for example `depot`. A
+    /// resident that is not at such a site walks to one of the nearest
+    /// first: its request is a plan of the walk and the action. Empty: the
+    /// action works at every place.
+    #[serde(default)]
+    pub at: Vec<String>,
+    /// What must be true before a resident chooses the action.
+    #[serde(default)]
+    pub when: When,
+    /// True: a resident does the action at most one time in a run, for
+    /// example `open_account`.
+    #[serde(default)]
+    pub once: bool,
 }
 
 /// A behaviour profile, as it is written in the file.
@@ -153,6 +185,21 @@ impl Profile {
         }
         if let Some(action) = self.actions.iter().find(|action| action.verb.trim().is_empty()) {
             return Err(invalid(format!("an action with weight {} has no verb", action.weight)));
+        }
+        for action in &self.actions {
+            if action.at.iter().any(|kind| kind.trim().is_empty()) {
+                return Err(invalid(format!(
+                    "`at` of the action `{}` has an empty kind",
+                    action.verb
+                )));
+            }
+            if let Some(share) = cash_share(&action.args).filter(|share| !(1..=100).contains(share))
+            {
+                return Err(invalid(format!(
+                    "the action `{}` asks for {share} percent of the cash; use 1 to 100",
+                    action.verb
+                )));
+            }
         }
         Ok(())
     }

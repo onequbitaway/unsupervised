@@ -39,7 +39,8 @@ pub struct WorldDefaults {
     pub shape_tolerance_percent: u32,
     /// Tile kinds on which a resident cannot stand.
     pub blocked_tiles: Vec<u8>,
-    /// Tries to find a free tile for one resident of the scatter placement.
+    /// Tries to find a walkable tile for one resident of the scatter
+    /// placement.
     pub scatter_attempts: u32,
     /// Residents of one owner in a world that a tool fills.
     pub residents_per_owner: u64,
@@ -52,8 +53,12 @@ pub struct DriverDefaults {
     /// Tries to find an action whose arguments can be made.
     pub pick_attempts: u32,
     /// Ticks before the driver looks again at a resident whose action waits
-    /// for the global realm.
+    /// for the global realm or for the end of a walk to another zone.
     pub pending_recheck_ticks: u32,
+    /// Tries to find a walkable tile for one walk target.
+    pub tile_attempts: u32,
+    /// Number of nearest sites of a kind among which a resident chooses.
+    pub site_choices: usize,
 }
 
 /// Defaults of `bench`.
@@ -124,9 +129,8 @@ pub struct SwarmDefaults {
     pub max_failures_in_row: u32,
     /// Greatest number of seconds of one long poll.
     pub wait_timeout_secs: f64,
-    /// Milliseconds between two observations when the server has no long
-    /// poll.
-    pub poll_interval_ms: u64,
+    /// Zones whose map the tool reads at the same time.
+    pub map_requests: usize,
     /// Real milliseconds for one game minute of a server that the tool
     /// starts.
     pub tick_ms: u64,
@@ -170,6 +174,9 @@ mod tests {
         assert!(d.world.residents_per_zone > 0);
         assert!(d.world.max_districts > 0);
         assert!(d.driver.pick_attempts > 0);
+        assert!(d.driver.tile_attempts > 0);
+        assert!(d.driver.site_choices > 0);
+        assert!(!d.world.blocked_tiles.is_empty());
         assert!(d.bench.frames > 0);
         assert!(d.soak.audit_every > 0);
         assert!(d.soak.hash_every > 0);

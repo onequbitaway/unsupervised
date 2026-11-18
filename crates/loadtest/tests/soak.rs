@@ -85,6 +85,82 @@ fn the_same_seed_gives_the_same_state_and_another_seed_does_not() {
     assert_ne!(first.state_hash, other.state_hash);
 }
 
+#[test]
+fn a_soak_with_real_money_has_faucets_and_sinks_and_balances_on_every_tick() {
+    // The daily-life profile in one city, from the spawn sites. 700 ticks
+    // hold a shift of public works (240 ticks) with the walks before and
+    // after it, and the trade at the depot that follows.
+    let config = SoakConfig {
+        world: WorldSpec {
+            seed: 7,
+            residents: 150,
+            shape: Shape { cities: 1, districts: 1 },
+            placement: Placement::Spawn,
+            data: Vec::new(),
+        },
+        ticks: 700,
+        profile: Profile::load("daily_life").expect("a built-in profile"),
+        audit_every: 1,
+        verify_determinism: true,
+        hash_every: 50,
+        request_ids: false,
+    };
+    let result = run(&config, &[]);
+    assert!(result.passed(), "violation: {:?}", result.violation);
+    assert_eq!(result.ticks_run, 700);
+    // The world balanced before the first tick and after each tick.
+    assert_eq!(result.audits_passed, 701);
+    // Two identical runs had the same state at ticks 0, 50, ..., 700.
+    assert_eq!(result.hash_checks_passed, 15);
+
+    let money = result.money.clone().expect("the last audit passed");
+    // Money entered the world through wages and through sales to the
+    // depot, and left it through purchases at the depot.
+    let wages = money.faucets.get("gov.public_works").copied().unwrap_or(0);
+    let exports = money.faucets.get("export.sale").copied().unwrap_or(0);
+    let imports = money.sinks.get("import.purchase").copied().unwrap_or(0);
+    assert!(wages > 0, "no wage was paid: {:?}", money.faucets);
+    assert!(exports > 0, "the depot bought nothing: {:?}", money.faucets);
+    assert!(imports > 0, "the depot sold nothing: {:?}", money.sinks);
+    // A wage of public works is 2,000 cents: the faucet gives whole wages.
+    assert_eq!(wages % 2_000, 0, "wages: {wages}");
+    // The parts by name are the totals, and the totals balance.
+    assert_eq!(money.faucets.values().sum::<i64>(), money.minted);
+    assert_eq!(money.sinks.values().sum::<i64>(), money.burned);
+    assert!(money.minted > 0 && money.burned > 0);
+    assert_eq!(money.held + money.in_flight, money.minted - money.burned);
+
+    // Goods were gathered, bought, eaten and sold, and each good balances.
+    assert_eq!(result.goods.len() as u64, result.goods_kinds);
+    let vegetables = result.goods.get("vegetables").expect("residents gather and buy vegetables");
+    assert!(vegetables.produced > 0 && vegetables.consumed > 0, "{vegetables:?}");
+    for (name, good) in &result.goods {
+        assert_eq!(good.held + good.in_flight, good.produced - good.consumed, "{name}: {good:?}");
+    }
+
+    // The verbs that move the money were accepted and ended well at least
+    // one time.
+    for verb in ["work", "sell", "buy", "eat"] {
+        let counts = &result.actions.by_verb[verb];
+        assert!(counts.finished > 0, "`{verb}` never finished: {counts:?}");
+    }
+    let summary = result.summary();
+    assert!(summary.contains("money faucets: {\"export.sale\": "), "{summary}");
+    assert!(summary.contains("money sinks: {\"import.purchase\": "), "{summary}");
+    assert!(summary.contains("result: PASSED"), "{summary}");
+}
+
+#[test]
+fn a_world_without_money_reports_no_faucet_and_no_sink() {
+    // Walkers earn nothing and buy nothing: the lists are empty, so a
+    // number in them is a number that the run made.
+    let result = run(&config(1, 30, false), &[]);
+    let money = result.money.expect("the last audit passed");
+    assert_eq!((money.minted, money.burned, money.held), (0, 0, 0));
+    assert!(money.faucets.is_empty() && money.sinks.is_empty());
+    assert!(result.goods.values().all(|good| good.produced == 0));
+}
+
 /// Makes money from nothing: it wires money to the global realm and then
 /// puts the ledger of the zone back as it was before the wire. The money
 /// is then in the zone and on its way at the same time.
@@ -176,6 +252,10 @@ fn the_same_world_without_the_broken_plugin_passes() {
     // 8 zones mint 5 cents in each of 40 ticks.
     assert_eq!(money.minted, 8 * 40 * 5);
     assert_eq!(money.held, 8 * 40 * 5);
+    // The report names the faucet.
+    assert_eq!(money.faucets.get("honest.print"), Some(&(8 * 40 * 5)));
+    assert_eq!(money.faucets.len(), 1);
+    assert!(money.sinks.is_empty());
 }
 
 /// Counts every tick of every world of this process. Two worlds never see

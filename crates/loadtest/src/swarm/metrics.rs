@@ -5,9 +5,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use unsup_protocol::{ActionAck, ActionStatus};
+use unsup_protocol::ActionAck;
 
 use super::error::RequestError;
+use super::wire::Ended;
+use crate::local::ActionCounts;
 use crate::stats::{self, Counts, Latency};
 
 /// How an agent talks to the server.
@@ -149,15 +151,22 @@ pub struct Metrics {
     pub acks_steady: Counter,
     /// Acknowledgements in the whole run.
     pub acks_total: Counter,
-    /// Acknowledgements in the window by state (`done`, `started`, ...).
-    pub ack_states: NamedCounts,
-    /// Rejected actions in the window by error code of the game.
-    pub rejections: NamedCounts,
+    /// What the agents did in the window: acknowledgements by state and by
+    /// verb, rejections by error code, and the reports that agents read.
+    actions: Mutex<ActionCounts>,
     /// Requests without a usable answer in the window, by code.
     pub errors_steady: NamedCounts,
     /// Requests without a usable answer outside the window, by code: in
     /// the ramp-up, and while the run stops.
     pub errors_ramp: NamedCounts,
+    /// Requests in the window that a limit of the server refused (status
+    /// 429), by code. They are not in the failed requests.
+    pub throttled_steady: NamedCounts,
+    /// Requests outside the window that a limit of the server refused.
+    pub throttled_ramp: NamedCounts,
+    /// Number of requests in the window that a limit of the server
+    /// refused.
+    pub throttled: Counter,
     /// The first message of each error code, in the whole run.
     pub error_examples: Examples,
     /// The first failure that showed a limit of this machine. The run
@@ -186,9 +195,6 @@ pub struct Metrics {
     pub ws_open: Gauge,
     /// Agents that hold an HTTP client of their own.
     pub http_agents: Gauge,
-    /// WebSocket agents that use HTTP because the server has no WebSocket
-    /// route.
-    pub ws_fallbacks: Counter,
 }
 
 impl Metrics {
@@ -207,10 +213,12 @@ impl Metrics {
             signup: Latency::new(max, sigfig)?,
             acks_steady: Counter::default(),
             acks_total: Counter::default(),
-            ack_states: NamedCounts::default(),
-            rejections: NamedCounts::default(),
+            actions: Mutex::new(ActionCounts::default()),
             errors_steady: NamedCounts::default(),
             errors_ramp: NamedCounts::default(),
+            throttled_steady: NamedCounts::default(),
+            throttled_ramp: NamedCounts::default(),
+            throttled: Counter::default(),
             error_examples: Examples::default(),
             machine_limit: OnceLock::new(),
             failed_steady: Counter::default(),
@@ -224,7 +232,6 @@ impl Metrics {
             credentials_renewed: Counter::default(),
             ws_open: Gauge::default(),
             http_agents: Gauge::default(),
-            ws_fallbacks: Counter::default(),
         })
     }
 
@@ -239,29 +246,57 @@ impl Metrics {
         self.steady.load(Ordering::Relaxed)
     }
 
-    /// Counts one acknowledgement with its latency.
-    pub fn ack(&self, agent: usize, link: Link, ack: &ActionAck, latency: Duration) {
-        self.acks_total.add();
+    /// Runs `change` on the action counts of the window.
+    fn count(&self, change: impl FnOnce(&mut ActionCounts)) {
+        // A poisoned lock still holds valid counts.
+        let mut actions = match self.actions.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        change(&mut actions);
+    }
+
+    /// Returns a copy of the action counts of the window.
+    #[must_use]
+    pub fn actions(&self) -> ActionCounts {
+        match self.actions.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// Counts the acknowledgements of one request with its latency. A plan
+    /// has several acknowledgements; each has the latency of the request.
+    /// `requests` is the number of actions that the agent sent: the server
+    /// stops a plan at the first rejection.
+    pub fn acks(
+        &self,
+        agent: usize,
+        link: Link,
+        acks: &[ActionAck],
+        requests: usize,
+        latency: Duration,
+    ) {
+        for _ in acks {
+            self.acks_total.add();
+        }
         if !self.is_steady() {
             return;
         }
-        self.acks_steady.add();
-        self.ack.record(agent, latency);
-        match link {
-            Link::Http => self.ack_http.record(agent, latency),
-            Link::Ws => self.ack_ws.record(agent, latency),
-        }
-        let state = match &ack.status {
-            ActionStatus::Done { .. } => "done",
-            ActionStatus::Started { .. } => "started",
-            ActionStatus::Pending => "pending",
-            ActionStatus::Queued { .. } => "queued",
-            ActionStatus::Rejected { error } => {
-                self.rejections.add(error.code.as_str());
-                "rejected"
+        for _ in acks {
+            self.acks_steady.add();
+            self.ack.record(agent, latency);
+            match link {
+                Link::Http => self.ack_http.record(agent, latency),
+                Link::Ws => self.ack_ws.record(agent, latency),
             }
-        };
-        self.ack_states.add(state);
+        }
+        self.count(|actions| {
+            for ack in acks {
+                actions.record(ack);
+            }
+            actions.not_sent += requests.saturating_sub(acks.len()) as u64;
+        });
     }
 
     /// Counts one observation with its latency.
@@ -272,20 +307,125 @@ impl Metrics {
         }
     }
 
+    /// Counts how actions ended, from the reports that an agent read.
+    pub fn ended(&self, ended: &[Ended]) {
+        if ended.is_empty() || !self.is_steady() {
+            return;
+        }
+        self.count(|actions| {
+            for end in ended {
+                actions.record_end(&end.verb, end.failed.as_deref());
+            }
+        });
+    }
+
     /// Counts one request without a usable answer, and keeps its message
-    /// when it is the first of its code. A failure that shows a limit of
-    /// this machine is kept too; the run then stops.
+    /// when it is the first of its code. A request that a limit of the
+    /// server refused is counted in a class of its own: it is not a failed
+    /// request. A failure that shows a limit of this machine is kept too;
+    /// the run then stops.
     pub fn error(&self, error: &RequestError) {
+        self.error_examples.keep(&error.code, &error.message);
+        if error.throttled() {
+            if self.is_steady() {
+                self.throttled.add();
+                self.throttled_steady.add(&error.code);
+            } else {
+                self.throttled_ramp.add(&error.code);
+            }
+            return;
+        }
         if self.is_steady() {
             self.failed_steady.add();
             self.errors_steady.add(&error.code);
         } else {
             self.errors_ramp.add(&error.code);
         }
-        self.error_examples.keep(&error.code, &error.message);
         if error.machine_limit() {
             // Only the first one is kept.
             let _ = self.machine_limit.set(error.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_by_a_limit_of_the_server_is_not_a_failed_request() {
+        let metrics = Metrics::new(Duration::from_secs(10), 3).expect("valid bounds");
+        let limited = RequestError::from_status(429, b"", Some(2));
+        let broken = RequestError::from_status(503, b"", None);
+
+        // Before the window opens, both are counted outside it.
+        metrics.error(&limited);
+        metrics.error(&broken);
+        assert_eq!(metrics.throttled_ramp.get().get("http_429"), Some(&1));
+        assert_eq!(metrics.errors_ramp.get().get("http_503"), Some(&1));
+        assert_eq!((metrics.throttled.get(), metrics.failed_steady.get()), (0, 0));
+
+        metrics.set_steady(true);
+        metrics.error(&limited);
+        metrics.error(&limited);
+        metrics.error(&broken);
+        assert_eq!(metrics.throttled.get(), 2);
+        assert_eq!(metrics.throttled_steady.get().get("http_429"), Some(&2));
+        assert_eq!(metrics.failed_steady.get(), 1, "only the 503 is a failed request");
+        assert_eq!(metrics.errors_steady.get().get("http_429"), None);
+        assert!(metrics.error_examples.get().contains_key("http_429"));
+    }
+
+    #[test]
+    fn the_ends_of_actions_are_counted_in_the_window() {
+        let metrics = Metrics::new(Duration::from_secs(10), 3).expect("valid bounds");
+        let ended = [
+            Ended { verb: "work".into(), failed: None },
+            Ended { verb: "work".into(), failed: Some("interrupted".into()) },
+        ];
+        metrics.ended(&ended);
+        assert_eq!(metrics.actions().reports_finished, 0, "the window is not open");
+        metrics.set_steady(true);
+        metrics.ended(&ended);
+        let actions = metrics.actions();
+        assert_eq!((actions.reports_finished, actions.reports_failed), (1, 1));
+        assert_eq!(actions.failed_by_code.get("interrupted"), Some(&1));
+        assert_eq!(actions.by_verb["work"].failed, 1);
+    }
+
+    #[test]
+    fn each_acknowledgement_of_a_plan_has_the_latency_of_its_request() {
+        use unsup_protocol::{ActionError, ActionStatus, ErrorCode, Tick};
+        let metrics = Metrics::new(Duration::from_secs(10), 3).expect("valid bounds");
+        let ack = |verb: &str, status| ActionAck {
+            request_id: None,
+            action_id: 1,
+            verb: verb.into(),
+            status,
+        };
+        let walk = ack("move_to", ActionStatus::Started { ends_at: Tick(5), ticks: 5 });
+        let work = ack("work", ActionStatus::Queued { position: 1 });
+        let refused = ack(
+            "move_to",
+            ActionStatus::Rejected {
+                error: ActionError {
+                    code: ErrorCode::NotFound,
+                    message: String::new(),
+                    details: serde_json::Value::Null,
+                },
+            },
+        );
+        metrics.set_steady(true);
+        metrics.acks(3, Link::Ws, &[walk, work], 2, Duration::from_millis(4));
+        // The simulation rejected the walk: the server did not send the
+        // action behind it.
+        metrics.acks(3, Link::Http, &[refused], 2, Duration::from_millis(9));
+        assert_eq!(metrics.acks_steady.get(), 3);
+        assert_eq!(metrics.ack.summary().count, 3);
+        assert_eq!((metrics.ack_ws.summary().count, metrics.ack_http.summary().count), (2, 1));
+        let actions = metrics.actions();
+        assert_eq!((actions.sent, actions.started, actions.queued, actions.rejected), (3, 1, 1, 1));
+        assert_eq!(actions.not_sent, 1);
+        assert_eq!(actions.rejected_by_code.get("not_found"), Some(&1));
     }
 }

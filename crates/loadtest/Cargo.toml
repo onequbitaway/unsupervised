@@ -27,6 +27,9 @@ unsup-server.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+unsup-gateway.workspace = true
+unsup-spectator.workspace = true
+unsup-store.workspace = true
 
 [lints]
 workspace = true

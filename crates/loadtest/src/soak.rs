@@ -13,12 +13,14 @@
 //! - **panic**: the kernel or a module panicked. The self-audit of a realm
 //!   reports a broken ledger this way.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use unsup_kernel::{Plugin, World};
+use unsup_protocol::RealmId;
 
 use crate::bench::ProfileUse;
 use crate::local::{ActionCounts, Driver, DriverOptions, Placement, Shape, WorldSpec, populate};
@@ -90,7 +92,7 @@ impl fmt::Display for Violation {
 impl std::error::Error for Violation {}
 
 /// Money in the whole world at the end of a run, in cents.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoneyAtEnd {
     /// Sum of all balances.
     pub held: i64,
@@ -100,6 +102,52 @@ pub struct MoneyAtEnd {
     pub burned: i64,
     /// On the way between two realms.
     pub in_flight: i64,
+    /// Money that each faucet created, by the name of the faucet. Only
+    /// faucets that created money.
+    #[serde(default)]
+    pub faucets: BTreeMap<String, i64>,
+    /// Money that each sink destroyed, by the name of the sink. Only sinks
+    /// that destroyed money.
+    #[serde(default)]
+    pub sinks: BTreeMap<String, i64>,
+}
+
+/// One good in the whole world at the end of a run, in units.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoodsAtEnd {
+    /// Sum of all stocks.
+    pub held: i64,
+    /// Created through faucets.
+    pub produced: i64,
+    /// Destroyed through sinks.
+    pub consumed: i64,
+    /// On the way between two realms.
+    pub in_flight: i64,
+}
+
+/// Adds the money that each faucet created and each sink destroyed, over
+/// the ledgers of all realms.
+fn flows(world: &World) -> (BTreeMap<String, i64>, BTreeMap<String, i64>) {
+    let blueprint = world.blueprint();
+    let realms = || {
+        let zones = world.layout().zones().iter().map(|zone| RealmId::Zone(zone.id));
+        std::iter::once(RealmId::Global).chain(zones).filter_map(|id| world.realm(id))
+    };
+    let mut faucets = BTreeMap::new();
+    for (faucet, name) in blueprint.faucets() {
+        let minted: i64 = realms().map(|realm| realm.ledger().minted_by(faucet).cents()).sum();
+        if minted != 0 {
+            faucets.insert(name.to_string(), minted);
+        }
+    }
+    let mut sinks = BTreeMap::new();
+    for (sink, name) in blueprint.sinks() {
+        let burned: i64 = realms().map(|realm| realm.ledger().burned_by(sink).cents()).sum();
+        if burned != 0 {
+            sinks.insert(name.to_string(), burned);
+        }
+    }
+    (faucets, sinks)
 }
 
 /// The result of a soak run.
@@ -145,6 +193,10 @@ pub struct SoakRun {
     pub money: Option<MoneyAtEnd>,
     /// Number of different goods that the world has seen.
     pub goods_kinds: u64,
+    /// Each good that the world has seen, by the name of the item. Empty
+    /// when the last audit failed.
+    #[serde(default)]
+    pub goods: BTreeMap<String, GoodsAtEnd>,
     /// Messages without a target that the world dropped.
     pub dropped_messages: u64,
     /// State hash at the end, in hexadecimal.
@@ -193,6 +245,7 @@ impl SoakRun {
             thousands(self.actions.rejected),
             thousands(self.actions.observes),
         ));
+        out.push_str(&self.actions.refusal_lines());
         out.push_str(&format!(
             "  conservation: {} audits of the whole world passed (one every {} ticks)\n",
             thousands(self.audits_passed),
@@ -209,8 +262,17 @@ impl SoakRun {
         }
         if let Some(money) = &self.money {
             out.push_str(&format!(
-                "  money at the end: {} held + {} on the way = {} minted - {} burned; {} kinds of goods\n",
-                money.held, money.in_flight, money.minted, money.burned, self.goods_kinds
+                "  money at the end: {} held + {} on the way = {} minted - {} burned (cents)\n",
+                money.held, money.in_flight, money.minted, money.burned
+            ));
+            out.push_str(&format!("  money faucets: {:?}\n", money.faucets));
+            out.push_str(&format!("  money sinks: {:?}\n", money.sinks));
+            let (produced, consumed, held) = self.goods.values().fold((0, 0, 0), |sum, good| {
+                (sum.0 + good.produced, sum.1 + good.consumed, sum.2 + good.held + good.in_flight)
+            });
+            out.push_str(&format!(
+                "  goods at the end: {} kinds, {held} units held = {produced} produced - {consumed} consumed\n",
+                self.goods_kinds
             ));
         }
         out.push_str(&format!(
@@ -250,10 +312,15 @@ impl Side {
     fn new(config: &SoakConfig, extra: &[&dyn Plugin]) -> anyhow::Result<(Side, ProfileUse)> {
         let population = populate(&config.world, extra)?;
         let world = population.world;
-        let profile = config.profile.resolve(&world.catalogue())?;
+        let mut profile = config.profile.resolve(&world.catalogue())?;
+        profile.check_map(&population.map);
         let profile_use = ProfileUse::of(&profile);
-        let options = DriverOptions { seed: config.world.seed, request_ids: config.request_ids };
-        let driver = Driver::new(&world, population.ids, profile, options);
+        let options = DriverOptions {
+            seed: config.world.seed,
+            request_ids: config.request_ids,
+            observe_sections: Vec::new(),
+        };
+        let driver = Driver::new(&world, population.map, population.ids, profile, options);
         Ok((Side { world, driver }, profile_use))
     }
 
@@ -395,13 +462,28 @@ pub fn run(config: &SoakConfig, extra: &[&dyn Plugin]) -> anyhow::Result<SoakRun
         run.dropped_messages = first.world.dropped_messages();
         run.state_hash = hex(&first.world.state_hash());
         if let Ok(totals) = first.world.audit() {
+            let (faucets, sinks) = flows(&first.world);
             run.money = Some(MoneyAtEnd {
                 held: totals.money.held,
                 minted: totals.money.minted,
                 burned: totals.money.burned,
                 in_flight: totals.money.in_flight,
+                faucets,
+                sinks,
             });
             run.goods_kinds = totals.items.len() as u64;
+            let blueprint = first.world.blueprint();
+            for (item, good) in &totals.items {
+                run.goods.insert(
+                    blueprint.item_name(*item).to_string(),
+                    GoodsAtEnd {
+                        held: good.held,
+                        produced: good.produced,
+                        consumed: good.consumed,
+                        in_flight: good.in_flight,
+                    },
+                );
+            }
         }
     }
     run.violation = violation;

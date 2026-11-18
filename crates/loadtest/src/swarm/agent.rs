@@ -2,7 +2,6 @@
 //! the run ends.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use unsup_kernel::Rng;
@@ -11,10 +10,12 @@ use unsup_protocol::{ActionAck, ActionRequest, ActionStatus, Observation, Pos, R
 use super::error::RequestError;
 use super::http::{self, HttpLink, Urls};
 use super::metrics::{Link, Metrics};
-use super::signup::{self, Credential, SignUp};
-use super::wire::{CityBounds, has_report, update_scene};
+use super::preflight::HttpConnections;
+use super::signup::{self, Credential};
+use super::wire::{Ended, update_scene};
 use super::ws::WsLink;
-use crate::profile::Resolved;
+use crate::map::WorldMap;
+use crate::profile::{Memory, Resolved};
 use crate::random;
 use crate::scene::ListScene;
 use crate::think::ThinkTime;
@@ -28,48 +29,43 @@ const AGENT_STREAM: u64 = 0xa9e_0000_0000;
 pub struct Timing {
     /// Time after which a request counts as failed.
     pub request_timeout: Duration,
-    /// Pause after a failed request.
+    /// Pause after a failed request. It is also the pause after a request
+    /// that a limit of the server refused, when the answer names none.
     pub retry: Duration,
     /// Failed requests in a row after which the agent gives up.
     pub max_failures: u32,
     /// Greatest time of one wait for the end of an action.
     pub wait_timeout: Duration,
-    /// Time between two observations when the server has no long poll.
-    pub poll_interval: Duration,
 }
 
 /// What all agents of a swarm share.
 pub struct Shared {
     /// The behaviour, matched with the catalogue of the server.
     pub profile: Resolved,
-    /// The tiles of each city.
-    pub cities: CityBounds,
+    /// The tiles and the sites of the world.
+    pub map: Arc<WorldMap>,
     /// Think time between two requests.
     pub think: ThinkTime,
     /// The addresses of the server.
     pub urls: Arc<Urls>,
     /// The numbers of the run.
     pub metrics: Metrics,
-    /// The sign-up flow.
-    pub signup: SignUp,
     /// Times and limits of requests.
     pub timing: Timing,
     /// Seed of the choices of the agents.
     pub seed: u64,
     /// When the agents stop.
     pub end: Instant,
-    /// One client for all HTTP agents, or `None` when each agent has its
-    /// own client and connection.
-    pub shared_client: Option<reqwest::Client>,
-    /// Set when the server has no WebSocket route.
-    pub ws_absent: AtomicBool,
-    /// Set when the server has no long poll route.
-    pub wait_absent: AtomicBool,
+    /// One pool of connections for the agents that hold no HTTP connection
+    /// of their own.
+    pub pool: reqwest::Client,
+    /// How the HTTP agents hold connections.
+    pub http_connections: HttpConnections,
 }
 
 /// What one agent does in a run.
 #[derive(Clone, Debug)]
-pub struct Plan {
+pub struct Seat {
     /// Number of the agent, from 0.
     pub index: u32,
     /// When the agent starts.
@@ -103,8 +99,7 @@ struct Agent {
     client: reqwest::Client,
     owns_client: bool,
     credential: Credential,
-    /// The link that the plan asked for. The transport can differ: a
-    /// WebSocket agent uses HTTP when the server has no WebSocket route.
+    /// The link that the seat asked for.
     planned: Link,
     transport: Transport,
     scene: ListScene,
@@ -112,16 +107,18 @@ struct Agent {
     scene_fresh: bool,
     /// The notice cursor: `next_notice` of the last observation.
     cursor: u64,
+    /// What the agent remembers about its own actions.
+    memory: Memory,
     sent: u64,
     failures: u32,
 }
 
 /// Runs one agent until the run ends or the agent gives up.
-pub async fn run(plan: Plan, shared: Arc<Shared>) -> Outcome {
-    tokio::time::sleep_until(plan.start.into()).await;
+pub async fn run(seat: Seat, shared: Arc<Shared>) -> Outcome {
+    tokio::time::sleep_until(seat.start.into()).await;
     shared.metrics.agents_started.add();
-    let mut credential = plan.credential.clone();
-    let failed = match Agent::start(&plan, &shared, &mut credential).await {
+    let mut credential = seat.credential.clone();
+    let failed = match Agent::start(&seat, &shared, &mut credential).await {
         Ok(mut agent) => {
             shared.metrics.agents_ready.add();
             let result = agent.live().await;
@@ -144,41 +141,58 @@ fn takes_time(ack: &ActionAck) -> bool {
     )
 }
 
+/// Returns the time that an agent waits after the server refused a request
+/// by one of its limits: the time that the answer names, else `retry`.
+fn limit_pause(error: &RequestError, retry: Duration) -> Duration {
+    error.retry_after_secs.map_or(retry, Duration::from_secs).max(retry)
+}
+
 impl Agent {
     /// Signs up (or takes the stored key), connects and makes the first
-    /// observation. A failed step is tried again a few times.
+    /// observation. A failed step is tried again a few times. A step that
+    /// a limit of the server refused is tried again after the time that
+    /// the server names, until the run ends.
     async fn start(
-        plan: &Plan,
+        seat: &Seat,
         shared: &Arc<Shared>,
         stored: &mut Option<Credential>,
     ) -> Result<Agent, RequestError> {
-        let (client, owns_client) = match &shared.shared_client {
-            Some(client) => (client.clone(), false),
-            None => (http::client(shared.timing.request_timeout, true)?, true),
+        // An HTTP agent keeps one connection of its own open, like a real
+        // agent. A WebSocket agent holds its socket; it signs up through
+        // the pool, so that it does not keep a second connection.
+        let own = seat.link == Link::Http && shared.http_connections == HttpConnections::PerAgent;
+        let client = match own {
+            true => http::client(shared.timing.request_timeout, true)?,
+            false => shared.pool.clone(),
         };
+        let owns_client = own;
         let mut failures = 0;
         loop {
-            match Agent::try_start(plan, shared, stored, &client, owns_client).await {
+            let error = match Agent::try_start(seat, shared, stored, &client, owns_client).await {
                 Ok(agent) => return Ok(agent),
-                Err(error) => {
-                    shared.metrics.error(&error);
-                    if error.credentials_refused() && stored.take().is_some() {
-                        // The stored key is from another world. Sign up.
-                        shared.metrics.credentials_renewed.add();
-                    }
-                    failures += 1;
-                    let pause = Instant::now() + shared.timing.retry;
-                    if failures >= shared.timing.max_failures || pause >= shared.end {
-                        return Err(error);
-                    }
-                    tokio::time::sleep_until(pause.into()).await;
-                }
+                Err(error) => error,
+            };
+            shared.metrics.error(&error);
+            if error.credentials_refused() && stored.take().is_some() {
+                // The stored key is from another world. Sign up.
+                shared.metrics.credentials_renewed.add();
             }
+            let pause = if error.throttled() {
+                limit_pause(&error, shared.timing.retry)
+            } else {
+                failures += 1;
+                shared.timing.retry
+            };
+            let again = Instant::now() + pause;
+            if failures >= shared.timing.max_failures || again >= shared.end {
+                return Err(error);
+            }
+            tokio::time::sleep_until(again.into()).await;
         }
     }
 
     async fn try_start(
-        plan: &Plan,
+        seat: &Seat,
         shared: &Arc<Shared>,
         stored: &mut Option<Credential>,
         client: &reqwest::Client,
@@ -187,34 +201,33 @@ impl Agent {
         let credential = match stored {
             Some(credential) => credential.clone(),
             None => {
-                let name = format!("swarm-{}-{}", shared.seed, plan.index);
-                let (credential, took) =
-                    signup::timed(&shared.signup, client, &shared.urls, &name).await?;
-                shared.metrics.signup.record(plan.index as usize, took);
+                let name = format!("swarm-{}-{}", shared.seed, seat.index);
+                let (credential, took) = signup::timed(client, &shared.urls, &name).await?;
+                shared.metrics.signup.record(seat.index as usize, took);
                 *stored = Some(credential.clone());
                 credential
             }
         };
-        let transport = Agent::connect(plan.link, shared, client, &credential).await?;
+        let transport = Agent::connect(seat.link, shared, client, &credential).await?;
+        let mut scene = ListScene::new(ResidentId(credential.resident), Pos::default(), None);
+        scene.map = Some(Arc::clone(&shared.map));
         let mut agent = Agent {
-            index: plan.index as usize,
+            index: seat.index as usize,
             shared: Arc::clone(shared),
-            rng: Rng::stream(shared.seed, AGENT_STREAM + u64::from(plan.index)),
+            rng: Rng::stream(shared.seed, AGENT_STREAM + u64::from(seat.index)),
             client: client.clone(),
             owns_client,
-            scene: ListScene::new(ResidentId(credential.resident), Pos::default(), None),
+            scene,
             credential,
-            planned: plan.link,
+            planned: seat.link,
             transport,
             scene_fresh: false,
             cursor: 0,
+            memory: Memory::default(),
             sent: 0,
             failures: 0,
         };
         agent.count(true);
-        if plan.link == Link::Ws && matches!(agent.transport, Transport::Http(_)) {
-            shared.metrics.ws_fallbacks.add();
-        }
         match agent.observe().await {
             Ok(()) => Ok(agent),
             Err(error) => {
@@ -252,40 +265,26 @@ impl Agent {
         )
     }
 
-    /// Opens the connection of the agent. A WebSocket agent uses HTTP when
-    /// the server has no WebSocket route.
+    /// Opens the connection of the agent: the WebSocket of its resident,
+    /// or an HTTP link that sends its key with each request.
     async fn connect(
         link: Link,
         shared: &Shared,
         client: &reqwest::Client,
         credential: &Credential,
     ) -> Result<Transport, RequestError> {
-        let http = || {
-            Transport::Http(HttpLink::new(
+        match link {
+            Link::Http => Ok(Transport::Http(HttpLink::new(
                 client.clone(),
                 Arc::clone(&shared.urls),
                 credential.key.clone(),
-            ))
-        };
-        if link == Link::Http {
-            return Ok(http());
-        }
-        if !shared.ws_absent.load(Ordering::Relaxed) {
-            let timeout = shared.timing.request_timeout;
-            match WsLink::connect(&shared.urls.ws, &credential.key, timeout).await {
-                Ok(socket) => return Ok(Transport::Ws(Box::new(socket))),
-                Err(error) if error.route_absent() => {
-                    if !shared.ws_absent.swap(true, Ordering::Relaxed) {
-                        eprintln!(
-                            "swarm: warning: the server has no WebSocket route (GET /v1/ws); \
-                             the WebSocket agents use HTTP requests"
-                        );
-                    }
-                }
-                Err(error) => return Err(error),
+            ))),
+            Link::Ws => {
+                let timeout = shared.timing.request_timeout;
+                let socket = WsLink::connect(&shared.urls.ws, &credential.key, timeout).await?;
+                Ok(Transport::Ws(Box::new(socket)))
             }
         }
-        Ok(http())
     }
 
     fn link(&self) -> Link {
@@ -295,46 +294,63 @@ impl Agent {
         }
     }
 
+    /// Takes an observation: the scene, the notice cursor, and over HTTP
+    /// the reports of ended actions. A WebSocket agent gets each report as
+    /// a pushed frame, so it does not count the reports of an observation.
     fn see(&mut self, observation: &Observation) {
-        self.scene_fresh = update_scene(&mut self.scene, observation, &self.shared.cities);
+        self.scene_fresh = update_scene(&mut self.scene, observation, self.shared.profile.items());
         self.cursor = observation.next_notice;
+        if matches!(self.transport, Transport::Http(_)) {
+            self.shared.metrics.ended(&Ended::list(observation));
+        }
+    }
+
+    /// Counts what the server pushed on the WebSocket since the last call.
+    fn count_pushed(&mut self) {
+        if let Transport::Ws(link) = &mut self.transport {
+            for _ in 0..link.take_pushed() {
+                self.shared.metrics.pushed.add();
+            }
+            self.shared.metrics.ended(&link.take_ended());
+        }
     }
 
     /// Asks for an observation and updates the scene.
     async fn observe(&mut self) -> Result<(), RequestError> {
-        let (observation, latency) = match &mut self.transport {
-            Transport::Http(link) => link.observe(self.cursor).await?,
-            Transport::Ws(link) => link.observe(self.cursor).await?,
+        let answer = match &mut self.transport {
+            Transport::Http(link) => link.observe(self.cursor).await,
+            Transport::Ws(link) => link.observe(self.cursor).await,
         };
+        self.count_pushed();
+        let (observation, latency) = answer?;
         self.shared.metrics.observation(self.index, latency);
         self.see(&observation);
         Ok(())
     }
 
-    /// Sends one action and counts its acknowledgement.
-    async fn act(&mut self, request: &ActionRequest) -> Result<ActionAck, RequestError> {
+    /// Sends one action, or a plan of a walk and an action, and counts the
+    /// acknowledgements. Returns the acknowledgements.
+    async fn act(&mut self, requests: &[ActionRequest]) -> Result<Vec<ActionAck>, RequestError> {
         let link = self.link();
-        let (ack, latency) = match &mut self.transport {
+        let (acks, latency) = match &mut self.transport {
             Transport::Http(http) => {
-                let (answer, latency) = http.act(request).await?;
-                let ack = answer.acks.into_iter().next().ok_or_else(|| {
-                    RequestError::local("decode", "the answer has no acknowledgement")
-                })?;
-                match &answer.observation {
-                    Some(observation) => self.see(observation),
-                    None => self.scene_fresh = false,
-                }
-                (ack, latency)
+                let (answer, latency) = http.act(requests, self.cursor).await?;
+                self.see(&answer.observation);
+                (answer.acks, latency)
             }
             Transport::Ws(ws) => {
-                let answer = ws.act(request).await?;
+                let answer = ws.act(requests).await;
                 // An acknowledgement on the socket carries no observation.
                 self.scene_fresh = false;
-                answer
+                self.count_pushed();
+                answer?
             }
         };
-        self.shared.metrics.ack(self.index, link, &ack, latency);
-        Ok(ack)
+        if acks.is_empty() {
+            return Err(RequestError::local("decode", "the answer has no acknowledgement"));
+        }
+        self.shared.metrics.acks(self.index, link, &acks, requests.len(), latency);
+        Ok(acks)
     }
 
     /// Passes time until `deadline`. A WebSocket agent reads what the
@@ -347,66 +363,33 @@ impl Agent {
             }
             Transport::Ws(link) => {
                 let result = link.idle_until(deadline).await;
-                for _ in 0..link.take_pushed() {
-                    self.shared.metrics.pushed.add();
-                }
+                self.count_pushed();
                 result
             }
         }
     }
 
-    /// Waits for the end of the running action: the long poll over HTTP, a
-    /// pushed report on the WebSocket, or repeated observations when the
-    /// server has no long poll.
+    /// Waits for the end of the running action: the long poll over HTTP,
+    /// or a pushed report on the WebSocket.
     async fn wait_for_report(&mut self) -> Result<(), RequestError> {
         let timing = self.shared.timing;
         let deadline = (Instant::now() + timing.wait_timeout).min(self.shared.end);
         if self.shared.metrics.is_steady() {
             self.shared.metrics.waits_steady.add();
         }
-        if let Transport::Ws(link) = &mut self.transport {
-            let result = link.wait_report(deadline).await;
-            for _ in 0..link.take_pushed() {
-                self.shared.metrics.pushed.add();
+        match &mut self.transport {
+            Transport::Ws(link) => {
+                let result = link.wait_report(deadline).await;
+                self.count_pushed();
+                self.scene_fresh = false;
+                result.map(|_| ())
             }
-            self.scene_fresh = false;
-            return result.map(|_| ());
-        }
-        if !self.shared.wait_absent.load(Ordering::Relaxed)
-            && let Transport::Http(link) = &self.transport
-        {
-            let left = deadline.saturating_duration_since(Instant::now());
-            match link.wait(self.cursor, left, timing.request_timeout).await {
-                Ok(observation) => {
-                    self.shared.metrics.long_polls.add();
-                    self.see(&observation);
-                    return Ok(());
-                }
-                Err(error) if error.route_absent() => {
-                    if !self.shared.wait_absent.swap(true, Ordering::Relaxed) {
-                        eprintln!(
-                            "swarm: warning: the server has no long poll (GET /v1/wait); \
-                             agents that wait for the end of an action observe again and again"
-                        );
-                    }
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        // No long poll: look again and again until the report is there.
-        loop {
-            let next = Instant::now() + timing.poll_interval;
-            if next >= deadline {
-                return Ok(());
-            }
-            tokio::time::sleep_until(next.into()).await;
-            let before = self.cursor;
-            let Transport::Http(link) = &self.transport else { return Ok(()) };
-            let (observation, latency) = link.observe(before).await?;
-            self.shared.metrics.observation(self.index, latency);
-            self.see(&observation);
-            if has_report(&observation) {
-                return Ok(());
+            Transport::Http(link) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                let observation = link.wait(self.cursor, left, timing.request_timeout).await?;
+                self.shared.metrics.long_polls.add();
+                self.see(&observation);
+                Ok(())
             }
         }
     }
@@ -421,23 +404,28 @@ impl Agent {
         if Instant::now() >= self.shared.end {
             return Ok(());
         }
-        let profile = &self.shared.profile;
-        if !self.scene_fresh || random::chance(&mut self.rng, profile.observe_share) {
+        let shared = Arc::clone(&self.shared);
+        if !self.scene_fresh || random::chance(&mut self.rng, shared.profile.observe_share) {
             self.observe().await?;
         }
-        let shared = Arc::clone(&self.shared);
-        let Some(choice) = shared.profile.pick(&mut self.rng, &mut self.scene) else {
+        let Some(mut choice) = shared.profile.pick(&mut self.rng, &mut self.scene, self.memory)
+        else {
             // Nothing is possible here and now. Think again.
             return Ok(());
         };
-        self.sent += 1;
-        let request = ActionRequest {
-            id: Some(format!("lt{}-{}", self.index, self.sent)),
-            verb: choice.verb,
-            args: choice.args,
-        };
-        let ack = self.act(&request).await?;
-        if takes_time(&ack) && random::chance(&mut self.rng, shared.profile.wait_share) {
+        // An action at a site is a plan: the walk, then the action.
+        let mut requests: Vec<ActionRequest> = choice.walk().into_iter().collect();
+        requests.push(choice.take_request());
+        for request in &mut requests {
+            self.sent += 1;
+            request.id = Some(format!("lt{}-{}", self.index, self.sent));
+        }
+        let acks = self.act(&requests).await?;
+        let Some(last) = acks.last() else { return Ok(()) };
+        if acks.len() == requests.len() && last.status.is_accepted() {
+            choice.remember(&mut self.memory);
+        }
+        if takes_time(last) && random::chance(&mut self.rng, shared.profile.wait_share) {
             self.wait_for_report().await?;
         }
         Ok(())
@@ -451,6 +439,15 @@ impl Agent {
                 self.failures = 0;
                 continue;
             };
+            if error.throttled() {
+                // A limit of the server refused the request. The agent
+                // waits as long as the server asks and goes on.
+                self.shared.metrics.error(&error);
+                let pause = limit_pause(&error, self.shared.timing.retry);
+                let until = Instant::now().checked_add(pause).unwrap_or(self.shared.end);
+                self.idle(until.min(self.shared.end)).await?;
+                continue;
+            }
             self.fail(error.clone())?;
             if let Err(again) = self.recover(&error).await {
                 self.fail(again)?;
@@ -486,10 +483,11 @@ impl Agent {
         }
         if error.credentials_refused() {
             let name = format!("swarm-{}-{}-again", shared.seed, self.index);
-            self.credential = shared.signup.sign_up(&self.client, &shared.urls, &name).await?;
+            self.credential = signup::sign_up(&self.client, &shared.urls, &name).await?;
             shared.metrics.credentials_renewed.add();
             self.scene.me = ResidentId(self.credential.resident);
             self.cursor = 0;
+            self.memory = Memory::default();
         }
         let transport =
             Agent::connect(self.planned, &shared, &self.client, &self.credential).await?;
@@ -502,5 +500,23 @@ impl Agent {
         if let Transport::Ws(link) = self.transport {
             link.close().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_pause_after_a_limit_is_the_time_that_the_server_names() {
+        let retry = Duration::from_millis(500);
+        let named = RequestError::from_status(429, b"", Some(3));
+        assert_eq!(limit_pause(&named, retry), Duration::from_secs(3));
+        // Without a time, and with a time of zero, the agent waits as
+        // after a failed request: it must not send again at once.
+        let silent = RequestError::from_status(429, b"", None);
+        assert_eq!(limit_pause(&silent, retry), retry);
+        let zero = RequestError::from_status(429, b"", Some(0));
+        assert_eq!(limit_pause(&zero, retry), retry);
     }
 }

@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 use unsup_kernel::{Plugin, Rng, Site, World, WorldConfig, WorldError};
-use unsup_protocol::{CityId, OwnerId, Pos, RealmId, ResidentId, SpawnSpec, ZoneId};
+use unsup_protocol::{CityId, OwnerId, RealmId, ResidentId, SpawnSpec};
 
 use super::Shape;
 use crate::defaults::defaults;
+use crate::map::WorldMap;
 
 /// Stream of the generator that the scatter placement uses.
 const SCATTER_STREAM: u64 = 0x5ca7_7e12;
@@ -17,12 +18,12 @@ const SCATTER_STREAM: u64 = 0x5ca7_7e12;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Placement {
-    /// Every resident is moved to a random tile of its city before the run.
-    /// This is the state of a world that has run for a while.
+    /// Every resident is moved to a random walkable tile of its city before
+    /// the run. This is the state of a world that has run for a while.
     #[default]
     Scatter,
-    /// Every resident stays where the game put it: at a spawn site of its
-    /// city, or at the centre of the first zone when the city has none.
+    /// Every resident stays where the game put it: in a spawn site of its
+    /// city (a shelter or a station).
     Spawn,
 }
 
@@ -69,6 +70,9 @@ pub struct WorldSpec {
 pub struct Population {
     /// The world.
     pub world: World,
+    /// The tiles and the sites of the world, read before the residents
+    /// were made.
+    pub map: WorldMap,
     /// Every resident, in ascending id order.
     pub ids: Vec<ResidentId>,
     /// Time to build the empty world, with world generation.
@@ -113,6 +117,7 @@ pub fn populate(spec: &WorldSpec, extra: &[&dyn Plugin]) -> anyhow::Result<Popul
     let start = Instant::now();
     let mut world = build_world(config, extra)
         .map_err(|error| anyhow!("{error}. The world would have {}", spec.shape.describe()))?;
+    let map = WorldMap::of_world(&world)?;
     let build_time = start.elapsed();
 
     let start = Instant::now();
@@ -135,9 +140,9 @@ pub fn populate(spec: &WorldSpec, extra: &[&dyn Plugin]) -> anyhow::Result<Popul
     }
     let spawn_sites = spawn_sites(&world);
     if spec.placement == Placement::Scatter {
-        scatter(&mut world, &ids, spec.seed)?;
+        scatter(&mut world, &map, &ids, spec.seed)?;
     }
-    Ok(Population { world, ids, build_time, populate_time: start.elapsed(), spawn_sites })
+    Ok(Population { world, map, ids, build_time, populate_time: start.elapsed(), spawn_sites })
 }
 
 /// Counts the sites with the tag `spawn` in the whole world.
@@ -151,37 +156,25 @@ fn spawn_sites(world: &World) -> u64 {
         .sum()
 }
 
-/// Moves every resident to a random tile of its city.
+/// Moves every resident to a random walkable tile of its city.
 ///
 /// This is not an action of a resident: it sets the start state, the same
 /// way for the same seed. It uses the path that the kernel gives to tests
 /// and administration tools (`Realm::teleport`, then `World::settle`).
-fn scatter(world: &mut World, ids: &[ResidentId], seed: u64) -> anyhow::Result<()> {
-    let d = &defaults().world;
+fn scatter(world: &mut World, map: &WorldMap, ids: &[ResidentId], seed: u64) -> anyhow::Result<()> {
+    let attempts = defaults().world.scatter_attempts;
     let mut rng = Rng::stream(seed, SCATTER_STREAM);
     for &id in ids {
         let home = world.locate(id).ok_or_else(|| anyhow!("resident {id} is in no zone"))?;
         let layout = world.layout();
         let city = layout
             .zone(home)
-            .and_then(|zone| layout.city(zone.city))
-            .ok_or_else(|| anyhow!("zone {home} has no city"))?;
-        let mut target: Option<(ZoneId, Pos)> = None;
-        for _ in 0..d.scatter_attempts.max(1) {
-            let Some(&zone) = rng.pick(&city.zones) else { break };
-            let Some(info) = layout.zone(zone) else { break };
-            let b = info.bounds;
-            let pos = Pos::new(
-                i32::try_from(rng.range(i64::from(b.x0), i64::from(b.x1))).unwrap_or(b.x0),
-                i32::try_from(rng.range(i64::from(b.y0), i64::from(b.y1))).unwrap_or(b.y0),
-            );
-            target = Some((zone, pos));
-            let kind = world.realm(RealmId::Zone(zone)).and_then(|realm| realm.tiles().get(pos));
-            if kind.is_some_and(|kind| !d.blocked_tiles.contains(&kind)) {
-                break;
-            }
-        }
-        let Some((zone, pos)) = target else { continue };
+            .and_then(|zone| map.city(zone.city))
+            .ok_or_else(|| anyhow!("zone {home} has no city on the map"))?;
+        let pos = city.walkable_anywhere(&mut rng, attempts).ok_or_else(|| {
+            anyhow!("{attempts} tries found no walkable tile in city {}", city.id())
+        })?;
+        let zone = layout.zone_at(pos).ok_or_else(|| anyhow!("the tile {pos} is in no zone"))?;
         let realm = world
             .realm(RealmId::Zone(home))
             .ok_or_else(|| anyhow!("zone {home} is not in this world"))?;

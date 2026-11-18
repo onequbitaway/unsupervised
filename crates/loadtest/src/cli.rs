@@ -47,12 +47,12 @@ pub struct WorldArgs {
     /// Districts on one side of a city. Without it the tool chooses.
     #[arg(long)]
     pub districts: Option<u32>,
-    /// Where the residents start: `scatter` (random tiles of their city,
-    /// like a world that has run for a while) or `spawn` (where the game
-    /// puts new residents).
+    /// Where the residents start: `scatter` (random walkable tiles of
+    /// their city, like a world that has run for a while) or `spawn` (the
+    /// shelters and stations where the game puts new residents).
     #[arg(long, default_value_t = Placement::Scatter)]
     pub placement: Placement,
-    /// Behaviour profile: a built-in name (walkers, rush, daily_life) or
+    /// Behaviour profile: a built-in name (walkers, rush, daily_life, still) or
     /// the path of a TOML file.
     #[arg(long, default_value = "walkers")]
     pub profile: String,
@@ -137,6 +137,11 @@ pub struct BenchArgs {
     /// installed memory or 90 % of the free memory, the smaller of the two.
     #[arg(long)]
     pub max_memory_gib: Option<f64>,
+    /// The sections that a resident asks for in an observation, with
+    /// commas between them, for example `nearby`. Use it to measure the
+    /// cost of one section. Without it, all sections.
+    #[arg(long, value_delimiter = ',')]
+    pub observe_sections: Vec<String>,
     /// Path of the report file. Default: var/loadtest/bench-<time>.json.
     #[arg(long)]
     pub out: Option<PathBuf>,
@@ -160,6 +165,9 @@ impl BenchArgs {
         ];
         if let Some(gib) = self.max_memory_gib {
             args.extend(["--max-memory-gib".to_string(), gib.to_string()]);
+        }
+        if !self.observe_sections.is_empty() {
+            args.extend(["--observe-sections".to_string(), self.observe_sections.join(",")]);
         }
         args.extend(self.world.to_args());
         args
@@ -232,7 +240,7 @@ pub struct SwarmArgs {
     /// all, for more agents than the machine has ports).
     #[arg(long, default_value_t = HttpConnections::PerAgent)]
     pub http_connections: HttpConnections,
-    /// Behaviour profile: a built-in name (walkers, rush, daily_life) or
+    /// Behaviour profile: a built-in name (walkers, rush, daily_life, still) or
     /// the path of a TOML file.
     #[arg(long, default_value = "walkers")]
     pub profile: String,
@@ -268,7 +276,8 @@ pub struct SwarmArgs {
     /// Make the exit code not zero when the load was not sustained.
     #[arg(long)]
     pub require_sustained: bool,
-    /// Path of the route with the statistics of the server.
+    /// Path of a route with numbers of the server that needs no token.
+    /// The tool reads it at the start and at the end of the window.
     #[arg(long, default_value = defaults().swarm.stats_path.as_str())]
     pub stats_path: String,
     /// Path of the report file. Default: var/loadtest/swarm-<time>.json.

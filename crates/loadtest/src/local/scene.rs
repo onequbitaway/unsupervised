@@ -1,9 +1,10 @@
 //! The scene of a resident, read from a world in this process.
 
-use unsup_kernel::{Idx, Realm, World};
-use unsup_protocol::{Pos, RealmId, Rect, ResidentId};
+use unsup_kernel::{Holder, Idx, Realm, World};
+use unsup_protocol::{Pos, RealmId, ResidentId};
 
-use crate::scene::{NearSite, Neighbour, Scene};
+use crate::map::{CityMap, WorldMap};
+use crate::scene::{Carried, NearSite, Neighbour, Scene};
 
 /// Buffers that many scenes share one after the other, so that a scene does
 /// not allocate for each resident.
@@ -12,16 +13,18 @@ pub struct Scratch {
     indices: Vec<Idx>,
     residents: Vec<Neighbour>,
     sites: Vec<NearSite>,
+    carried: Vec<Carried>,
+    site_kind: String,
 }
 
-/// What one resident of a world in this process knows. The lists of
-/// neighbours and sites are read from the zone only when a generator asks.
+/// What one resident of a world in this process knows. The facts are read
+/// from the zone only when a generator or a condition asks.
 pub struct LocalScene<'a> {
     realm: &'a Realm,
     idx: Idx,
     me: ResidentId,
     pos: Pos,
-    bounds: Option<Rect>,
+    map: Option<&'a CityMap>,
     scratch: &'a mut Scratch,
 }
 
@@ -30,26 +33,25 @@ impl<'a> LocalScene<'a> {
     /// not in the world.
     pub fn of(
         world: &'a World,
+        map: &'a WorldMap,
         resident: ResidentId,
         scratch: &'a mut Scratch,
     ) -> Option<LocalScene<'a>> {
         let zone = world.locate(resident)?;
         let realm = world.realm(RealmId::Zone(zone))?;
         let idx = realm.idx_of(resident)?;
-        Some(LocalScene::at(world, realm, idx, scratch))
+        Some(LocalScene::at(map, realm, idx, scratch))
     }
 
-    /// Makes the scene of the resident at `idx` of a zone realm of `world`.
+    /// Makes the scene of the resident at `idx` of a zone realm.
     pub(crate) fn at(
-        world: &World,
+        map: &'a WorldMap,
         realm: &'a Realm,
         idx: Idx,
         scratch: &'a mut Scratch,
     ) -> LocalScene<'a> {
-        let layout = world.layout();
-        let bounds =
-            realm.zone_info().and_then(|zone| layout.city(zone.city)).map(|city| city.bounds);
-        LocalScene { realm, idx, me: realm.id_of(idx), pos: realm.pos(idx), bounds, scratch }
+        let map = realm.zone_info().and_then(|zone| map.city(zone.city));
+        LocalScene { realm, idx, me: realm.id_of(idx), pos: realm.pos(idx), map, scratch }
     }
 }
 
@@ -62,8 +64,38 @@ impl Scene for LocalScene<'_> {
         self.pos
     }
 
-    fn bounds(&self) -> Option<Rect> {
-        self.bounds
+    fn map(&self) -> Option<&CityMap> {
+        self.map
+    }
+
+    fn site_kind(&mut self) -> Option<&str> {
+        // The zone knows the site as it is now: a business can change its
+        // kind after the map was read.
+        let realm = self.realm;
+        let sites = realm.sites();
+        let site = sites.at(self.pos)?;
+        self.scratch.site_kind.clear();
+        self.scratch.site_kind.push_str(&site.kind);
+        Some(&self.scratch.site_kind)
+    }
+
+    fn cash(&self) -> Option<i64> {
+        Some(self.realm.ledger().money(Holder::Resident(self.me)).cents())
+    }
+
+    fn carried(&mut self) -> &[Carried] {
+        self.scratch.carried.clear();
+        for (item, qty) in self.realm.ledger().items_of(Holder::Resident(self.me)) {
+            if qty > 0 {
+                self.scratch.carried.push(Carried { item, qty });
+            }
+        }
+        &self.scratch.carried
+    }
+
+    fn attr(&self, name: &str) -> Option<i64> {
+        let attr = self.realm.defs().attr_id(name)?;
+        Some(self.realm.attr(self.idx, attr))
     }
 
     fn residents(&mut self, radius: u32) -> &[Neighbour] {
@@ -81,7 +113,8 @@ impl Scene for LocalScene<'_> {
     }
 
     fn sites(&mut self, radius: u32) -> &[NearSite] {
-        let sites = self.realm.sites();
+        let realm = self.realm;
+        let sites = realm.sites();
         self.scratch.sites.clear();
         for site in sites.within(self.pos, radius) {
             self.scratch.sites.push(NearSite {

@@ -34,14 +34,15 @@ impl BenchReport {
         if self.runs.len() > 1 {
             out.push_str(
                 "residents | zones | frame ms mean / p50 / p99 / worst | inputs ms mean | \
-                 actions per frame | actions per wall second | RSS | bytes per resident | \
-                 footprint | footprint bytes per resident\n",
+                 observe ms mean | server ms mean / worst | actions per frame | \
+                 actions per wall second | rejected | microseconds per request / observation | \
+                 RSS | bytes per resident | footprint | footprint bytes per resident\n",
             );
             let bytes = |b: Option<u64>| b.map_or_else(|| "unknown".to_string(), mib);
             let count = |n: Option<u64>| n.map_or_else(|| "unknown".to_string(), thousands);
             for run in &self.runs {
                 out.push_str(&format!(
-                    "{} | {} | {:.2} / {:.2} / {:.2} / {:.2} | {:.2} | {} | {} | {} | {} | {} | {}{}\n",
+                    "{} | {} | {:.2} / {:.2} / {:.2} / {:.2} | {:.2} | {:.2} | {:.2} / {:.2} | {} | {} | {:.2} % | {:.2} / {:.2} | {} | {} | {} | {}{}\n",
                     thousands(run.residents),
                     run.zones,
                     run.frame_ms.mean,
@@ -49,8 +50,14 @@ impl BenchReport {
                     run.frame_ms.p99,
                     run.frame_ms.max,
                     run.inputs_ms.mean,
+                    run.observe_ms.mean,
+                    run.server_ms.mean,
+                    run.server_ms.max,
                     thousands(run.actions_per_frame.round() as u64),
                     thousands(run.actions_per_wall_second.round() as u64),
+                    run.actions.rejection_rate() * 100.0,
+                    run.micros_per_request,
+                    run.micros_per_observation,
                     bytes(run.memory.rss_end_bytes),
                     count(run.memory.bytes_per_resident),
                     bytes(run.memory.footprint_end_bytes),

@@ -2473,10 +2473,13 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.30.0",
  "toml",
+ "unsup-gateway",
  "unsup-kernel",
  "unsup-protocol",
  "unsup-runtime",
  "unsup-server",
+ "unsup-spectator",
+ "unsup-store",
 ]
 
 [[package]]

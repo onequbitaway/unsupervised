@@ -1,7 +1,5 @@
 # Rush: a stress load. Every resident takes short walks with almost no think
-# time. One cycle is about 3.3 ticks, so one million residents send about
-# 300,000 actions in each frame. Use it to prove the target of 200,000
-# actions for each second.
+# time. Use it to find the greatest rate of actions.
 
 name = "rush"
 summary = "Residents take short walks with almost no think time."

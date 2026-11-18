@@ -12,12 +12,13 @@ use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
-use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+use tokio_tungstenite::tungstenite::http::header::{AUTHORIZATION, RETRY_AFTER};
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use unsup_protocol::{ActionAck, ActionReport, ActionRequest, Notice, Observation, ObserveOpts};
 
 use super::error::{RequestError, machine_limit_in};
+use super::wire::Ended;
 
 /// A frame from the agent to the server.
 #[derive(Debug, Serialize)]
@@ -25,6 +26,9 @@ use super::error::{RequestError, machine_limit_in};
 enum ClientFrame<'a> {
     /// One action.
     Act { request: &'a ActionRequest },
+    /// Several actions in sequence. The server stops after the first one
+    /// that the simulation rejects.
+    Plan { requests: &'a [ActionRequest] },
     /// Ask for an observation.
     Observe { opts: ObserveOpts },
 }
@@ -43,10 +47,7 @@ enum ServerFrame {
         notice: Notice,
     },
     /// The report of an ended action, pushed when it happens.
-    Report {
-        #[allow(dead_code)]
-        report: ActionReport,
-    },
+    Report { report: ActionReport },
     /// The server refused a frame.
     Error { error: Value },
     /// A frame that this tool does not use (`pong` and later additions).
@@ -55,9 +56,10 @@ enum ServerFrame {
 }
 
 /// What an agent waits for on its socket.
-enum Awaited<'a> {
-    /// The acknowledgement of the request with this idempotency key.
-    Ack(Option<&'a str>),
+enum Awaited {
+    /// The acknowledgements of this many requests of one frame. Fewer come
+    /// when the simulation rejects one of them.
+    Acks(usize),
     /// An observation.
     Observation,
     /// The report of an ended action.
@@ -68,7 +70,7 @@ enum Awaited<'a> {
 
 /// What came while the agent waited.
 enum Arrived {
-    Ack(ActionAck),
+    Acks(Vec<ActionAck>),
     Observation(Box<Observation>),
     Report,
     /// The time ran out.
@@ -82,16 +84,27 @@ pub struct WsLink {
     /// Notices and reports that the server pushed since the last call of
     /// [`WsLink::take_pushed`].
     pushed: u64,
+    /// How the actions ended whose reports the server pushed since the
+    /// last call of [`WsLink::take_ended`].
+    ended: Vec<Ended>,
     /// True when a report came since the last action.
     report_seen: bool,
 }
 
 fn ws_error(error: &WsError) -> RequestError {
     match error {
-        WsError::Http(response) => RequestError::from_status(
-            response.status().as_u16(),
-            response.body().as_deref().unwrap_or_default(),
-        ),
+        WsError::Http(response) => {
+            let retry_after = response
+                .headers()
+                .get(RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|text| text.trim().parse().ok());
+            RequestError::from_status(
+                response.status().as_u16(),
+                response.body().as_deref().unwrap_or_default(),
+                retry_after,
+            )
+        }
         WsError::ConnectionClosed | WsError::AlreadyClosed => {
             RequestError::local("closed", "the server closed the WebSocket")
         }
@@ -112,19 +125,20 @@ impl WsLink {
     ///
     /// # Errors
     ///
-    /// Fails when the handshake fails. [`RequestError::route_absent`] is
-    /// true when the server has no WebSocket route.
+    /// Fails when the handshake fails: the server refuses the key or the
+    /// connection, or no answer comes in time.
     pub async fn connect(url: &str, key: &str, timeout: Duration) -> Result<WsLink, RequestError> {
         let mut request = url.into_client_request().map_err(|error| ws_error(&error))?;
-        let bearer = HeaderValue::from_str(&format!("Bearer {key}")).map_err(|_| {
-            RequestError::local("signup_answer", "the key cannot travel in an HTTP header")
-        })?;
+        let bearer = HeaderValue::from_str(&format!("Bearer {key}"))
+            .map_err(|_| RequestError::local("key", "the key cannot travel in an HTTP header"))?;
         request.headers_mut().insert(AUTHORIZATION, bearer);
         // Small frames must leave at once: the latency of each one is
         // measured.
         let connect = tokio_tungstenite::connect_async_with_config(request, None, true);
         match tokio::time::timeout(timeout, connect).await {
-            Ok(Ok((socket, _))) => Ok(WsLink { socket, timeout, pushed: 0, report_seen: false }),
+            Ok(Ok((socket, _))) => {
+                Ok(WsLink { socket, timeout, pushed: 0, ended: Vec::new(), report_seen: false })
+            }
             Ok(Err(error)) => Err(ws_error(&error)),
             Err(_) => Err(timeout_error("handshake answer")),
         }
@@ -134,6 +148,12 @@ impl WsLink {
     /// since the last call, and starts again from zero.
     pub fn take_pushed(&mut self) -> u64 {
         std::mem::take(&mut self.pushed)
+    }
+
+    /// Returns how the actions ended whose reports the server pushed since
+    /// the last call.
+    pub fn take_ended(&mut self) -> Vec<Ended> {
+        std::mem::take(&mut self.ended)
     }
 
     async fn send(&mut self, frame: &ClientFrame<'_>) -> Result<(), RequestError> {
@@ -146,9 +166,10 @@ impl WsLink {
     /// Frames that the server pushes meanwhile are counted.
     async fn read_until(
         &mut self,
-        awaited: Awaited<'_>,
+        awaited: Awaited,
         deadline: Instant,
     ) -> Result<Arrived, RequestError> {
+        let mut acks = Vec::new();
         loop {
             let next = tokio::time::timeout_at(deadline.into(), self.socket.next()).await;
             let message = match next {
@@ -169,31 +190,33 @@ impl WsLink {
                 _ => continue,
             };
             match (frame, &awaited) {
-                (ServerFrame::Ack { ack }, Awaited::Ack(id))
-                    if ack.request_id.as_deref() == *id || id.is_none() =>
-                {
-                    return Ok(Arrived::Ack(ack));
+                (ServerFrame::Ack { ack }, Awaited::Acks(wanted)) => {
+                    // The server stops a plan at the first rejection.
+                    let last = !ack.status.is_accepted();
+                    acks.push(ack);
+                    if last || acks.len() >= *wanted {
+                        return Ok(Arrived::Acks(acks));
+                    }
                 }
                 (ServerFrame::Observation { observation }, Awaited::Observation) => {
                     return Ok(Arrived::Observation(observation));
                 }
-                (ServerFrame::Report { .. }, awaited) => {
+                (ServerFrame::Report { report }, awaited) => {
                     self.pushed += 1;
                     self.report_seen = true;
+                    self.ended.push(Ended::of(&report));
                     if matches!(awaited, Awaited::Report) {
                         return Ok(Arrived::Report);
                     }
                 }
                 (ServerFrame::Notice { .. }, _) => self.pushed += 1,
-                (ServerFrame::Error { error }, Awaited::Ack(_) | Awaited::Observation) => {
-                    let code =
-                        error.get("code").and_then(Value::as_str).unwrap_or("error").to_string();
+                (ServerFrame::Error { error }, Awaited::Acks(_) | Awaited::Observation) => {
+                    let code = error.get("code").and_then(Value::as_str).unwrap_or("error");
                     let message = error
                         .get("message")
                         .and_then(Value::as_str)
-                        .unwrap_or("the server refused the frame")
-                        .to_string();
-                    return Err(RequestError { code, status: None, from_api: true, message });
+                        .unwrap_or("the server refused the frame");
+                    return Err(RequestError::api(code, message, None));
                 }
                 // An answer that nobody waits for, or a frame that this
                 // tool does not use.
@@ -202,8 +225,9 @@ impl WsLink {
         }
     }
 
-    /// Sends one action and waits for its acknowledgement. The latency is
-    /// the time from the send to the acknowledgement frame.
+    /// Sends one action, or a plan of several actions, and waits for the
+    /// acknowledgements. The latency is the time from the send to the last
+    /// acknowledgement frame.
     ///
     /// # Errors
     ///
@@ -211,13 +235,17 @@ impl WsLink {
     /// no acknowledgement in time.
     pub async fn act(
         &mut self,
-        request: &ActionRequest,
-    ) -> Result<(ActionAck, Duration), RequestError> {
+        requests: &[ActionRequest],
+    ) -> Result<(Vec<ActionAck>, Duration), RequestError> {
         self.report_seen = false;
         let start = Instant::now();
-        self.send(&ClientFrame::Act { request }).await?;
-        match self.read_until(Awaited::Ack(request.id.as_deref()), start + self.timeout).await? {
-            Arrived::Ack(ack) => Ok((ack, start.elapsed())),
+        let frame = match requests {
+            [request] => ClientFrame::Act { request },
+            requests => ClientFrame::Plan { requests },
+        };
+        self.send(&frame).await?;
+        match self.read_until(Awaited::Acks(requests.len()), start + self.timeout).await? {
+            Arrived::Acks(acks) => Ok((acks, start.elapsed())),
             _ => Err(timeout_error("acknowledgement")),
         }
     }

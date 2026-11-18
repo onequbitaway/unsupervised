@@ -17,6 +17,7 @@ fn config(profile: &str, residents: u32, frames: u32, warmup: u32) -> BenchConfi
         warmup,
         profile: Profile::load(profile).expect("a built-in profile"),
         request_ids: false,
+        observe_sections: Vec::new(),
         max_memory_bytes: None,
     }
 }
@@ -45,13 +46,23 @@ fn a_tiny_bench_measures_every_frame_and_counts_every_action() {
     // The server work of a frame holds its three parts.
     assert!(run.server_ms.mean >= run.frame_ms.mean);
 
-    // Walkers: one action about every 13 ticks for each resident. 400
-    // residents in 40 frames send about 1,200 actions; all are valid.
+    // Walkers: a walk of up to 12 tiles on each axis, around walls and over
+    // grass, then 0 to 10 ticks of thinking. 400 residents in 40 frames
+    // send several hundred actions.
     let actions = &run.actions;
-    assert!((800..1_800).contains(&actions.sent), "{} actions were sent", actions.sent);
+    assert!((300..1_800).contains(&actions.sent), "{} actions were sent", actions.sent);
+    // Every target is a walkable tile of the city, and every resident was
+    // idle at its turn: the world has no reason to reject a request.
     assert_eq!(actions.rejected, 0, "rejections: {:?}", actions.rejected_by_code);
+    assert!(actions.rejection_rate().abs() < f64::EPSILON);
     assert_eq!(actions.accepted(), actions.sent);
-    assert_eq!(actions.started, actions.sent, "`move_to` and `wait` both take time");
+    // A walk in one district is `started`, a walk into another district is
+    // `pending`, a walk to the own tile is `done`. Nothing is queued: a
+    // resident acts only when it is idle.
+    assert_eq!(actions.started + actions.pending + actions.done, actions.sent);
+    assert_eq!(actions.queued, 0);
+    assert!(actions.started > actions.pending, "most walks stay in one district");
+    assert!(actions.pending > 0, "some walks cross a district border");
     let verbs: Vec<&str> = actions.by_verb.keys().map(String::as_str).collect();
     assert_eq!(verbs, ["move_to", "wait"]);
     let moves = actions.by_verb["move_to"].sent;
@@ -61,12 +72,30 @@ fn a_tiny_bench_measures_every_frame_and_counts_every_action() {
     assert!((run.actions_per_frame - actions.sent as f64 / 40.0).abs() < 1e-9);
     assert!(run.actions_per_wall_second > 0.0);
     assert!(run.actions_per_server_second >= run.actions_per_wall_second);
+    // The cost of one call is the sum of its series over the calls.
+    let total_micros = |series: &unsup_loadtest::stats::Millis| series.mean * 40.0 * 1e3;
+    let per_request = total_micros(&run.inputs_ms) / actions.sent as f64;
+    assert!(run.micros_per_request > 0.0);
+    assert!((run.micros_per_request - per_request).abs() < per_request * 1e-6);
+    let per_observation = total_micros(&run.observe_ms) / actions.observes as f64;
+    assert!((run.micros_per_observation - per_observation).abs() < per_observation * 1e-6);
     // A quarter of the actions is followed by an observation.
     assert!(actions.observes > actions.sent / 8 && actions.observes < actions.sent / 2);
+    // The observations hold the reports of the walks that ended, and every
+    // walk reached its target.
+    assert!(actions.reports_finished > 0, "no report was read");
+    assert_eq!(actions.reports_failed, 0, "failed walks: {:?}", actions.failed_by_code);
+    assert_eq!(
+        actions.by_verb["move_to"].finished + actions.by_verb["wait"].finished,
+        actions.reports_finished
+    );
     // Residents moved, and some crossed a district border.
     assert!(run.moves_per_frame > 5.0, "moves for each frame: {}", run.moves_per_frame);
     assert!(run.migrations_per_frame > 0.0);
     assert!(run.fullest_zone < 400, "the scatter placement uses every zone");
+    let summary = run.summary();
+    assert!(summary.contains("rejected at once: 0 of"), "{summary}");
+    assert!(summary.contains("reports read: "), "{summary}");
 
     assert_eq!(run.profile.name, "walkers");
     assert_eq!(run.profile.verbs, [("move_to".to_string(), 9), ("wait".to_string(), 1)]);
@@ -80,30 +109,110 @@ fn a_tiny_bench_measures_every_frame_and_counts_every_action() {
 fn the_rush_profile_sends_more_actions_than_the_walkers_profile() {
     let walkers = bench::run(&config("walkers", 300, 30, 10), &[]).expect("the bench runs");
     let rush = bench::run(&config("rush", 300, 30, 10), &[]).expect("the bench runs");
-    // Rush: one action about every 3.3 ticks, walkers: about every 13.
+    // Rush: walks of at most 3 tiles and 0 to 2 ticks of thinking. Walkers:
+    // walks of at most 12 tiles and 0 to 10 ticks.
     assert!(
         rush.actions_per_frame > 2.5 * walkers.actions_per_frame,
         "rush {} and walkers {} actions for each frame",
         rush.actions_per_frame,
         walkers.actions_per_frame
     );
-    assert_eq!(rush.actions.rejected, 0);
+    assert_eq!(rush.actions.rejected, 0, "rejections: {:?}", rush.actions.rejected_by_code);
 }
 
 #[test]
-fn residents_that_stay_at_the_spawn_point_are_all_in_one_zone() {
+fn residents_that_stay_at_the_spawn_point_are_in_the_spawn_sites_of_the_city() {
     let mut config = config("walkers", 200, 5, 0);
     config.world.placement = Placement::Spawn;
     let run = bench::run(&config, &[]).expect("the bench runs");
     assert_eq!(run.placement, Placement::Spawn);
-    // The world of today has no spawn sites: everybody starts at the
-    // centre of the first zone. When the game gets spawn sites, the
-    // residents are spread over them instead.
-    if run.spawn_sites == 0 {
-        assert!(run.fullest_zone > 150, "fullest zone: {}", run.fullest_zone);
-    } else {
-        assert!(run.fullest_zone <= 200);
+    // A city of 2 by 2 districts has two shelters and one station. The
+    // game spreads new residents over them, so no zone has all of them.
+    assert_eq!(run.spawn_sites, 3);
+    assert!(run.fullest_zone < 200, "fullest zone: {}", run.fullest_zone);
+    assert!(run.fullest_zone >= 200 / 3, "fullest zone: {}", run.fullest_zone);
+}
+
+#[test]
+fn the_daily_life_profile_runs_the_verbs_of_the_full_game_and_reports_each_refusal() {
+    // Residents that start in the spawn sites, as newcomers do. 300 frames
+    // are longer than one shift of public works (240 ticks).
+    let mut config = config("daily_life", 300, 300, 0);
+    config.world.shape = Shape { cities: 1, districts: 1 };
+    config.world.placement = Placement::Spawn;
+    let run = bench::run(&config, &[]).expect("the bench runs and the world balances");
+    let actions = &run.actions;
+    assert!(run.profile.skipped.is_empty(), "skipped: {:?}", run.profile.skipped);
+    assert!(run.profile.warnings.is_empty(), "warnings: {:?}", run.profile.warnings);
+    assert_eq!(run.residents_end, 300, "nobody dies in five game hours");
+
+    // The world accepted each of these verbs at least one time: the verb
+    // and its arguments are those of the game.
+    for verb in [
+        "move_to",
+        "wait",
+        "work",
+        "gather",
+        "sell",
+        "say",
+        "message",
+        "inspect",
+        "list_jobs",
+        "post",
+        "relate",
+        "write_will",
+        "list_property",
+    ] {
+        let counts = actions.by_verb.get(verb).unwrap_or_else(|| panic!("`{verb}` was not sent"));
+        assert!(counts.sent > counts.rejected, "`{verb}`: {counts:?}");
     }
+    // No request had arguments that the verb does not take.
+    assert_eq!(actions.rejected_by_code.get("invalid_args"), None, "{:?}", actions.by_verb);
+    assert_eq!(actions.rejected_by_code.get("unknown_verb"), None);
+    assert!(actions.refused_by_sim.is_empty(), "{:?}", actions.refused_by_sim);
+
+    // A refusal is data. The counts by code add up, for the whole run and
+    // for each verb.
+    assert_eq!(actions.rejected_by_code.values().sum::<u64>(), actions.rejected);
+    assert_eq!(actions.failed_by_code.values().sum::<u64>(), actions.reports_failed);
+    assert_eq!(actions.accepted() + actions.rejected, actions.sent);
+    let (mut sent, mut rejected) = (0, 0);
+    for (verb, counts) in &actions.by_verb {
+        assert_eq!(counts.rejected_by_code.values().sum::<u64>(), counts.rejected, "`{verb}`");
+        assert_eq!(counts.failed_by_code.values().sum::<u64>(), counts.failed, "`{verb}`");
+        sent += counts.sent;
+        rejected += counts.rejected;
+    }
+    assert_eq!((sent, rejected), (actions.sent, actions.rejected));
+    // An action at a site is a plan: the action waits in the queue behind
+    // the walk.
+    assert!(actions.queued > 0, "no action was queued behind a walk");
+    // Residents read the reports of ended actions, and walks to sites end
+    // well: the site ids come from the map.
+    assert!(actions.reports_finished > 0);
+    assert_eq!(actions.by_verb["move_to"].failed, 0, "{:?}", actions.by_verb["move_to"]);
+    let summary = run.summary();
+    assert!(summary.contains("    work "), "{summary}");
+    assert!(summary.contains(" % rejected"), "{summary}");
+}
+
+#[test]
+fn an_observation_can_ask_for_one_section_only() {
+    // The `still` profile observes after each action. With only the
+    // section `self`, the residents read no report; with all sections they
+    // read the report of each `wait` that ended.
+    let all = bench::run(&config("still", 200, 30, 5), &[]).expect("the bench runs");
+    assert!(all.observe_sections.is_empty());
+    assert_eq!(all.actions.observes, all.actions.sent, "one observation for each action");
+    assert!(all.actions.reports_finished > 0, "all sections have the reports");
+
+    let mut only_self = config("still", 200, 30, 5);
+    only_self.observe_sections = vec!["self".to_string()];
+    let run = bench::run(&only_self, &[]).expect("the bench runs");
+    assert_eq!(run.observe_sections, ["self"]);
+    assert_eq!(run.actions.observes, run.actions.sent);
+    assert_eq!(run.actions.reports_finished, 0, "the section `reports` was not asked for");
+    assert!(run.summary().contains("(only the sections self)"), "{}", run.summary());
 }
 
 #[test]
@@ -112,8 +221,9 @@ fn request_ids_are_sent_when_asked_and_the_run_still_balances() {
     config.request_ids = true;
     let run = bench::run(&config, &[]).expect("the bench runs");
     assert!(run.request_ids);
-    assert_eq!(run.actions.rejected, 0);
-    assert!(run.actions.sent > 100);
+    assert_eq!(run.actions.rejected, 0, "rejections: {:?}", run.actions.rejected_by_code);
+    // 100 residents send about one action in 20 ticks each.
+    assert!(run.actions.sent > 50, "{} actions were sent", run.actions.sent);
 }
 
 #[test]

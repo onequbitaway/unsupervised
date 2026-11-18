@@ -11,11 +11,12 @@ max_districts = 8
 # The tool takes the largest city size whose number of zones is within this
 # many percent of the number that it wants.
 shape_tolerance_percent = 20
-# Tile kinds on which a resident cannot stand (wall, water, rock in
-# docs/design/game-design.md). The scatter placement does not use them.
+# Tile kinds on which a resident cannot stand: wall, water and rock in
+# docs/design/game-design.md, section 2. Every other kind is walkable. A
+# walk target and a place of the scatter placement are never such a tile.
 blocked_tiles = [4, 5, 8]
-# Tries to find a free tile for one resident of the scatter placement.
-scatter_attempts = 8
+# Tries to find a walkable tile for one resident of the scatter placement.
+scatter_attempts = 64
 # Residents of one owner in a world that a tool fills.
 residents_per_owner = 4
 
@@ -24,8 +25,13 @@ residents_per_owner = 4
 # made (for example one that needs a resident nearby) before it does nothing.
 pick_attempts = 4
 # Ticks after which the driver looks again at a resident whose action waits
-# for the global realm.
+# for the global realm or for the end of a walk to another zone.
 pending_recheck_ticks = 2
+# Tries to find a walkable tile for one walk target.
+tile_attempts = 16
+# A resident that walks to a site of a kind chooses one of this many nearest
+# sites of the kind, so that not all residents use the same site.
+site_choices = 3
 
 [bench]
 residents = 100000
@@ -84,8 +90,8 @@ retry_secs = 1.0
 max_failures_in_row = 5
 # Greatest number of seconds of one long poll for the end of an action.
 wait_timeout_secs = 30.0
-# Milliseconds between two observations when the server has no long poll.
-poll_interval_ms = 1000
+# Zones whose map the tool reads at the same time when a run starts.
+map_requests = 8
 # Real milliseconds for one game minute of a server that the tool starts.
 tick_ms = 1000
 # The run is "sustained" when the 99th percentile of the acknowledgement
@@ -99,5 +105,6 @@ fd_slack = 256
 # of significant digits.
 histogram_max_secs = 300
 histogram_sigfig = 3
-# Path of the route with the statistics of the server.
-stats_path = "/v1/stats"
+# Path of a route with numbers of the server that needs no token. The tool
+# reads it at the start and at the end of the window.
+stats_path = "/v1/spectate/stats"

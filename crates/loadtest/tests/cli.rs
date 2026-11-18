@@ -296,6 +296,81 @@ fn a_profile_that_the_world_cannot_run_stops_the_command() {
 }
 
 #[test]
+fn a_profile_with_an_argument_that_the_verb_does_not_have_stops_the_command() {
+    let scratch = Scratch::new("argument");
+    let profile = scratch.path("typo.toml");
+    // `wait` takes `ticks`, not `minutes`.
+    std::fs::write(
+        &profile,
+        "name = \"typo\"\n[think]\nkind = \"constant\"\nticks = 1\n[[action]]\nverb = \"wait\"\nweight = 1\nargs = { minutes = 3 }\n",
+    )
+    .expect("the profile is written");
+    for command in ["soak", "bench"] {
+        let output = run(&[
+            command,
+            "--residents",
+            "10",
+            "--profile",
+            profile.to_str().expect("a UTF-8 path"),
+        ]);
+        assert_eq!(output.status.code(), Some(1), "`{command}`");
+        let all = format!("{}{}", text(&output.stdout), text(&output.stderr));
+        assert!(all.contains("the verb `wait` has no argument `minutes`"), "`{command}`: {all}");
+        assert!(all.contains("the verb `wait` needs the argument `ticks`"), "`{command}`: {all}");
+    }
+}
+
+#[test]
+fn soak_with_the_daily_life_profile_reports_the_money_and_each_refusal() {
+    let scratch = Scratch::new("daily");
+    let out = scratch.path("soak.json");
+    let output = run(&[
+        "soak",
+        "--ticks",
+        "400",
+        "--residents",
+        "120",
+        "--profile",
+        "daily_life",
+        "--placement",
+        "spawn",
+        "--verify-determinism",
+        "--out",
+        out.to_str().expect("a UTF-8 path"),
+    ]);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let summary = text(&output.stdout);
+    assert!(summary.contains("result: PASSED"), "{summary}");
+    assert!(summary.contains("rejected at once: "), "{summary}");
+    assert!(summary.contains("money faucets: {"), "{summary}");
+    // No warning: every verb and every site kind of the profile exists.
+    assert!(!summary.contains("warning:"), "{summary}");
+    assert!(!text(&output.stderr).contains("warning:"), "{}", text(&output.stderr));
+
+    let report = report(&out);
+    let result = &report["result"];
+    assert_eq!(result["profile"]["name"], "daily_life");
+    assert_eq!(result["profile"]["skipped"], serde_json::json!([]));
+    assert_eq!(result["audits_passed"], 401);
+    // Hashes at ticks 0, 50, ..., 400.
+    assert_eq!(result["hash_checks_passed"], 9);
+    assert_eq!(result["violation"], Value::Null);
+    let money = &result["money"];
+    let minted = money["minted"].as_i64().expect("a number");
+    let burned = money["burned"].as_i64().expect("a number");
+    assert!(minted > 0, "{money}");
+    assert_eq!(
+        money["held"].as_i64().expect("a number") + money["in_flight"].as_i64().expect("a number"),
+        minted - burned,
+        "{money}"
+    );
+    // The rejections by code of each verb are in the report file.
+    let by_verb = result["actions"]["by_verb"].as_object().expect("a table");
+    assert!(by_verb.contains_key("work") && by_verb.contains_key("say"), "{by_verb:?}");
+    assert!(by_verb["work"]["rejected_by_code"].is_object());
+}
+
+#[test]
 fn swarm_needs_a_server() {
     let output = run(&["swarm", "--agents", "2"]);
     assert_eq!(output.status.code(), Some(2), "a usage error");
@@ -408,8 +483,17 @@ fn swarm_runs_against_a_server_that_it_starts() {
     assert_eq!(result["agents_ready"], 4);
     assert_eq!(result["sustained"], true);
     assert_eq!(result["failed_requests"], 0);
+    assert_eq!(result["throttled_requests"], 0);
     assert!(result["acks"].as_u64().expect("a number") > 4);
     assert_eq!(result["server_stats"]["sim"]["residents"], 4);
+    // The work of the one simulation thread in the window.
+    assert!(result["server_stats"]["sim"]["apply_ms"].as_f64().expect("a number") > 0.0);
+    assert!(summary.contains("simulation thread: "), "{summary}");
+    assert!(
+        summary.contains("sign-up: 4 with POST /v1/owners and POST /v1/residents"),
+        "{summary}"
+    );
+    assert_eq!(result["signup"]["count"], 4);
     assert!(
         result["connections"]["limits"]["soft"].is_object()
             || result["connections"]["limits"]["soft"].is_string()

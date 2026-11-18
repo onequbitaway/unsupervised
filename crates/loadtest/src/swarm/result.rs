@@ -6,25 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use super::preflight::{HttpConnections, Needs};
 use super::server::{ServerStats, SpawnServer};
-use super::signup::Flow;
 use crate::bench::ProfileUse;
+use crate::local::ActionCounts;
 use crate::machine::FileLimits;
 use crate::report::thousands;
 use crate::stats::{Counts, LatencySummary};
 use crate::think::ThinkTime;
-
-/// How agents waited for the end of an action.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WaitRoute {
-    /// No agent waited over HTTP in this run.
-    #[default]
-    NotUsed,
-    /// The long poll of the server (`GET /v1/wait`).
-    LongPoll,
-    /// The server has no long poll. Agents observed again and again.
-    Polling,
-}
 
 /// Connections and limits of the machine.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,9 +27,6 @@ pub struct Connections {
     pub ws_open_peak: u64,
     /// WebSocket connections that were opened in the whole run.
     pub ws_opened: u64,
-    /// WebSocket agents that used HTTP because the server has no WebSocket
-    /// route.
-    pub ws_fallbacks: u64,
     /// Greatest number of agents that held an HTTP client of their own at
     /// the same time. Each keeps one connection open between requests.
     pub http_agents_peak: u64,
@@ -74,9 +58,6 @@ pub struct SwarmRun {
     pub http_connections: HttpConnections,
     /// The profile.
     pub profile: ProfileUse,
-    /// The sign-up flow that the server has. `None` when every agent used
-    /// a stored key.
-    pub signup_flow: Option<Flow>,
     /// Agents that used a key from the credentials file.
     pub credentials_reused: u64,
     /// Agents that signed up again because the server refused their key.
@@ -89,8 +70,6 @@ pub struct SwarmRun {
     pub agents_failed: Counts,
     /// Connections and limits.
     pub connections: Connections,
-    /// How agents waited for the end of an action over HTTP.
-    pub wait_route: WaitRoute,
     /// Acknowledgement latency of all agents.
     pub ack: LatencySummary,
     /// Acknowledgement latency of the HTTP agents.
@@ -115,10 +94,27 @@ pub struct SwarmRun {
     /// Actions that the game rejected, by error code. A rejection is a
     /// valid acknowledgement, not a failure of the server.
     pub rejections: Counts,
-    /// Requests without a usable answer.
+    /// What the agents did in the window, by verb: requests, rejections by
+    /// error code, and the reports of ended actions that agents read.
+    #[serde(default)]
+    pub actions: ActionCounts,
+    /// Requests without a usable answer. A request that a limit of the
+    /// server refused is not in this number.
     pub failed_requests: u64,
     /// `failed_requests / (acks + observations + failed_requests)`.
     pub error_share: f64,
+    /// Requests that a limit of the server refused: status 429. The server
+    /// works as its configuration says, so they are a class of their own.
+    #[serde(default)]
+    pub throttled_requests: u64,
+    /// Requests that a limit of the server refused, by code
+    /// (`rate_limited`, `too_many_connections`).
+    #[serde(default)]
+    pub throttled: Counts,
+    /// Requests outside the measurement window that a limit of the server
+    /// refused, by code.
+    #[serde(default)]
+    pub throttled_ramp: Counts,
     /// Failed requests by code.
     pub errors: Counts,
     /// Failed requests outside the measurement window, by code: in the
@@ -135,6 +131,10 @@ pub struct SwarmRun {
     pub observations: u64,
     /// Waits for the end of an action in the window.
     pub waits: u64,
+    /// Long polls (`GET /v1/wait`) that the server answered, in the whole
+    /// run.
+    #[serde(default)]
+    pub long_polls: u64,
     /// Notices and reports that the server pushed on WebSockets, in the
     /// whole run.
     pub pushed_frames: u64,
@@ -180,6 +180,19 @@ impl SwarmRun {
         }
         if self.acks == 0 {
             reasons.push("no action was acknowledged in the window".to_string());
+        }
+        let throttled_ramp: u64 = self.throttled_ramp.values().sum();
+        if self.throttled_requests + throttled_ramp > 0 {
+            let mut by_code = self.throttled.clone();
+            crate::stats::merge(&mut by_code, &self.throttled_ramp);
+            reasons.push(format!(
+                "a limit of the server refused {} requests with status 429 ({} in the window): {:?}. \
+                 The server works as its configuration says; the limit, not the capacity of \
+                 the server, bounds this run",
+                thousands(self.throttled_requests + throttled_ramp),
+                thousands(self.throttled_requests),
+                by_code
+            ));
         }
         if self.error_share > self.max_error_share {
             reasons.push(format!(
@@ -236,15 +249,11 @@ impl SwarmRun {
             self.http_connections,
         ));
         out.push_str(&format!(
-            "  agents: {} started, {} ready, {} gave up; sign-up: {}{}\n",
+            "  agents: {} started, {} ready, {} gave up; sign-up: {} with POST /v1/owners and POST /v1/residents{}\n",
             thousands(self.agents_started),
             thousands(self.agents_ready),
             thousands(self.agents_failed.values().sum()),
-            match self.signup_flow {
-                Some(Flow::Documented) => "POST /v1/owners and POST /v1/residents",
-                Some(Flow::Dev) => "POST /v1/dev/residents (the server has no /v1/owners)",
-                None => "none",
-            },
+            thousands(self.signup.count),
             if self.credentials_reused > 0 {
                 format!(", {} stored keys reused", thousands(self.credentials_reused))
             } else {
@@ -252,10 +261,9 @@ impl SwarmRun {
             }
         ));
         out.push_str(&format!(
-            "  connections: {} WebSockets open at the peak of {} planned ({} used HTTP: no WebSocket route), {} agents with an HTTP connection of their own\n",
+            "  connections: {} WebSockets open at the peak of {} planned, {} agents with an HTTP connection of their own\n",
             thousands(c.ws_open_peak),
             thousands(c.ws_agents_planned),
-            thousands(c.ws_fallbacks),
             thousands(c.http_agents_peak),
         ));
         out.push_str(&format!(
@@ -279,9 +287,7 @@ impl SwarmRun {
             thousands(self.acks_per_second_max),
         ));
         out.push_str(&format!("  acknowledgements by state: {:?}\n", self.ack_states));
-        if !self.rejections.is_empty() {
-            out.push_str(&format!("  rejected by the game, by code: {:?}\n", self.rejections));
-        }
+        out.push_str(&self.actions.refusal_lines());
         out.push_str(&format!(
             "  failed requests: {} ({:.3} %){}\n",
             thousands(self.failed_requests),
@@ -298,36 +304,60 @@ impl SwarmRun {
                 self.errors_ramp
             ));
         }
+        out.push_str(&format!(
+            "  refused by a limit of the server (status 429): {} in the window{}{}\n",
+            thousands(self.throttled_requests),
+            if self.throttled.is_empty() {
+                String::new()
+            } else {
+                format!(", by code: {:?}", self.throttled)
+            },
+            if self.throttled_ramp.is_empty() {
+                String::new()
+            } else {
+                format!("; outside the window: {:?}", self.throttled_ramp)
+            }
+        ));
         for (code, message) in &self.error_examples {
             out.push_str(&format!("  first failure with the code `{code}`: {message}\n"));
         }
         out.push_str(&format!(
-            "  observations {}, waits for the end of an action {} ({}), pushed frames {}\n",
+            "  observations {}, waits for the end of an action {} ({} long polls answered), pushed frames {}\n",
             thousands(self.observations),
             thousands(self.waits),
-            match self.wait_route {
-                WaitRoute::NotUsed => "no HTTP agent waited",
-                WaitRoute::LongPoll => "long poll",
-                WaitRoute::Polling => "no long poll on the server: repeated observations",
-            },
+            thousands(self.long_polls),
             thousands(self.pushed_frames),
         ));
         match &self.server_stats.sim {
-            Some(sim) => out.push_str(&format!(
-                "  server: {} residents, {} frames in the window, mean frame {:.3} ms, worst frame since start {:.3} ms, {} inputs applied\n",
-                thousands(sim.residents),
-                thousands(sim.frames),
-                sim.mean_frame_ms,
-                sim.worst_frame_ms,
-                thousands(sim.inputs_applied),
-            )),
+            Some(sim) => {
+                out.push_str(&format!(
+                    "  server: {} residents, {} frames in the window, mean frame {:.3} ms, p99 of the last frames {:.3} ms, worst frame since start {:.3} ms, {} inputs applied\n",
+                    thousands(sim.residents),
+                    thousands(sim.frames),
+                    sim.mean_frame_ms,
+                    sim.p99_frame_ms,
+                    sim.worst_frame_ms,
+                    thousands(sim.inputs_applied),
+                ));
+                let window_ms = self.duration_secs * 1e3;
+                out.push_str(&format!(
+                    "  simulation thread: at least {:.1} % of the window at work ({:.0} ms in frames, {:.0} ms for inputs and observations, {:.0} ms for the calls themselves; the answers to long polls after a frame are not counted); {} calls refused with `overloaded`; {} of {} places of the mailbox in use at the end\n",
+                    if window_ms > 0.0 { sim.thread_ms() * 100.0 / window_ms } else { 0.0 },
+                    sim.mean_frame_ms * sim.frames as f64,
+                    sim.apply_ms,
+                    sim.calls_ms,
+                    thousands(sim.overloaded),
+                    thousands(sim.mailbox_depth),
+                    thousands(sim.mailbox_capacity),
+                ));
+            }
             None if self.server_stats.route_end.is_some() => {
                 out.push_str("  server: statistics route answered; see the report file\n");
             }
             None if self.spawned.is_some() => {
                 out.push_str("  server: no statistics (the window did not open)\n");
             }
-            None => out.push_str("  server: no statistics (the server has no statistics route)\n"),
+            None => out.push_str("  server: no statistics (the statistics route did not answer)\n"),
         }
         for warning in self.profile.warnings.iter().chain(&self.warnings) {
             out.push_str(&format!("  warning: {warning}\n"));
@@ -418,6 +448,29 @@ mod tests {
         let summary = limited.summary();
         assert!(summary.contains("    - The run stopped at a limit of this machine: x"));
         assert!(summary.contains("first failure with the code `no_local_port`: os error 49"));
+
+        // A run that a limit of the server bound is not sustained, and the
+        // refusals are not failed requests.
+        let mut throttled = good();
+        throttled.throttled_requests = 40;
+        throttled.throttled.insert("rate_limited".into(), 40);
+        throttled.throttled_ramp.insert("rate_limited".into(), 2);
+        throttled.judge();
+        assert!(!throttled.sustained);
+        assert_eq!(throttled.not_sustained_because.len(), 1);
+        let reason = &throttled.not_sustained_because[0];
+        assert!(
+            reason.contains("refused 42 requests with status 429 (40 in the window)"),
+            "{reason}"
+        );
+        assert!(reason.contains("rate_limited"), "{reason}");
+        assert_eq!(throttled.failed_requests, 0);
+        let summary = throttled.summary();
+        assert!(
+            summary.contains("refused by a limit of the server (status 429): 40 in the window"),
+            "{summary}"
+        );
+        assert!(summary.contains("failed requests: 0 (0.000 %)"), "{summary}");
 
         // Exactly at the limits is still sustained.
         let mut edge = good();

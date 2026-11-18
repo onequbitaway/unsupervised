@@ -1,12 +1,13 @@
 //! Argument generators: how a profile makes the arguments of an action.
 //!
-//! In a profile, `args` is a TOML value. A table with the key `gen` is a
+//! In a profile, `args` is a TOML table. A table with the key `gen` is a
 //! generator. Every other value is taken as it is written, and generators
 //! can stand anywhere inside tables and lists.
 //!
 //! ```toml
-//! args = { x = { gen = "near_x", radius = 12 }, y = { gen = "near_y", radius = 12 } }
-//! args = { gen = "near_tile", radius = 12 }          # the whole object is { x, y }
+//! args = { ticks = { gen = "int", min = 1, max = 5 } }
+//! args = { gen = "near_tile", radius = 12 }          # the whole table is { x, y }
+//! args = { gen = "carried", tag = "raw" }            # the whole table is { item, qty }
 //! args = { to = { gen = "nearby_resident", radius = 8 }, text = { gen = "text", words = 5 } }
 //! ```
 
@@ -15,6 +16,7 @@ use serde_json::{Map, Value, json};
 use unsup_kernel::Rng;
 use unsup_protocol::{ItemInfo, Pos};
 
+use crate::defaults::defaults;
 use crate::random;
 use crate::scene::Scene;
 
@@ -62,20 +64,12 @@ pub enum Generator {
     /// The id of the resident that acts.
     #[serde(rename = "self")]
     Me,
-    /// A random tile within `radius` of the resident, as `{ x, y }`. The
-    /// tile stays inside the city of the resident.
+    /// A random tile within `radius` of the resident that the resident can
+    /// reach, as `{ x, y }`: a walkable tile inside the city of the
+    /// resident. The action is not possible when no such tile is found. A
+    /// scene that does not know the tiles gives any tile of the square.
     NearTile {
         /// Greatest distance in tiles on each axis.
-        radius: u32,
-    },
-    /// The column of a random tile within `radius` of the resident.
-    NearX {
-        /// Greatest distance in tiles.
-        radius: u32,
-    },
-    /// The row of a random tile within `radius` of the resident.
-    NearY {
-        /// Greatest distance in tiles.
         radius: u32,
     },
     /// The id of a random other resident within `radius` tiles. The action
@@ -93,14 +87,22 @@ pub enum Generator {
         #[serde(default)]
         kind: Option<String>,
     },
-    /// The nearest tile of a random site within `radius` tiles, as
-    /// `{ x, y }`. Use it to walk to a site.
-    SiteTile {
-        /// Greatest distance in tiles.
-        radius: u32,
-        /// Only sites of this kind.
+    /// Goods that the resident carries, as `{ item, qty }`: the name of a
+    /// random item and its number of units. The action is not possible
+    /// when the resident carries no such item.
+    Carried {
+        /// Only items with this tag, for example `raw`.
         #[serde(default)]
-        kind: Option<String>,
+        tag: Option<String>,
+        /// Greatest number of units. Without it, all units.
+        #[serde(default)]
+        max_qty: Option<i64>,
+    },
+    /// A share of the cash of the resident, in cents. The action is not
+    /// possible when the share is less than one cent.
+    Cash {
+        /// The share in percent, from 1 to 100.
+        percent: u32,
     },
     /// A random item of the catalogue. The action is not possible when the
     /// catalogue has no such item.
@@ -182,15 +184,17 @@ impl ArgSpec {
         }
     }
 
-    /// Returns the names of the top-level arguments, or `None` when a
-    /// generator makes the whole object.
+    /// Returns the names of the top-level arguments. Returns `None` when
+    /// the specification is not a table of arguments: a single value, a
+    /// list, or a generator that makes one value.
     #[must_use]
     pub fn keys(&self) -> Option<Vec<&str>> {
         match self {
             ArgSpec::Absent => Some(Vec::new()),
             ArgSpec::Object(fields) => Some(fields.iter().map(|(key, _)| key.as_str()).collect()),
             ArgSpec::Literal(Value::Object(map)) => Some(map.keys().map(String::as_str).collect()),
-            _ => None,
+            ArgSpec::Gen(generator) => generator.keys().map(<[&str]>::to_vec),
+            ArgSpec::Literal(_) | ArgSpec::List(_) => None,
         }
     }
 
@@ -253,6 +257,17 @@ fn tile(pos: Pos) -> Value {
 }
 
 impl Generator {
+    /// Returns the names of the arguments that the generator makes when it
+    /// makes a whole table. Returns `None` for a generator of one value.
+    #[must_use]
+    pub fn keys(&self) -> Option<&'static [&'static str]> {
+        match self {
+            Generator::NearTile { .. } => Some(&["x", "y"]),
+            Generator::Carried { .. } => Some(&["item", "qty"]),
+            _ => None,
+        }
+    }
+
     /// Makes one value. Returns `None` when the scene has nothing to choose
     /// from.
     pub fn generate(
@@ -276,27 +291,28 @@ impl Generator {
             }
             Generator::Me => Some(json!(scene.me())),
             Generator::NearTile { radius } => {
-                let (pos, bounds) = (scene.pos(), scene.bounds());
+                let pos = scene.pos();
+                if let Some(map) = scene.map() {
+                    let attempts = defaults().driver.tile_attempts;
+                    return map.walkable_near(rng, pos, *radius, attempts).map(tile);
+                }
+                let bounds = scene.bounds();
                 let x = near(rng, pos.x, *radius, bounds.map(|b| (b.x0, b.x1)));
                 let y = near(rng, pos.y, *radius, bounds.map(|b| (b.y0, b.y1)));
                 Some(tile(Pos::new(x, y)))
-            }
-            Generator::NearX { radius } => {
-                let range = scene.bounds().map(|b| (b.x0, b.x1));
-                Some(json!(near(rng, scene.pos().x, *radius, range)))
-            }
-            Generator::NearY { radius } => {
-                let range = scene.bounds().map(|b| (b.y0, b.y1));
-                Some(json!(near(rng, scene.pos().y, *radius, range)))
             }
             Generator::NearbyResident { radius } => {
                 rng.pick(scene.residents(*radius)).map(|neighbour| json!(neighbour.id))
             }
             Generator::NearbySite { radius, kind } => {
-                pick_site(rng, scene, *radius, kind.as_deref()).map(|(id, _)| id)
-            }
-            Generator::SiteTile { radius, kind } => {
-                pick_site(rng, scene, *radius, kind.as_deref()).map(|(_, pos)| tile(pos))
+                let sites = scene.sites(*radius);
+                let fits = |kind_of_site: &str| kind.as_deref().is_none_or(|k| k == kind_of_site);
+                let count = sites.iter().filter(|site| fits(&site.kind)).count() as u64;
+                if count == 0 {
+                    return None;
+                }
+                let at = rng.below(count) as usize;
+                sites.iter().filter(|site| fits(&site.kind)).nth(at).map(|site| json!(site.id))
             }
             Generator::Item { tag, form } => {
                 let fits = |item: &&ItemInfo| {
@@ -312,24 +328,29 @@ impl Generator {
                     ItemAs::Id => json!(item.id),
                 })
             }
+            Generator::Carried { tag, max_qty } => {
+                let info = |id| items.iter().find(|item| item.id == id);
+                let fits = |id| {
+                    info(id).is_some_and(|item| {
+                        tag.as_ref().is_none_or(|tag| item.tags.iter().any(|t| t == tag))
+                    })
+                };
+                let carried = scene.carried();
+                let count = carried.iter().filter(|c| fits(c.item)).count() as u64;
+                if count == 0 {
+                    return None;
+                }
+                let goods =
+                    carried.iter().filter(|c| fits(c.item)).nth(rng.below(count) as usize)?;
+                let qty = max_qty.map_or(goods.qty, |max| goods.qty.min(max));
+                let name = &info(goods.item)?.name;
+                (qty > 0).then(|| json!({ "item": name, "qty": qty }))
+            }
+            Generator::Cash { percent } => {
+                let cash = scene.cash()?;
+                let amount = cash.saturating_mul(i64::from((*percent).min(100))) / 100;
+                (amount > 0).then(|| json!(amount))
+            }
         }
     }
-}
-
-/// Chooses a random site within `radius`, of the given kind when there is
-/// one. Returns its id and its nearest tile.
-fn pick_site(
-    rng: &mut Rng,
-    scene: &mut dyn Scene,
-    radius: u32,
-    kind: Option<&str>,
-) -> Option<(Value, Pos)> {
-    let sites = scene.sites(radius);
-    let fits = |kind_of_site: &str| kind.is_none_or(|kind| kind == kind_of_site);
-    let count = sites.iter().filter(|site| fits(&site.kind)).count() as u64;
-    if count == 0 {
-        return None;
-    }
-    let site = sites.iter().filter(|site| fits(&site.kind)).nth(rng.below(count) as usize)?;
-    Some((json!(site.id), site.pos))
 }

@@ -28,6 +28,10 @@ pub struct BenchConfig {
     pub profile: Profile,
     /// True: every request carries an idempotency key.
     pub request_ids: bool,
+    /// The sections that a resident asks for in an observation, for
+    /// example only `nearby`, to measure the cost of one section. Empty:
+    /// all sections.
+    pub observe_sections: Vec<String>,
     /// The run stops when the process holds more than this many bytes: the
     /// larger of its resident set size and its footprint. `None`: the
     /// limit of the data file
@@ -89,8 +93,8 @@ pub struct BenchRun {
     pub zones: u64,
     /// Where the residents started.
     pub placement: Placement,
-    /// Spawn sites that the game made. With none, every resident of a city
-    /// starts on one tile unless the placement is `scatter`.
+    /// Spawn sites that the game made: the shelters and the stations. With
+    /// the placement `spawn`, the residents of a city start in them.
     pub spawn_sites: u64,
     /// Residents in the fullest zone after the last frame.
     pub fullest_zone: u64,
@@ -98,6 +102,10 @@ pub struct BenchRun {
     pub profile: ProfileUse,
     /// True when every request carried an idempotency key.
     pub request_ids: bool,
+    /// The sections that residents asked for in an observation. Empty: all
+    /// sections.
+    #[serde(default)]
+    pub observe_sections: Vec<String>,
     /// Seconds to build the empty world.
     pub build_secs: f64,
     /// Seconds to create and place the residents.
@@ -128,6 +136,14 @@ pub struct BenchRun {
     pub actions_per_wall_second: f64,
     /// Accepted actions for each second of server work (`server_ms`).
     pub actions_per_server_second: f64,
+    /// Mean time of one request in `World::apply`, in microseconds: the
+    /// sum of `inputs_ms` divided by the requests that were sent.
+    #[serde(default)]
+    pub micros_per_request: f64,
+    /// Mean time of one observation in `World::observe`, in microseconds:
+    /// the sum of `observe_ms` divided by the observations.
+    #[serde(default)]
+    pub micros_per_observation: f64,
     /// Position changes for each measured frame.
     pub moves_per_frame: f64,
     /// Residents that changed zone for each measured frame.
@@ -183,9 +199,17 @@ impl BenchRun {
             thousands(self.actions_per_wall_second.round() as u64),
             thousands(self.actions_per_server_second.round() as u64),
         ));
-        if !self.actions.rejected_by_code.is_empty() {
-            out.push_str(&format!("  rejections by code: {:?}\n", self.actions.rejected_by_code));
-        }
+        out.push_str(&format!(
+            "  one request costs {:.2} microseconds in World::apply, one observation {:.2} microseconds in World::observe{}\n",
+            self.micros_per_request,
+            self.micros_per_observation,
+            if self.observe_sections.is_empty() {
+                String::new()
+            } else {
+                format!(" (only the sections {})", self.observe_sections.join(", "))
+            }
+        ));
+        out.push_str(&self.actions.refusal_lines());
         out.push_str(&format!(
             "  moves for each frame {:.0}, zone changes for each frame {:.0}\n",
             self.moves_per_frame, self.migrations_per_frame
@@ -256,13 +280,18 @@ pub fn run(config: &BenchConfig, extra: &[&dyn Plugin]) -> anyhow::Result<BenchR
         (population.build_time, population.populate_time, population.spawn_sites);
     let mut world = population.world;
     let residents = population.ids.len() as u64;
-    let profile = config.profile.resolve(&world.catalogue())?;
+    let mut profile = config.profile.resolve(&world.catalogue())?;
+    profile.check_map(&population.map);
     for warning in &profile.warnings {
         eprintln!("bench: warning: {warning}");
     }
     let profile_use = ProfileUse::of(&profile);
-    let options = DriverOptions { seed: config.world.seed, request_ids: config.request_ids };
-    let mut driver = Driver::new(&world, population.ids, profile, options);
+    let options = DriverOptions {
+        seed: config.world.seed,
+        request_ids: config.request_ids,
+        observe_sections: config.observe_sections.clone(),
+    };
+    let mut driver = Driver::new(&world, population.map, population.ids, profile, options);
     probe.populated();
     eprintln!(
         "bench: {} residents ready after {:.2} s; {} warm-up frames, then {} measured frames{}",
@@ -332,6 +361,13 @@ pub fn run(config: &BenchConfig, extra: &[&dyn Plugin]) -> anyhow::Result<BenchR
     let server = Millis::from_nanos(&server_ns);
     let server_secs = server.mean * server.count as f64 / 1e3;
     let frames_f = f64::from(config.frames.max(1));
+    // The mean time of one call, from the sum of a series in nanoseconds.
+    let micros_each = |series: &[u64], calls: u64| {
+        let total: u128 = series.iter().map(|&nanos| u128::from(nanos)).sum();
+        if calls == 0 { 0.0 } else { total as f64 / 1e3 / calls as f64 }
+    };
+    let micros_per_request = micros_each(&inputs_ns, actions.sent);
+    let micros_per_observation = micros_each(&observe_ns, actions.observes);
     Ok(BenchRun {
         residents,
         residents_end: world.residents() as u64,
@@ -343,6 +379,7 @@ pub fn run(config: &BenchConfig, extra: &[&dyn Plugin]) -> anyhow::Result<BenchR
         fullest_zone,
         profile: profile_use,
         request_ids: config.request_ids,
+        observe_sections: config.observe_sections.clone(),
         build_secs: build_time.as_secs_f64(),
         populate_secs: populate_time.as_secs_f64(),
         warmup_frames: config.warmup,
@@ -355,6 +392,8 @@ pub fn run(config: &BenchConfig, extra: &[&dyn Plugin]) -> anyhow::Result<BenchR
         actions_per_frame: actions.accepted() as f64 / frames_f,
         actions_per_wall_second: rate(actions.accepted(), wall),
         actions_per_server_second: rate(actions.accepted(), server_secs),
+        micros_per_request,
+        micros_per_observation,
         moves_per_frame: moves as f64 / frames_f,
         migrations_per_frame: migrations as f64 / frames_f,
         actions,

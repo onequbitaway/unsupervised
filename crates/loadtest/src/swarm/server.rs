@@ -66,11 +66,36 @@ pub struct SimWindow {
     pub frames: u64,
     /// Mean time of a frame in the window, in milliseconds.
     pub mean_frame_ms: f64,
+    /// Frame time that 99 of 100 of the last frames stayed below, at the
+    /// end of the window, in milliseconds.
+    #[serde(default)]
+    pub p99_frame_ms: f64,
     /// Longest frame since the server started, in milliseconds.
     pub worst_frame_ms: f64,
     /// Inputs (actions, spawns, frames) that the simulation applied in the
     /// window.
     pub inputs_applied: u64,
+    /// Time in the window that the simulation thread spent in the world
+    /// between frames: it applied inputs and built observations. In
+    /// milliseconds.
+    #[serde(default)]
+    pub apply_ms: f64,
+    /// Time in the window that the simulation thread spent on the calls
+    /// themselves: it took them from the mailbox, waited for the journal
+    /// and gave the answers back. In milliseconds.
+    #[serde(default)]
+    pub calls_ms: f64,
+    /// Calls in the window that the simulation refused with `overloaded`
+    /// because its mailbox was full.
+    #[serde(default)]
+    pub overloaded: u64,
+    /// Calls that waited in the mailbox of the simulation thread at the
+    /// end of the window.
+    #[serde(default)]
+    pub mailbox_depth: u64,
+    /// Greatest number of calls that the mailbox holds.
+    #[serde(default)]
+    pub mailbox_capacity: u64,
     /// Calls that waited in a long poll at the end of the window.
     pub waiting: u64,
     /// Inputs that the journal refused since the server started.
@@ -87,15 +112,40 @@ impl SimWindow {
         let total = |stats: &SimStats| stats.mean_frame_micros as f64 * stats.frames_run as f64;
         let mean_micros =
             if frames == 0 { 0.0 } else { ((total(end) - total(start)) / frames as f64).max(0.0) };
+        let calls = |stats: &SimStats| {
+            stats
+                .intake_micros
+                .saturating_add(stats.commit_micros)
+                .saturating_add(stats.reply_micros)
+        };
+        let ms = |micros: u64| micros as f64 / 1e3;
         SimWindow {
             residents: end.residents,
             frames,
             mean_frame_ms: mean_micros / 1e3,
-            worst_frame_ms: end.worst_frame_micros as f64 / 1e3,
+            p99_frame_ms: ms(end.p99_frame_micros),
+            worst_frame_ms: ms(end.worst_frame_micros),
             inputs_applied: end.inputs_applied.saturating_sub(start.inputs_applied),
+            apply_ms: ms(end.apply_micros.saturating_sub(start.apply_micros)),
+            calls_ms: ms(calls(end).saturating_sub(calls(start))),
+            overloaded: end.overloaded.saturating_sub(start.overloaded),
+            mailbox_depth: end.mailbox_depth,
+            mailbox_capacity: end.mailbox_capacity,
             waiting: end.waiting,
             journal_errors: end.journal_errors,
         }
+    }
+
+    /// Returns the time in the window that the one simulation thread
+    /// worked and that the runtime counts, in milliseconds: the frames,
+    /// the inputs and observations between the frames, and the calls
+    /// themselves. The runtime does not count the time in which the thread
+    /// answers long polls after a frame, so the thread worked at least
+    /// this long. A value near the length of the window means that the
+    /// thread had no time left.
+    #[must_use]
+    pub fn thread_ms(&self) -> f64 {
+        self.mean_frame_ms * self.frames as f64 + self.apply_ms + self.calls_ms
     }
 }
 
@@ -130,6 +180,11 @@ mod tests {
             frames_run: 10,
             mean_frame_micros: 1_000,
             worst_frame_micros: 4_000,
+            apply_micros: 2_000,
+            intake_micros: 100,
+            commit_micros: 200,
+            reply_micros: 300,
+            overloaded: 1,
             ..SimStats::default()
         };
         let end = SimStats {
@@ -140,7 +195,15 @@ mod tests {
             // 10 frames of 1 ms and 20 frames of 4 ms: the mean is 3 ms.
             mean_frame_micros: 3_000,
             worst_frame_micros: 9_000,
+            p99_frame_micros: 8_000,
             waiting: 2,
+            apply_micros: 52_000,
+            intake_micros: 1_100,
+            commit_micros: 1_200,
+            reply_micros: 1_300,
+            overloaded: 4,
+            mailbox_depth: 6,
+            mailbox_capacity: 1_024,
             ..SimStats::default()
         };
         let window = SimWindow::between(&start, &end);
@@ -150,7 +213,16 @@ mod tests {
         assert_eq!(window.waiting, 2);
         assert!((window.mean_frame_ms - 4.0).abs() < 1e-9, "{}", window.mean_frame_ms);
         assert!((window.worst_frame_ms - 9.0).abs() < 1e-9);
+        assert!((window.p99_frame_ms - 8.0).abs() < 1e-9);
+        // 50 ms in the world between frames, and 3 ms for the calls.
+        assert!((window.apply_ms - 50.0).abs() < 1e-9, "{}", window.apply_ms);
+        assert!((window.calls_ms - 3.0).abs() < 1e-9, "{}", window.calls_ms);
+        assert_eq!(window.overloaded, 3);
+        assert_eq!((window.mailbox_depth, window.mailbox_capacity), (6, 1_024));
+        // 20 frames of 4 ms, 50 ms and 3 ms.
+        assert!((window.thread_ms() - 133.0).abs() < 1e-9, "{}", window.thread_ms());
         assert_eq!(SimWindow::between(&end, &end).frames, 0);
         assert!(SimWindow::between(&end, &end).mean_frame_ms.abs() < 1e-9);
+        assert!(SimWindow::between(&end, &end).thread_ms().abs() < 1e-9);
     }
 }

@@ -21,6 +21,7 @@ pub mod bench;
 pub mod defaults;
 pub mod local;
 pub mod machine;
+pub mod map;
 pub mod process;
 pub mod profile;
 pub mod random;

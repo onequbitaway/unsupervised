@@ -54,12 +54,24 @@ pub fn machine_limit_in(error: &(dyn Error + 'static)) -> Option<&'static str> {
     None
 }
 
+/// HTTP status of an answer that a limit of the server refused.
+const TOO_MANY_REQUESTS: u16 = 429;
+
+/// Error codes of the server for a request that one of its limits refused
+/// (`docs/design/protocol.md`, section 2). An `error` frame on a WebSocket
+/// has the code and no status.
+const LIMIT_CODES: [&str; 2] = ["rate_limited", "too_many_connections"];
+
+/// Error codes of the server for a key that it does not accept, or whose
+/// resident left the world.
+const KEY_CODES: [&str; 3] = ["unauthorized", "invalid_token", "resident_gone"];
+
 /// Why a request failed. `code` is the name under which the report counts
 /// the failure. It never holds a key or a token.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestError {
     /// Short name: the `error.code` of the server (`overloaded`,
-    /// `unknown_resident`, ...), `http_<status>` for an answer without a
+    /// `rate_limited`, ...), `http_<status>` for an answer without a
     /// code, the kind of transport failure (`connect`, `timeout`,
     /// `transport`, `decode`, `closed`), or a limit of this machine
     /// ([`NO_LOCAL_PORT`], [`TOO_MANY_OPEN_FILES`]).
@@ -67,11 +79,13 @@ pub struct RequestError {
     /// The HTTP status, when the server answered.
     pub status: Option<u16>,
     /// True when the server answered with a JSON error of the API. False
-    /// for an answer of the web server itself, for example for a route
-    /// that does not exist.
+    /// for an answer of the web server itself.
     pub from_api: bool,
     /// One sentence for the operator.
     pub message: String,
+    /// Seconds that the server asks the client to wait, from the header
+    /// `Retry-After`.
+    pub retry_after_secs: Option<u64>,
 }
 
 impl RequestError {
@@ -83,13 +97,28 @@ impl RequestError {
             status: None,
             from_api: false,
             message: message.into(),
+            retry_after_secs: None,
+        }
+    }
+
+    /// Makes an error from the error object of the API: its code and its
+    /// message. An `error` frame on a WebSocket has no status.
+    #[must_use]
+    pub fn api(code: &str, message: impl Into<String>, status: Option<u16>) -> RequestError {
+        RequestError {
+            code: code.to_string(),
+            status,
+            from_api: true,
+            message: message.into(),
+            retry_after_secs: None,
         }
     }
 
     /// Makes an error from an answer with a status that is not a success.
     /// The body is the error object of the API when it parses as one.
+    /// `retry_after_secs` is the value of the header `Retry-After`.
     #[must_use]
-    pub fn from_status(status: u16, body: &[u8]) -> RequestError {
+    pub fn from_status(status: u16, body: &[u8], retry_after_secs: Option<u64>) -> RequestError {
         let api: Option<(String, String)> =
             serde_json::from_slice::<Value>(body).ok().and_then(|value| {
                 let error = value.get("error")?;
@@ -98,24 +127,27 @@ impl RequestError {
                     error.get("message").and_then(Value::as_str).unwrap_or_default().to_string();
                 Some((code, message))
             });
-        match api {
-            Some((code, message)) => {
-                RequestError { code, status: Some(status), from_api: true, message }
-            }
+        let error = match api {
+            Some((code, message)) => RequestError::api(&code, message, Some(status)),
             None => RequestError {
                 code: format!("http_{status}"),
                 status: Some(status),
                 from_api: false,
                 message: format!("the server answered with status {status}"),
+                retry_after_secs: None,
             },
-        }
+        };
+        RequestError { retry_after_secs, ..error }
     }
 
-    /// Returns true when the server does not have the route: status 404 or
-    /// 405 without an error object of the API.
+    /// Returns true when a limit of the server refused the request: status
+    /// 429, or the codes `rate_limited` and `too_many_connections`. The
+    /// server works as its configuration says. Such an answer is not a
+    /// failure of the server; the report counts it in a class of its own.
     #[must_use]
-    pub fn route_absent(&self) -> bool {
-        !self.from_api && matches!(self.status, Some(404 | 405))
+    pub fn throttled(&self) -> bool {
+        self.status == Some(TOO_MANY_REQUESTS)
+            || (self.from_api && LIMIT_CODES.contains(&self.code.as_str()))
     }
 
     /// Returns true when the failure shows a limit of this machine, not a
@@ -127,10 +159,13 @@ impl RequestError {
     }
 
     /// Returns true when the server does not accept the key of the agent,
-    /// or does not know its resident. The agent must sign up again.
+    /// or when its resident left the world: status 401 or 410, or the
+    /// codes `unauthorized`, `invalid_token` and `resident_gone`. The
+    /// agent must sign up again.
     #[must_use]
     pub fn credentials_refused(&self) -> bool {
-        matches!(self.status, Some(401 | 403)) || self.code == "unknown_resident"
+        matches!(self.status, Some(401 | 410))
+            || (self.from_api && KEY_CODES.contains(&self.code.as_str()))
     }
 }
 
@@ -185,30 +220,60 @@ mod tests {
     #[test]
     fn an_api_error_keeps_its_code() {
         let body = br#"{"error":{"code":"overloaded","message":"the simulation is overloaded"}}"#;
-        let error = RequestError::from_status(503, body);
+        let error = RequestError::from_status(503, body, None);
         assert_eq!(error.code, "overloaded");
         assert_eq!(error.status, Some(503));
         assert!(error.from_api);
-        assert!(!error.route_absent());
+        assert!(!error.throttled());
         assert!(!error.credentials_refused());
         assert_eq!(error.to_string(), "overloaded: the simulation is overloaded");
+
+        // An answer of the web server itself has no error object.
+        let plain = RequestError::from_status(502, b"Bad Gateway", None);
+        assert_eq!(plain.code, "http_502");
+        assert!(!plain.from_api);
     }
 
     #[test]
-    fn a_missing_route_is_not_an_unknown_resident() {
-        let missing = RequestError::from_status(404, b"");
-        assert_eq!(missing.code, "http_404");
-        assert!(missing.route_absent());
-        assert!(!missing.credentials_refused());
-        assert!(RequestError::from_status(405, b"Method Not Allowed").route_absent());
+    fn a_limit_of_the_server_is_a_class_of_its_own() {
+        let body = br#"{"error":{"code":"rate_limited","message":"Too many requests."}}"#;
+        let limited = RequestError::from_status(429, body, Some(7));
+        assert!(limited.throttled());
+        assert_eq!(limited.code, "rate_limited");
+        assert_eq!(limited.retry_after_secs, Some(7));
+        assert!(!limited.credentials_refused());
+        assert!(!limited.machine_limit());
 
+        let body = br#"{"error":{"code":"too_many_connections","message":"At most 4."}}"#;
+        assert!(RequestError::from_status(429, body, None).throttled());
+        // A proxy can answer 429 without the error object of the API.
+        assert!(RequestError::from_status(429, b"", None).throttled());
+        // An `error` frame on a WebSocket has the code and no status.
+        assert!(RequestError::api("rate_limited", "Too many requests.", None).throttled());
+
+        // Other refusals are not limits.
+        assert!(!RequestError::from_status(503, b"", None).throttled());
+        assert!(!RequestError::api("overloaded", "busy", Some(503)).throttled());
+        // A transport failure with the same name is not an answer of the server.
+        assert!(!RequestError::local("rate_limited", "no answer").throttled());
+    }
+
+    #[test]
+    fn a_key_that_the_server_does_not_accept_is_told_from_other_refusals() {
+        let body = br#"{"error":{"code":"invalid_token","message":"The server does not know the token."}}"#;
+        assert!(RequestError::from_status(401, body, None).credentials_refused());
         let body =
-            br#"{"error":{"code":"unknown_resident","message":"no living resident has this id"}}"#;
-        let unknown = RequestError::from_status(404, body);
-        assert!(!unknown.route_absent());
-        assert!(unknown.credentials_refused());
-        assert!(RequestError::from_status(401, b"{}").credentials_refused());
-        assert!(!RequestError::local("timeout", "no answer").route_absent());
+            br#"{"error":{"code":"resident_gone","message":"The resident left the world."}}"#;
+        assert!(RequestError::from_status(410, body, None).credentials_refused());
+        assert!(RequestError::api("resident_gone", "gone", None).credentials_refused());
+
+        // The route needs the other kind of token, or the owner has the
+        // greatest number of residents: a new sign-up does not help.
+        let body = br#"{"error":{"code":"resident_limit","message":"At most 3."}}"#;
+        assert!(!RequestError::from_status(403, body, None).credentials_refused());
+        let body = br#"{"error":{"code":"not_found","message":"No route has this path."}}"#;
+        assert!(!RequestError::from_status(404, body, None).credentials_refused());
+        assert!(!RequestError::local("timeout", "no answer").credentials_refused());
     }
 
     /// An error of a library that has an error of the system as its cause.
@@ -250,7 +315,7 @@ mod tests {
         assert!(RequestError::local(NO_LOCAL_PORT, "no port").machine_limit());
         assert!(RequestError::local(TOO_MANY_OPEN_FILES, "no file").machine_limit());
         assert!(!RequestError::local("connect", "refused").machine_limit());
-        assert!(!RequestError::from_status(503, b"").machine_limit());
+        assert!(!RequestError::from_status(503, b"", None).machine_limit());
     }
 
     #[test]

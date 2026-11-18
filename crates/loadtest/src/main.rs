@@ -90,6 +90,7 @@ fn bench_command(args: &BenchArgs, argv: Vec<String>) -> anyhow::Result<()> {
                 warmup: args.warmup,
                 profile: Profile::load(&args.world.profile)?,
                 request_ids: args.world.request_ids,
+                observe_sections: args.observe_sections.clone(),
                 // A limit that is not a usable number is no limit of the
                 // user; the default applies.
                 max_memory_bytes: args
@@ -185,7 +186,6 @@ fn swarm_command(args: &SwarmArgs, argv: Vec<String>) -> anyhow::Result<()> {
             retry: seconds("retry", d.retry_secs)?,
             max_failures: d.max_failures_in_row,
             wait_timeout: seconds("wait-timeout", d.wait_timeout_secs)?,
-            poll_interval: Duration::from_millis(d.poll_interval_ms),
         },
         p99_target: seconds("p99-target-ms", args.p99_target_ms / 1e3)?,
         max_error_share: args.max_error_share,

@@ -1,14 +1,22 @@
 //! `swarm`: many virtual agents over the network against a server.
 //!
-//! Each agent is one task. It signs up (or uses a stored key), then it
-//! observes, thinks and acts until the run ends, like an agent that a
-//! language model drives. A share of the agents uses the WebSocket; the
-//! others send HTTP requests. The run measures the acknowledgement latency
-//! of every action, the throughput and the errors.
+//! Each agent is one task. It signs up as an owner with one resident (or
+//! uses a stored key), then it observes, thinks and acts until the run
+//! ends, like an agent that a language model drives. A share of the agents
+//! uses the WebSocket; the others send HTTP requests and wait in the long
+//! poll. The run measures the acknowledgement latency of every action, the
+//! throughput and the errors.
 //!
 //! The run has two parts. In the **ramp-up** the agents start one after
 //! the other. The **window** comes after it; all latencies and rates in
 //! the result are those of the window.
+//!
+//! A request has one of four ends. The server acknowledges it (the game
+//! can accept or reject the action: both are valid answers). A limit of
+//! the server refuses it with status 429: a class of its own, because the
+//! server then works as its configuration says. The request fails: no
+//! usable answer. Or this machine cannot open one more connection, which
+//! stops the run.
 
 mod agent;
 mod error;
@@ -19,25 +27,25 @@ mod result;
 mod server;
 mod signup;
 mod wire;
+mod world;
 mod ws;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use serde_json::Value;
-use unsup_protocol::{Catalogue, WorldView};
+use unsup_protocol::Catalogue;
 
 pub use agent::Timing;
 pub use error::RequestError;
 pub use http::Urls;
 pub use metrics::Link;
 pub use preflight::{Held, HttpConnections, Needs, limit_message};
-pub use result::{Connections, SwarmRun, WaitRoute};
+pub use result::{Connections, SwarmRun};
 pub use server::{ServerStats, SimWindow, SpawnServer};
-pub use signup::{Credential, CredentialFile, Flow};
+pub use signup::{Credential, CredentialFile};
 
 use crate::bench::ProfileUse;
 use crate::defaults::defaults;
@@ -45,10 +53,10 @@ use crate::machine::FileLimits;
 use crate::process;
 use crate::profile::Profile;
 use crate::report::thousands;
+use crate::stats::Counts;
 use crate::think::ThinkTime;
-use agent::{Plan, Shared};
+use agent::{Seat, Shared};
 use metrics::Metrics;
-use wire::CityBounds;
 
 /// Time between two samples of the run: open files, acknowledgements.
 const SAMPLE: Duration = Duration::from_secs(1);
@@ -143,26 +151,21 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
     let urls = Arc::new(Urls::new(&base, &config.stats_path).map_err(|message| anyhow!(message))?);
     let mut warnings = Vec::new();
 
-    // What the server offers: verbs for the profile, city bounds for
-    // generated positions.
+    // What the server offers: verbs for the profile, and the map for walk
+    // targets and sites.
     let control = http::client(config.timing.request_timeout, false)?;
     let (catalogue, _): (Catalogue, _) = http::get_json(&control, &urls.catalogue, None)
         .await
         .with_context(|| format!("cannot read the catalogue of the server at {}", urls.base))?;
-    let profile = config.profile.resolve(&catalogue)?;
+    let mut profile = config.profile.resolve(&catalogue)?;
+    let map = world::load_map(&control, &urls, config.timing.retry, config.timing.max_failures)
+        .await
+        .with_context(|| format!("cannot read the map of the server at {}", urls.base))?;
+    profile.check_map(&map);
     for warning in &profile.warnings {
         eprintln!("swarm: warning: {warning}");
     }
     let profile_use = ProfileUse::of(&profile);
-    let cities = match http::get_json::<WorldView>(&control, &urls.world, None).await {
-        Ok((view, _)) => CityBounds::from_view(&view),
-        Err(error) => {
-            warnings.push(format!(
-                "cannot read the layout of the world ({error}); generated positions are not kept inside a city"
-            ));
-            CityBounds::default()
-        }
-    };
 
     let mut stored = Vec::new();
     if let Some(path) = &config.credentials {
@@ -180,27 +183,25 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
 
     let max_latency = Duration::from_secs(d.histogram_max_secs.max(1));
     let metrics = Metrics::new(max_latency, d.histogram_sigfig).map_err(|m| anyhow!(m))?;
-    let shared_client = match config.http_connections {
-        HttpConnections::Shared => Some(http::client(config.timing.request_timeout, false)?),
-        HttpConnections::PerAgent => None,
-    };
+    // One pool of connections for the agents that hold no HTTP connection
+    // of their own: all agents with `HttpConnections::Shared`, and each
+    // WebSocket agent for its sign-up.
+    let pool = http::client(config.timing.request_timeout, false)?;
     let open_files_before = process::open_files();
     let start = Instant::now();
     let steady_at = start + config.ramp_up;
     let end = steady_at + config.duration;
     let shared = Arc::new(Shared {
         profile,
-        cities,
+        map: Arc::new(map),
         think: config.think,
         urls: Arc::clone(&urls),
         metrics,
-        signup: signup::SignUp::default(),
         timing: config.timing,
         seed: config.seed,
         end,
-        shared_client,
-        ws_absent: AtomicBool::new(false),
-        wait_absent: AtomicBool::new(false),
+        pool,
+        http_connections: config.http_connections,
     });
 
     eprintln!(
@@ -214,13 +215,13 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
     let mut tasks = Vec::with_capacity(config.agents as usize);
     for index in 0..config.agents {
         let offset = config.ramp_up.mul_f64(f64::from(index) / f64::from(config.agents.max(1)));
-        let plan = Plan {
+        let seat = Seat {
             index,
             start: start + offset,
             link: if uses_ws(index, config.ws_share) { Link::Ws } else { Link::Http },
             credential: stored.get(index as usize).cloned(),
         };
-        tasks.push(tokio::spawn(agent::run(plan, Arc::clone(&shared))));
+        tasks.push(tokio::spawn(agent::run(seat, Arc::clone(&shared))));
     }
 
     // Watch the run: once each second, sample the open files and the
@@ -274,12 +275,13 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
         samples += 1;
         if samples.is_multiple_of(PROGRESS_EVERY) {
             eprintln!(
-                "swarm: {:>4.0} s: {} of {} agents ready, {} acknowledgements, {} failed requests, {} WebSockets open{}",
+                "swarm: {:>4.0} s: {} of {} agents ready, {} acknowledgements, {} failed requests, {} refused by a limit of the server, {} WebSockets open{}",
                 start.elapsed().as_secs_f64(),
                 thousands(m.agents_ready.get()),
                 thousands(agents),
                 thousands(m.acks_total.get()),
                 thousands(m.failed_steady.get() + m.errors_ramp.get().values().sum::<u64>()),
+                thousands(m.throttled.get() + m.throttled_ramp.get().values().sum::<u64>()),
                 thousands(m.ws_open.now()),
                 if window.is_some() { "" } else { " (ramp-up)" }
             );
@@ -337,6 +339,18 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
     let observations = m.observes_steady.get();
     let failed = m.failed_steady.get();
     let requests = acks + observations + failed;
+    let actions = m.actions();
+    let ack_states: Counts = [
+        ("done", actions.done),
+        ("started", actions.started),
+        ("pending", actions.pending),
+        ("queued", actions.queued),
+        ("rejected", actions.rejected),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count > 0)
+    .map(|(state, count)| (state.to_string(), count))
+    .collect();
     let mut run = SwarmRun {
         server: urls.base.clone(),
         spawned,
@@ -346,7 +360,6 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
         think: Some(config.think),
         http_connections: config.http_connections,
         profile: profile_use,
-        signup_flow: shared.signup.flow(),
         credentials_reused,
         credentials_renewed: m.credentials_renewed.get(),
         agents_started: m.agents_started.get(),
@@ -358,17 +371,9 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
             ws_agents_planned: ws_planned,
             ws_open_peak: m.ws_open.peak(),
             ws_opened: m.ws_open.total(),
-            ws_fallbacks: m.ws_fallbacks.get(),
             http_agents_peak: m.http_agents.peak(),
             open_files_before,
             open_files_peak,
-        },
-        wait_route: if shared.wait_absent.load(Ordering::Relaxed) {
-            WaitRoute::Polling
-        } else if m.long_polls.get() > 0 {
-            WaitRoute::LongPoll
-        } else {
-            WaitRoute::NotUsed
         },
         ack: m.ack.summary(),
         ack_http: m.ack_http.summary(),
@@ -379,16 +384,21 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
         acks_per_second: if window_secs > 0.0 { acks as f64 / window_secs } else { 0.0 },
         acks_per_second_min: per_second.iter().copied().min().unwrap_or(0),
         acks_per_second_max: per_second.iter().copied().max().unwrap_or(0),
-        ack_states: m.ack_states.get(),
-        rejections: m.rejections.get(),
+        ack_states,
+        rejections: actions.rejected_by_code.clone(),
+        actions,
         failed_requests: failed,
         error_share: if requests > 0 { failed as f64 / requests as f64 } else { 0.0 },
+        throttled_requests: m.throttled.get(),
+        throttled: m.throttled_steady.get(),
+        throttled_ramp: m.throttled_ramp.get(),
         errors: m.errors_steady.get(),
         errors_ramp: m.errors_ramp.get(),
         error_examples: m.error_examples.get(),
         machine_limit,
         observations,
         waits: m.waits_steady.get(),
+        long_polls: m.long_polls.get(),
         pushed_frames: m.pushed.get(),
         server_stats: stats,
         p99_target_ms: config.p99_target.as_secs_f64() * 1e3,
