@@ -11,7 +11,7 @@ use unsup_kernel::{CityConfig, CityId, ErrorCode, Holder, OrgId, Pos, SiteId, Wo
 
 const WEST: CityId = CityId(0);
 const EAST: CityId = CityId(1);
-const WAGE: i64 = 2_000;
+const WAGE: i64 = 2_800;
 
 /// A country of two cities with one district each.
 struct Country {
@@ -77,15 +77,15 @@ fn the_taxes_and_the_price_of_a_site_go_to_the_city_of_the_site() {
     assert_eq!(of_kind(&events, "economy.goods_sold")[0]["city"], 1);
     // The income tax of a starter shift in the east.
     go(&mut c.world, ada, c.east_hall);
-    assert_eq!(ok(&mut c.world, ada, "work", json!({}))["tax"], 200);
+    assert_eq!(ok(&mut c.world, ada, "work", json!({}))["tax"], 280);
     c.world.step(1);
-    assert_eq!(treasury_of(&c.world, EAST), SHOP_VALUE + 5_000 + 100 + 200);
+    assert_eq!(treasury_of(&c.world, EAST), SHOP_VALUE + 5_000 + 100 + 280);
     assert_eq!(treasury_of(&c.world, WEST), 0);
 
     // The property tax of the shop, the next day: five basis points.
     go(&mut c.world, eve, c.east_shop);
     next_day(&mut c.world);
-    assert_eq!(treasury_of(&c.world, EAST), SHOP_VALUE + 5_000 + 100 + 200 + 250);
+    assert_eq!(treasury_of(&c.world, EAST), SHOP_VALUE + 5_000 + 100 + 280 + 250);
     assert_eq!(treasury_of(&c.world, WEST), 0);
     assert_eq!(flows(&c.world).of_module(), module_flows([("gov.public_works", WAGE)], [], [], []));
 }
@@ -108,9 +108,9 @@ fn each_city_has_its_own_public_works_budget() {
     assert_eq!(refused(&mut c.world, y, "work", json!({})), ErrorCode::Insufficient);
     settle(&mut c.world, a);
     settle(&mut c.world, x);
-    assert_eq!((cash(&c.world, a), cash(&c.world, x)), (1_800, 1_800));
+    assert_eq!((cash(&c.world, a), cash(&c.world, x)), (2_520, 2_520));
     c.world.step(1);
-    assert_eq!((treasury_of(&c.world, WEST), treasury_of(&c.world, EAST)), (200, 200));
+    assert_eq!((treasury_of(&c.world, WEST), treasury_of(&c.world, EAST)), (280, 280));
     assert_eq!(flows(&c.world), module_flows([("gov.public_works", 2 * WAGE)], [], [], []));
 }
 
@@ -144,7 +144,7 @@ fn a_city_can_have_its_own_wage_tax_and_budget() {
     let west_shift = ok(&mut c.world, a, "work", json!({}));
     settle(&mut c.world, x);
     let east_shift = c.world.last_report(x).expect("a report").result;
-    assert_eq!((west_shift["wage"].as_i64(), west_shift["tax"].as_i64()), (Some(WAGE), Some(200)));
+    assert_eq!((west_shift["wage"].as_i64(), west_shift["tax"].as_i64()), (Some(WAGE), Some(280)));
     assert_eq!((east_shift["wage"].as_i64(), east_shift["tax"].as_i64()), (Some(3_000), Some(600)));
     let stopped = c.world.last_report(y).expect("a report").error.expect("an error");
     assert_eq!(stopped.code, ErrorCode::Interrupted);
@@ -153,7 +153,7 @@ fn a_city_can_have_its_own_wage_tax_and_budget() {
     // The budget of the west is the national one: it has room for more.
     ok(&mut c.world, a, "work", json!({}));
     c.world.step(1);
-    assert_eq!((treasury_of(&c.world, WEST), treasury_of(&c.world, EAST)), (400, 600));
+    assert_eq!((treasury_of(&c.world, WEST), treasury_of(&c.world, EAST)), (560, 600));
     assert_eq!(flows(&c.world), module_flows([("gov.public_works", 2 * WAGE + 3_000)], [], [], []));
 }
 

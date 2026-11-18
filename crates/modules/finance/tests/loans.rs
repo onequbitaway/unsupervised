@@ -15,11 +15,16 @@ use unsup_kernel::{ErrorCode, ResidentId};
 /// Sets the rates so that a loan costs exactly 1 percent per day (2,800
 /// basis points in a year of 28 days) and deposits earn nothing, and gives
 /// every resident a credit limit of 20,000 without history.
+///
+/// The loans of these tests are unsecured, as a server can allow them:
+/// the bank holds no collateral. The data file has full collateral; the
+/// tests at the end of this file cover it.
 fn simple_rates(w: &mut TestWorld<'_>) {
     w.set_param("finance.base_rate_bp", 2_500);
     w.set_param("finance.loan_spread_bp", 300);
     w.set_param("finance.deposit_spread_bp", 10_000);
     w.set_param("finance.loan_base_limit", 20_000);
+    w.set_param("finance.loan_collateral_bp", 0);
 }
 
 fn full(w: &TestWorld<'_>, r: ResidentId) -> Value {
@@ -48,6 +53,8 @@ fn a_loan_is_created_by_the_faucet_and_repaid_into_the_sink() {
             // The first instalment is due at the second midnight.
             "first_due_in_ticks": 2 * 1_440 - (report.tick.0 - 1),
             "balance": 110_000,
+            // The loans of this world are unsecured.
+            "held": 0,
         })
     );
     let granted = events(&frames, "finance.loan_granted");
@@ -68,6 +75,7 @@ fn a_loan_is_created_by_the_faucet_and_repaid_into_the_sink() {
             "next_in_ticks": 2 * 1_440 - w.world.frame(),
             "days_left": 4,
             "missed": 0,
+            "held": 0,
         })
     );
 
@@ -191,7 +199,7 @@ fn missed_instalments_lead_to_default() {
     next_day(&mut w);
     assert_eq!(
         notice(&w, cat, "finance.instalment_missed"),
-        Some(json!({ "due": 2_600, "balance": 1_000, "missed": 1, "default_after": 3 }))
+        Some(json!({ "due": 2_600, "balance": 1_000, "held": 0, "missed": 1, "default_after": 3 }))
     );
     assert_eq!(balance(&w, cat), 1_000, "a missed instalment takes nothing");
     assert_eq!(w.observe(cat).sections["bank"]["loan"]["missed"], json!(1));
@@ -202,7 +210,7 @@ fn missed_instalments_lead_to_default() {
     next_day(&mut w);
     assert_eq!(
         notice(&w, cat, "finance.instalment_missed"),
-        Some(json!({ "due": 5_200, "balance": 1_000, "missed": 2, "default_after": 3 }))
+        Some(json!({ "due": 5_200, "balance": 1_000, "held": 0, "missed": 2, "default_after": 3 }))
     );
 
     // The third miss is the default. The bank seizes the 1,000.
@@ -242,15 +250,14 @@ fn missed_instalments_lead_to_default() {
     assert_eq!(error.code, ErrorCode::NotAllowed);
     assert_eq!(error.details, json!({ "until": { "year": 2, "day": 5 } }));
 
-    // After the ban it can, with half the limit: (20,000 + 32 days * 500)
-    // * 50 percent = 18,000.
+    // After the ban it can, with half the limit: 20,000 * 50 percent.
     for _ in 4..32 {
         next_day(&mut w);
     }
-    assert_eq!(full(&w, cat)["credit"]["limit"], json!(18_000));
-    let error = err(&mut w, cat, "loan_request", json!({ "amount": 18_001, "term_days": 2 }));
-    assert_eq!((error.code, error.details), (ErrorCode::NotAllowed, json!({ "limit": 18_000 })));
-    ok(&mut w, cat, "loan_request", json!({ "amount": 18_000, "term_days": 2 }));
+    assert_eq!(full(&w, cat)["credit"]["limit"], json!(10_000));
+    let error = err(&mut w, cat, "loan_request", json!({ "amount": 10_001, "term_days": 2 }));
+    assert_eq!((error.code, error.details), (ErrorCode::NotAllowed, json!({ "limit": 10_000 })));
+    ok(&mut w, cat, "loan_request", json!({ "amount": 10_000, "term_days": 2 }));
     conserved(&w);
 }
 
@@ -355,6 +362,10 @@ fn loan_repay_refusals() {
 fn the_credit_limit_follows_history_and_seasoned_deposits() {
     let mut w = world();
     w.set_param("finance.deposit_spread_bp", 10_000);
+    // The data file gives credit for deposits only. This world also gives
+    // credit for the age of an account and for repaid loans.
+    w.set_param("finance.loan_limit_per_account_day", 500);
+    w.set_param("finance.loan_limit_per_repaid_loan", 20_000);
     let ann = account_holder(&mut w, "Ann", 40_000);
     // Day 0: no history, and the deposit is not seasoned.
     assert_eq!(
@@ -539,4 +550,163 @@ fn a_loan_that_the_account_cannot_hold_is_refused() {
     assert_eq!(minted(&w, "bank.loan_issue"), 10_000);
     assert_eq!(balance(&w, ann), i64::MAX);
     w.assert_conserved();
+}
+
+/// The deposit of the saver of [`secured`].
+const SAVINGS: i64 = 500_000;
+
+/// A world with the numbers of the data file, except that deposits earn
+/// nothing and a loan costs exactly 1 percent per day. A saver has a
+/// large deposit, so that the reserve limit leaves room for the loans.
+fn secured(w: &mut TestWorld<'_>) {
+    w.set_param("finance.base_rate_bp", 2_500);
+    w.set_param("finance.loan_spread_bp", 300);
+    w.set_param("finance.deposit_spread_bp", 10_000);
+    w.set_param("finance.transfer_fee_bp", 0);
+    account_holder(w, "Sam", SAVINGS);
+}
+
+#[test]
+fn the_data_file_gives_credit_for_seasoned_deposits_only() {
+    let mut w = world();
+    secured(&mut w);
+    assert_eq!(w.param("finance.loan_base_limit"), 0);
+    assert_eq!(w.param("finance.loan_limit_per_account_day"), 0);
+    assert_eq!(w.param("finance.loan_limit_per_repaid_loan"), 0);
+    assert_eq!(w.param("finance.loan_collateral_bp"), 10_000);
+    // A resident with an old account and no money gets nothing, however
+    // long it waits.
+    let idle = account_holder(&mut w, "Idle", 0);
+    let ann = account_holder(&mut w, "Ann", 30_000);
+    for _ in 0..5 {
+        next_day(&mut w);
+    }
+    assert_eq!(full(&w, idle)["credit"]["limit"], json!(0));
+    let error = err(&mut w, idle, "loan_request", json!({ "amount": 1_000, "term_days": 2 }));
+    assert_eq!((error.code, error.details), (ErrorCode::NotAllowed, json!({ "limit": 0 })));
+    // The deposit that stayed is the limit.
+    assert_eq!(full(&w, ann)["credit"]["limit"], json!(30_000));
+    // A repaid loan adds nothing to it.
+    ok(&mut w, ann, "loan_request", json!({ "amount": 30_000, "term_days": 2 }));
+    ok(&mut w, ann, "loan_repay", json!({ "amount": 30_000 }));
+    assert_eq!(full(&w, ann)["credit"]["loans_repaid"], json!(1));
+    assert_eq!(full(&w, ann)["credit"]["limit"], json!(30_000));
+    conserved(&w);
+}
+
+#[test]
+fn the_bank_holds_collateral_and_a_default_costs_it_nothing() {
+    let mut w = world();
+    secured(&mut w);
+    let ann = account_holder(&mut w, "Ann", 20_000);
+    let bob = account_holder(&mut w, "Bob", 0);
+    next_day(&mut w);
+    next_day(&mut w);
+    let start = conserved(&w);
+    assert_eq!(start, 3 * OPEN_FEE + SAVINGS + 20_000);
+
+    // Ann borrows all that her deposit allows. The bank holds the same
+    // amount in her account.
+    let loan = ok(&mut w, ann, "loan_request", json!({ "amount": 20_000, "term_days": 4 }));
+    assert_eq!((loan["balance"].as_i64(), loan["held"].as_i64()), (Some(40_000), Some(20_000)));
+    assert_eq!(w.observe(ann).sections["bank"]["loan"]["held"], json!(20_000));
+
+    // She cannot take the deposit and the loan: that was the way to double
+    // money with a resident that then defaults.
+    let error = err(&mut w, ann, "withdraw", json!({ "amount": 40_000 }));
+    assert_eq!(error.code, ErrorCode::Insufficient);
+    assert_eq!(error.details, json!({ "needed": 40_000, "available": 20_000, "held": 20_000 }));
+    let error = err(&mut w, ann, "transfer", json!({ "to": bob, "amount": 20_001 }));
+    assert_eq!(error.code, ErrorCode::Insufficient);
+    assert_eq!(error.details, json!({ "needed": 20_001, "available": 20_000, "held": 20_000 }));
+    assert_eq!(balance(&w, ann), 40_000, "a refused request moves nothing");
+    // The free half leaves the bank.
+    ok(&mut w, ann, "transfer", json!({ "to": bob, "amount": 19_000 }));
+    ok(&mut w, ann, "withdraw", json!({ "amount": 1_000 }));
+    w.step(1);
+    assert_eq!((balance(&w, ann), w.cash(ann).0), (20_000, 1_000));
+
+    // The instalments come from free money, not from the collateral: 5,000
+    // and 200 of interest are due and nothing is free.
+    next_day(&mut w);
+    next_day(&mut w);
+    assert_eq!(
+        notice(&w, ann, "finance.instalment_missed"),
+        Some(json!({
+            "due": 5_200, "balance": 20_000, "held": 20_000, "missed": 1, "default_after": 3,
+        }))
+    );
+    assert_eq!(balance(&w, ann), 20_000);
+    // An early repayment of principal can use the collateral that it
+    // frees. Interest cannot.
+    let error = err(&mut w, ann, "loan_repay", json!({ "amount": 200 }));
+    assert_eq!(error.code, ErrorCode::Insufficient);
+    assert_eq!(error.details, json!({ "needed": 200, "available": 0 }));
+    next_day(&mut w);
+
+    // The third miss is the default. The bank takes its collateral: the
+    // whole principal. Only the interest of three days is lost.
+    let frames = next_day_frames(&mut w);
+    let defaulted = events(&frames, "finance.loan_defaulted");
+    assert_eq!(defaulted.len(), 1);
+    assert_eq!(defaulted[0].data, json!({ "resident": ann, "outstanding": 600 }));
+    assert_eq!(balance(&w, ann), 0);
+    assert_eq!(burned(&w, "bank.loan_repay"), 20_000);
+    assert_eq!(minted(&w, "bank.loan_issue"), 20_000);
+    {
+        let bank = w.global().res::<Bank>();
+        assert_eq!((bank.outstanding_principal(), bank.written_off()), (0, 0));
+        assert_eq!(bank.account(ann).map(|account| account.defaults), Some(1));
+    }
+    // The loan made no money: what Ann moved out is what she had before.
+    assert_eq!(conserved(&w), start);
+    assert_eq!(balance(&w, bob) + w.cash(ann).0, 20_000);
+}
+
+#[test]
+fn a_repayment_frees_the_collateral_step_by_step() {
+    let mut w = world();
+    secured(&mut w);
+    let ann = account_holder(&mut w, "Ann", 20_000);
+    let bob = account_holder(&mut w, "Bob", 0);
+    next_day(&mut w);
+    next_day(&mut w);
+    ok(&mut w, ann, "loan_request", json!({ "amount": 20_000, "term_days": 4 }));
+    ok(&mut w, ann, "transfer", json!({ "to": bob, "amount": 20_000 }));
+    // Nothing is free, but Ann can pay principal out of the collateral.
+    let paid = ok(&mut w, ann, "loan_repay", json!({ "amount": 5_000 }));
+    assert_eq!((paid["principal"].as_i64(), paid["balance"].as_i64()), (Some(5_000), Some(15_000)));
+    assert_eq!(w.observe(ann).sections["bank"]["loan"]["held"], json!(15_000));
+    // The rest closes the loan, and the account is free again.
+    let paid = ok(&mut w, ann, "loan_repay", json!({ "amount": 15_000 }));
+    assert_eq!((paid["closed"].as_bool(), paid["balance"].as_i64()), (Some(true), Some(0)));
+    assert!(w.observe(ann).sections["bank"].get("loan").is_none());
+    assert_eq!(burned(&w, "bank.loan_repay"), 20_000);
+    conserved(&w);
+}
+
+#[test]
+fn a_smaller_cover_leaves_a_part_of_the_loan_unsecured() {
+    let mut w = world();
+    secured(&mut w);
+    // A server that accepts the risk: the bank holds half of each loan.
+    w.set_param("finance.loan_collateral_bp", 5_000);
+    let ann = account_holder(&mut w, "Ann", 20_000);
+    let bob = account_holder(&mut w, "Bob", 0);
+    next_day(&mut w);
+    next_day(&mut w);
+    let loan = ok(&mut w, ann, "loan_request", json!({ "amount": 20_000, "term_days": 4 }));
+    assert_eq!(loan["held"], json!(10_000));
+    let error = err(&mut w, ann, "transfer", json!({ "to": bob, "amount": 30_001 }));
+    assert_eq!(error.details, json!({ "needed": 30_001, "available": 30_000, "held": 10_000 }));
+    ok(&mut w, ann, "transfer", json!({ "to": bob, "amount": 30_000 }));
+    for _ in 0..5 {
+        next_day(&mut w);
+    }
+    // The default takes the collateral and writes the other half off.
+    let bank = w.global().res::<Bank>();
+    assert_eq!((bank.outstanding_principal(), bank.written_off()), (0, 10_000));
+    drop(bank);
+    assert_eq!(balance(&w, ann), 0);
+    conserved(&w);
 }

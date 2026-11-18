@@ -5,7 +5,9 @@
 use serde::{Deserialize, Serialize};
 use unsup_kernel::schemars::{self, JsonSchema};
 use unsup_kernel::serde_json::{Map, Value, json};
-use unsup_kernel::{ActionError, Builder, Holder, Idx, Realm, ResidentId, Site, SiteId, VerbSpec};
+use unsup_kernel::{
+    ActionError, Builder, Holder, Idx, Outsider, Realm, ResidentId, Site, SiteId, VerbSpec,
+};
 
 use crate::care::{BODY_CARE, sleep_quality_in};
 use crate::handles::Handles;
@@ -78,6 +80,21 @@ fn resident_details(realm: &Realm, h: &Handles, me: Idx, other: Idx) -> Value {
     })
 }
 
+/// What a resident sees of a resident on the other side of a district
+/// border. The zone knows only the name, the place and the activity of
+/// such a resident, as they were one frame ago.
+fn outsider_details(realm: &Realm, me: Idx, other: &Outsider) -> Value {
+    json!({
+        "resident": other.id,
+        "name": other.name,
+        "pos": other.pos,
+        "distance": other.pos.dist(realm.pos(me)),
+        "activity": other.activity,
+        "zone": other.zone,
+        "across_border": true,
+    })
+}
+
 /// What a resident sees of a site. The money in the till shows only to a
 /// resident that owns or rents the site.
 pub(crate) fn site_details(realm: &Realm, me: Idx, place: &Site) -> Value {
@@ -138,14 +155,23 @@ pub(crate) fn register(b: &mut Builder, h: Handles) {
                     Err(ActionError::invalid_args("Give `resident` or `site`, not both."))
                 }
                 (Some(resident), None) => {
-                    let seen = realm
-                        .idx_of(resident)
-                        .filter(|&other| realm.pos(other).dist(here) <= radius);
-                    match seen {
-                        Some(other) => Ok(resident_details(realm, &h, ctx.idx, other)),
-                        None => Err(ActionError::not_here(format!(
+                    let unseen = || {
+                        ActionError::not_here(format!(
                             "You cannot see resident {resident} from here."
-                        ))),
+                        ))
+                    };
+                    match realm.idx_of(resident) {
+                        Some(other) if realm.pos(other).dist(here) <= radius => {
+                            Ok(resident_details(realm, &h, ctx.idx, other))
+                        }
+                        Some(_) => Err(unseen()),
+                        // A resident of another district that is in sight.
+                        None => realm
+                            .nearby_outside(here, radius)
+                            .iter()
+                            .find(|other| other.id == resident)
+                            .map(|other| outsider_details(realm, ctx.idx, other))
+                            .ok_or_else(unseen),
                     }
                 }
                 (None, Some(site)) => {

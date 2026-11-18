@@ -102,12 +102,12 @@ fn a_snapshot_in_the_middle_of_a_shift_changes_nothing() {
     let plain = play(None);
     // The worker and the idler were paid; the home got a day of rent and
     // paid a day of tax.
-    assert_eq!((plain.1, plain.2), (2_250, 1_800));
+    assert_eq!((plain.1, plain.2), (2_250, 2_520));
     assert_eq!(plain.3, 600 + 600 - 100);
     // One starter shift was paid and one shift at the farm gathered grain.
     assert_eq!(
         plain.4.clone().of_module(),
-        module_flows([("gov.public_works", 2_000)], [], [("nature.harvest:grain", 24)], [])
+        module_flows([("gov.public_works", 2_800)], [], [("nature.harvest:grain", 24)], [])
     );
     for frame in [0, 1, 2, 100, 239] {
         assert_eq!(play(Some(frame)), plain, "a restore at frame {frame} changed the outcome");

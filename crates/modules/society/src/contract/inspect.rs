@@ -11,7 +11,7 @@ use super::args::ContractArgs;
 use super::model::{Contracts, Side};
 use super::offer::no_contract;
 use super::view;
-use crate::spec;
+use crate::{TALK_ALLOWED_IN, spec};
 
 fn read(realm: &Realm, ctx: &GlobalCtx, args: &ContractArgs) -> Result<Value, ActionError> {
     let contracts = realm.res::<Contracts>();
@@ -45,8 +45,10 @@ fn read(realm: &Realm, ctx: &GlobalCtx, args: &ContractArgs) -> Result<Value, Ac
 /// Registers the verb.
 pub(crate) fn build(b: &mut Builder) {
     b.global_verb::<ContractArgs>(
+        // A read: it also works in jail and in hospital, like speech.
         VerbSpec {
             free: true,
+            allowed_in: TALK_ALLOWED_IN,
             ..spec(
                 "contract_view",
                 "Read the clauses of a contract of yours, or of an offer that you can sign.",

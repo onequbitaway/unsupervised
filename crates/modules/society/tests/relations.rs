@@ -483,6 +483,35 @@ fn a_household_ends_when_the_host_loses_the_home_or_leaves_the_world() {
     w.step(3);
     assert_eq!((kin(&w, host).household, kin(&w, lodger).household), (Some(household), None));
 
+    // The host ends its lease by itself: the household ends, and the lodger
+    // is no longer a tenant of the home.
+    ok(&mut w, host, "household_invite", json!({ "resident": lodger }));
+    ok(&mut w, lodger, "household_join", json!({ "host": host }));
+    w.step(1);
+    assert_eq!(tenants(&w, 0, home), [lodger]);
+    // The end of the lease of another tenant, or of another site, changes
+    // nothing.
+    ok(&mut w, host, "end_lease_test", json!({ "site": home, "tenant": 999 }));
+    ok(&mut w, host, "end_lease_test", json!({ "site": 12_345, "tenant": host }));
+    w.step(2);
+    assert_eq!(kin(&w, lodger).household, Some(household));
+    ok(&mut w, host, "end_lease_test", json!({ "site": home, "tenant": host }));
+    let frames = w.step(3);
+    assert_eq!(events(&frames, "society.household_dissolved")[0].data["cause"], json!("home_lost"));
+    assert_eq!((kin(&w, host).household, kin(&w, lodger).household), (None, None));
+    assert_eq!(tenants(&w, 0, home), []);
+
+    // The city takes the home of the host in a foreclosure: the same.
+    ok(&mut w, host, "household_invite", json!({ "resident": lodger }));
+    ok(&mut w, lodger, "household_join", json!({ "host": host }));
+    w.step(1);
+    assert_eq!(tenants(&w, 0, home), [lodger]);
+    ok(&mut w, host, "foreclose_test", json!({ "site": home }));
+    let frames = w.step(3);
+    assert_eq!(events(&frames, "society.household_dissolved")[0].data["cause"], json!("home_lost"));
+    assert_eq!((kin(&w, host).household, kin(&w, lodger).household), (None, None));
+    assert_eq!(tenants(&w, 0, home), []);
+
     // The host leaves the world: the household ends.
     ok(&mut w, host, "household_invite", json!({ "resident": lodger }));
     ok(&mut w, lodger, "household_join", json!({ "host": host }));

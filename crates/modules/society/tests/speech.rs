@@ -57,8 +57,8 @@ fn say_reaches_the_residents_in_earshot_as_untrusted_text() {
 
     // Speech crosses a zone border: the kernel carries it to the residents
     // in earshot on the other side, one frame later. The count in the answer
-    // has only the listeners of the speaker's own zone.
-    assert_eq!(ok(&mut w, ada2, "say", json!({ "text": "hello" })), json!({ "heard_by": 0 }));
+    // has the listeners on both sides of the border.
+    assert_eq!(ok(&mut w, ada2, "say", json!({ "text": "hello" })), json!({ "heard_by": 1 }));
     w.step(2);
     let notices = w.notices(across);
     assert_eq!(notices.len(), 1);

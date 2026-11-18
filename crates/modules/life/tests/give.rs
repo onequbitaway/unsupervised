@@ -162,3 +162,59 @@ fn goods_can_be_left_in_a_site_and_taken_back_by_who_lives_there() {
     assert_eq!(w.act_err(ada, "drop", json!({ "item": "gold" })).code, ErrorCode::NotFound);
     w.assert_conserved();
 }
+
+#[test]
+fn give_reaches_a_resident_on_the_other_side_of_a_district_border() {
+    let mut w = world();
+    // The border between zone 0 and zone 1 is between x = 63 and x = 64.
+    let ada = w.spawn_at("Ada", Pos::new(63, 10));
+    let bob = w.spawn_at("Bob", Pos::new(64, 11));
+    let far = w.spawn_at("Far", Pos::new(65, 10));
+    assert_ne!(w.zone_of(ada), w.zone_of(bob));
+    w.give_money(ada, Money(1_000));
+    w.give_item(ada, "bread", 5);
+    // A zone hears of the residents behind its border at the end of their
+    // tick.
+    w.step(1);
+
+    let status =
+        w.act_ok(ada, "give", json!({ "to": bob, "money": 300, "item": "bread", "qty": 2 }));
+    assert!(matches!(status, ActionStatus::Started { ticks: 1, .. }), "{status:?}");
+    // The gift left the giver at once. It is on its way: nothing is lost.
+    assert_eq!((w.cash(ada), w.cash(bob)), (Money(700), Money::ZERO));
+    let on_the_way = w.assert_conserved();
+    assert_eq!(on_the_way.money.in_flight, 300);
+    // One frame later the receiver has it, with the notice.
+    w.step(1);
+    assert_eq!((w.cash(ada), w.cash(bob)), (Money(700), Money(300)));
+    assert_eq!(w.qty(Holder::Resident(ada), "bread"), 3);
+    assert_eq!(w.qty(Holder::Resident(bob), "bread"), 2);
+    let notice = w.notices(bob).into_iter().find(|n| n.kind == GIFT_RECEIVED).expect("a notice");
+    assert_eq!(notice.from, Some(ada));
+    assert_eq!(
+        notice.data,
+        json!({ "from": ada, "to": bob, "money": 300, "item": "bread", "qty": 2 })
+    );
+    assert_eq!(
+        result(&w, ada),
+        json!({ "from": ada, "to": bob, "money": 300, "item": "bread", "qty": 2 })
+    );
+
+    // Goods only, and the way back across the same border.
+    w.act_ok(bob, "give", json!({ "to": ada, "item": "bread" }));
+    w.step(2);
+    assert_eq!(w.qty(Holder::Resident(ada), "bread"), 4);
+    assert_eq!(w.qty(Holder::Resident(bob), "bread"), 1);
+
+    // Two tiles away across the border is too far, as it is inside a zone.
+    assert_eq!(w.act_err(ada, "give", json!({ "to": far, "money": 5 })).code, ErrorCode::NotHere);
+    // More than the giver has: nothing moves.
+    let error = w.act_err(ada, "give", json!({ "to": bob, "money": 701 }));
+    assert_eq!(error.code, ErrorCode::Insufficient);
+    let error = w.act_err(ada, "give", json!({ "to": bob, "money": 1, "item": "bread", "qty": 5 }));
+    assert_eq!(error.code, ErrorCode::Insufficient);
+    w.step(1);
+    assert_eq!((w.cash(ada), w.cash(bob)), (Money(700), Money(300)));
+    let totals = w.assert_conserved();
+    assert_eq!((totals.money.held, totals.money.in_flight), (1_000, 0));
+}

@@ -128,15 +128,21 @@ summary = "Greatest number of batches of one `produce` action."
 
 # ---- Public works --------------------------------------------------------------
 
+# One shift must pay for more than one day of food at the depot: after the
+# income tax of 10 percent a shift gives 2,520, and three vegetables (one
+# day of food) cost 2,250 there. See "The first day" in
+# docs/design/game-design.md before you change the wage, the tax, the
+# depot prices of food or `life.food_decay_per_hour`.
 [params."economy.public_works_wage"]
-value = 2000
+value = 2800
 min = 0
 max = 1000000
 policy = true
 summary = "Wage in cents, before income tax, for one starter shift at a city hall or a depot."
 
+# One hundred shifts in one day.
 [params."economy.public_works_budget"]
-value = 200000
+value = 280000
 min = 0
 max = 1000000000
 policy = true

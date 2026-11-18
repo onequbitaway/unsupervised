@@ -7,6 +7,7 @@ use unsup_kernel::schemars::{self, JsonSchema};
 use unsup_kernel::{ActionError, Builder, Realm, ResidentId};
 
 use super::counter::BANK_TREASURY;
+use super::loans;
 use super::state::Bank;
 use crate::params::Params;
 use crate::util::{no_account, part, positive, remote};
@@ -50,12 +51,8 @@ fn transfer(
         return Err(no_account(args.to, false));
     }
     let fee = part(amount, realm.param(p.transfer_fee_bp));
-    let balance = Bank::balance(realm, from);
     let needed = amount.saturating_add(fee);
-    if balance < needed {
-        return Err(ActionError::insufficient("Your balance is too low for this transfer.")
-            .with_details(json!({ "needed": needed, "available": balance })));
-    }
+    loans::check_free(realm, p, &bank, from, needed, "transfer")?;
     bank.pay_out(realm, from, BANK_TREASURY, fee, "bank.fee")?;
     bank.move_between(realm, from, args.to, amount, "bank.transfer")?;
     realm.notify(

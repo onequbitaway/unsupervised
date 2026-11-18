@@ -3,7 +3,8 @@
 //!
 //! The fixture gives the world what the society module reads from others:
 //! goods, sites, a blocking condition, and the events `crime.arrest_made`,
-//! `economy.tenant_evicted` and `economy.property_sold`.
+//! `economy.tenant_evicted`, `economy.lease_ended`, `economy.property_sold`
+//! and `economy.property_foreclosed`, with the data of the real modules.
 
 #![allow(dead_code)]
 
@@ -52,7 +53,7 @@ struct ArrestArgs {
     target: ResidentId,
 }
 
-/// Arguments of `evict_test`.
+/// Arguments of `evict_test` and `end_lease_test`.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[schemars(crate = "unsup_kernel::schemars")]
 struct EvictArgs {
@@ -62,7 +63,7 @@ struct EvictArgs {
     tenant: ResidentId,
 }
 
-/// Arguments of `sell_test`.
+/// Arguments of `sell_test` and `foreclose_test`.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[schemars(crate = "unsup_kernel::schemars")]
 struct SellArgs {
@@ -116,7 +117,16 @@ impl Plugin for Fixture {
                 EventMeta::public("crime.arrest_made", 50)
                     .actor(ctx.resident)
                     .at(realm.pos(ctx.idx)),
-                &json!({ "target": args.target, "officer": ctx.resident, "charge": "theft" }),
+                // The data of the crime module: an arrest by an officer for
+                // one case.
+                &json!({
+                    "officer": ctx.resident,
+                    "target": args.target,
+                    "case": 7,
+                    "cases": [7],
+                    "city": 0,
+                    "watch": false,
+                }),
             );
             Ok(Value::Null)
         });
@@ -124,6 +134,29 @@ impl Plugin for Fixture {
             realm.emit(
                 EventMeta::public("economy.tenant_evicted", 40),
                 &json!({ "site": args.site, "tenant": args.tenant }),
+            );
+            Ok(Value::Null)
+        });
+        // A lease that ends without an eviction, as the economy module
+        // reports it: the tenant left by itself.
+        b.instant_verb::<EvictArgs>(spec("end_lease_test"), |realm, _ctx, args| {
+            realm.emit(
+                EventMeta::public("economy.lease_ended", 12),
+                &json!({ "site": args.site, "tenant": args.tenant, "by": "tenant" }),
+            );
+            Ok(Value::Null)
+        });
+        // A foreclosure, as the economy module reports it: the city takes
+        // the site from the resident.
+        b.instant_verb::<SellArgs>(spec("foreclose_test"), |realm, ctx, args| {
+            realm.emit(
+                EventMeta::public("economy.property_foreclosed", 55),
+                &json!({
+                    "site": args.site,
+                    "city": 0,
+                    "from": Holder::Resident(ctx.resident),
+                    "reason": "loan_default",
+                }),
             );
             Ok(Value::Null)
         });

@@ -65,8 +65,8 @@ global part moves what it accepts. The module sends the rest back to the
 resident. Thus a refused request keeps no money.
 
 A blocking condition stops every verb of this module. There is one
-exception: `say`, `message` and `org_say` work for a resident that is
-`jailed`, `detained` or `hospitalized`.
+exception: `say`, `message`, `org_say` and `contract_view` work for a
+resident that is `jailed`, `detained` or `hospitalized`.
 
 Every deadline and every time window of this module counts frames. One
 frame is one game minute of the calendar. The local tick of a zone does
@@ -241,7 +241,7 @@ event of this section carries the text as
 
 | Verb | Free | Who gets it | Viewers | Limit |
 | --- | --- | --- | --- | --- |
-| `say { text }` | yes | Residents of the same zone within `society.say_radius` tiles | yes | `society.says_per_hour`, `society.say_text_max` |
+| `say { text }` | yes | Residents within `society.say_radius` tiles, also across a district border | yes | `society.says_per_hour`, `society.say_text_max` |
 | `message { to, text }` | yes | One resident, anywhere | no | `society.messages_per_hour`, `society.message_text_max` |
 | `org_say { org, text }` | yes | Every other member of the organization, anywhere | no | `society.org_says_per_hour` for the sender, `society.org_broadcasts_per_hour` for the organization, `society.message_text_max` |
 | `post { text }` | no | Nobody gets a notice. It is a public event | yes | `society.posts_per_day`, `society.post_text_max`, takes `society.post_ticks` ticks |
@@ -253,8 +253,10 @@ Rules:
 - A limit counts per resident and per window of game time. The window of
   an hour has 60 frames and the window of a day has 1,440 frames. A
   refused action is not counted. The error code is `rate_limited`.
-- `say` uses the audience `Nearby`. Speech does not cross a zone border.
-  The speaker does not hear itself. The result has `heard_by`.
+- `say` uses the audience `Nearby`. The speaker does not hear itself. The
+  kernel carries the speech to the residents in earshot on the other side
+  of a district border, one frame later, at most `kernel.sight_radius`
+  tiles away. The result has `heard_by`: the listeners on both sides.
 - `message` to a resident in the same zone arrives at once
   (`delivered: true`). Else it goes through the global realm and arrives
   in the next frame. When no resident has the id, the sender gets the
@@ -440,7 +442,7 @@ members of the household as tenants.
 | `household_join` | `host` | `household`, `host`, `site`, `zone` | `not_allowed`: no open invitation of that host. `conflict`: you are in a household; the household is full |
 | `household_leave` | none | `household` | `conflict`: not in a household |
 
-- `household_invite` is a verb that is not in the game design table. The
+- `household_invite` is a verb that the first game design did not have. The
   host stands in its home, so the zone can check the site. The first
   invitation makes the household and sets `Kin.household` of the host.
   An invitation stays open for `society.proposal_ttl` game minutes.
@@ -454,9 +456,11 @@ members of the household as tenants.
 - A household has at most `society.household_members_max` members, with
   the host and the open invitations.
 - The household ends when the host leaves the world, and when the host
-  loses the home: the module reads `economy.tenant_evicted` and
-  `economy.property_sold`. A member that is not the host and leaves the
-  world leaves the household.
+  loses the home. The module reads four events of the economy module:
+  `economy.tenant_evicted`, `economy.lease_ended` (the tenant ended its
+  lease by itself, or the owner ended it), `economy.property_sold` and
+  `economy.property_foreclosed`. A member that is not the host and leaves
+  the world, or loses its own lease in the home, leaves the household.
 
 ## 8. Reputation
 
@@ -469,7 +473,7 @@ it:
 | A breached contract | `-society.rep_contract_breached` for each breaching party | none |
 | `opine { resident, verdict }` | `+society.opinion_weight` for `praise`, the same amount down for `condemn` | See below |
 
-`opine` is a free verb. It is not in the game design table. Limits:
+`opine` is a free verb. The first game design did not have it. Limits:
 
 - The actor must have lived `society.opinion_min_age` game minutes
   (`not_allowed`).
@@ -642,8 +646,9 @@ that waits for the global realm fails, and the longest lock of a delivery.
 
 ## 14. Verbs
 
-All verbs of the game design table (section 5, society rows) exist with
-those names. The module adds three verbs:
+The verb table of `docs/design/game-design.md`, section 5, has the 28
+verbs of the module in its four society rows. The first game design did
+not have three of them:
 
 | Verb | Free | Why |
 | --- | --- | --- |
@@ -651,7 +656,7 @@ those names. The module adds three verbs:
 | `opine` | yes | The verb to praise or condemn a resident |
 | `contract_view` | yes | A resident must be able to read an offer for everyone before it signs |
 
-`relate` is free in this module. The game design table does not mark it.
+`relate` is a free verb.
 
 `org_grant` also takes grants back (`revoke: true`).
 
@@ -665,9 +670,6 @@ those names. The module adds three verbs:
 - The global realm handles each event of every game module to find the
   event clauses that wait. The cost is one map look-up for each event.
   Every such event is also sent from its zone to the global realm.
-- The module does not see a lease that the host ends by its own will,
-  because the economy module has no fixed event for that. The members of
-  the household stay tenants of that site until the household ends.
 - A role name is an identifier that a manager of the organization wrote.
   It is short and has no spaces, but it is a plain string in notices, in
   the `orgs` section and in the memberships of the kernel.

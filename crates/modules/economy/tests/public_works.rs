@@ -7,8 +7,8 @@ use common::*;
 use serde_json::json;
 use unsup_kernel::{ErrorCode, ResidentId};
 
-const WAGE: i64 = 2_000;
-const TAX: i64 = 200;
+const WAGE: i64 = 2_800;
+const TAX: i64 = 280;
 
 fn minted(t: &Town) -> i64 {
     flows(&t.world).minted.get("gov.public_works").copied().unwrap_or(0)

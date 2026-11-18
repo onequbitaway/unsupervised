@@ -22,7 +22,9 @@ const CITY: Holder = Holder::Org(OrgId::city(CityId(0)));
 /// share bid that locks 25, and at the exchange a sell order with 5 wheat
 /// and a buy order that locks 100. She carries 900 in cash.
 fn rich_ann(w: &mut TestWorld<'_>) -> ResidentId {
+    // Unsecured credit, so that the estate can owe more than it has.
     w.set_param("finance.loan_base_limit", 20_000);
+    w.set_param("finance.loan_collateral_bp", 0);
     let fay = account_holder(w, "Fay", 0);
     grant(w, fay, ACME, &["treasury.spend"]);
     ok(w, fay, "issue_shares", json!({ "org": ACME, "shares": 100, "price": 10 }));

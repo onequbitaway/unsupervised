@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{treasury, with_params, world, world_with};
+use common::{treasury, with_params, world_with};
 use unsup_kernel::protocol::{ActionStatus, ErrorCode, Event};
 use unsup_kernel::serde_json::json;
 use unsup_kernel::testing::TestWorld;
@@ -10,6 +10,13 @@ use unsup_kernel::{Holder, Kin, Money, Pos, RealmId, ResidentId, UNCLAIMED};
 use unsup_life::{Estates, die};
 
 const HOUR: u32 = 60;
+
+/// A world whose residents start without routines. A resident of these
+/// tests must starve with bread in its pocket, and the routine `eat when
+/// hungry` would stop that.
+fn world() -> TestWorld<'static> {
+    world_with(with_params(&[("life.spawn_routines", 0)]))
+}
 
 /// Makes a resident so weak that the next hourly pass kills it: no food and
 /// less health than one hour without food costs.

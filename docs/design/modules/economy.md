@@ -149,8 +149,8 @@ that cannot work at the end fails in the action report and changes nothing.
 | `open_business` | `kind` | `deal_minutes` | Pays the permit fee and opens the site as a business |
 | `close_business` | none | `deal_minutes` | Gives up the permit |
 
-The verbs `till_collect`, `till_fund` and `list_recipes` are not in the verb
-table of `docs/design/game-design.md`, section 5. This module adds them.
+The verb table of `docs/design/game-design.md`, section 5, has each of
+these verbs.
 
 ### Error codes
 
@@ -277,10 +277,15 @@ and nothing changes.
 ### 5.5 Public works
 
 A resident without a job at the site can work a shift at a `city_hall` or a
-`depot` that a government owns. The wage is `public_works_wage`. It comes
-from the faucet `gov.public_works`. Income tax applies as for every wage.
+`depot` that a government owns. The wage is `public_works_wage` (2,800). It
+comes from the faucet `gov.public_works`. Income tax applies as for every
+wage: 2,520 are left. Three vegetables, the food of one day, cost 2,250 at
+the depot. Keep one shift above one day of food when you change the wage,
+the tax or the depot prices
+(`docs/design/game-design.md`, section 10).
 
-Each city pays at most `public_works_budget` in one game day. The global
+Each city pays at most `public_works_budget` in one game day (280,000: one
+hundred shifts). The global
 realm counts the budget, because a city has more than one zone.
 
 1. The shift starts at once. The zone asks the global realm for the wage.
@@ -485,8 +490,11 @@ Events with fixed data (`docs/design/game-design.md`, section 9):
 | `economy.goods_produced` | `resident`, `site`, `item`, `qty` | 2 |
 | `economy.property_sold` | `site`, `city`, `from`, `to`, `price` | 30 |
 | `economy.lease_started` | `site`, `tenant`, `rent` | 12 |
+| `economy.lease_ended` | `site`, `tenant`, `by` (`tenant`, `owner`, `gone`) | 12 |
 | `economy.tenant_evicted` | `site`, `tenant` | 45 |
 | `economy.business_opened` | `site`, `owner`, `kind` | 25 |
+| `economy.property_foreclosed` | `site`, `city`, `from`, `reason` (`loan_default`, `property_tax`) | 55 |
+| `economy.property_inherited` | `site`, `city`, `from` (resident), `to` (holder) | 30 |
 
 Notes:
 
@@ -499,6 +507,12 @@ Notes:
   the shop, or `null`. When the depot buys, `buyer` is `null`.
 - `economy.goods_produced` is emitted for the outputs of a recipe and for
   gathered goods, one event for each good.
+- `economy.lease_ended` is emitted when a tenant ends its lease by itself
+  (`by: tenant`), when the owner ends it (`by: owner`) and when the tenant
+  left the world (`by: gone`). The society module reads it, with
+  `economy.tenant_evicted`, `economy.property_sold` and
+  `economy.property_foreclosed`, to end the household of a host that lost
+  its home.
 
 Other events:
 
@@ -508,10 +522,7 @@ Other events:
 | `economy.worker_hired` | `resident`, `site`, `job`, `wage` | 12 |
 | `economy.worker_left` | `resident`, `site`, `job`, `reason` (`quit`, `fired`, `closed`, `gone`) | 6; 20 when fired |
 | `economy.shift_unpaid` | `resident`, `site`, `wage` | 35 |
-| `economy.lease_ended` | `site`, `tenant`, `by` (`tenant`, `owner`, `gone`) | 12 |
 | `economy.business_closed` | `site`, `owner`, `kind`, `reason` (`owner`, `converted`, `foreclosure`, `estate`) | 25 |
-| `economy.property_foreclosed` | `site`, `city`, `from`, `reason` (`loan_default`, `property_tax`) | 55 |
-| `economy.property_inherited` | `site`, `city`, `from` (resident), `to` (holder) | 30 |
 
 ## 11. Notices
 
@@ -600,8 +611,7 @@ another module adds or changes later is on the board after at most
 - A tenant that the zone of the home cannot reach (its zone does not answer)
   misses the rent of that day.
 - A recipe uses its inputs when it ends, not when it starts. The inputs are
-  not locked during the work. `docs/design/economy.md`, section 3, says "a
-  recipe starts".
+  not locked during the work.
 - A member of a city government with `site.manage` controls the sites of
   the city. It can offer them at another price, let them, post jobs there,
   and take goods out of their stock. The money of their tills goes to the

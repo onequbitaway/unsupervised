@@ -29,8 +29,16 @@ pub(crate) fn build(b: &mut Builder, p: Params) {
                         .audience(Audience::Nearby(radius)),
                     &json!({ "text": text::untrusted(ctx.resident, &args.text) }),
                 );
-                // The speaker is in the list of the kernel; it does not hear itself.
-                let heard_by = realm.nearby(pos, radius).len().saturating_sub(1);
+                // The speaker is in the list of the kernel; it does not hear
+                // itself. The listeners on the other side of a district
+                // border get the notice in the next frame.
+                let here = realm.nearby(pos, radius).len().saturating_sub(1);
+                let across = realm
+                    .nearby_outside(pos, radius)
+                    .iter()
+                    .filter(|other| realm.idx_of(other.id).is_none())
+                    .count();
+                let heard_by = here + across;
                 Ok(json!({ "heard_by": heard_by }))
             })
         },
