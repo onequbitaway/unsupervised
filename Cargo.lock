@@ -2305,9 +2305,14 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 name = "unsup-crime"
 version = "0.1.0"
 dependencies = [
+ "schemars",
  "serde",
  "serde_json",
+ "unsup-economy",
+ "unsup-finance",
  "unsup-kernel",
+ "unsup-life",
+ "unsup-society",
 ]
 
 [[package]]

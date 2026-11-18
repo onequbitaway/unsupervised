@@ -9,9 +9,16 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 unsup-kernel.workspace = true
+unsup-life.workspace = true
+unsup-society.workspace = true
+
+[dev-dependencies]
+unsup-economy.workspace = true
+unsup-finance.workspace = true
 
 [lints]
 workspace = true
