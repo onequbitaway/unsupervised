@@ -64,7 +64,8 @@ async fn a_slow_viewer_loses_frames_and_gets_new_snapshots() {
                 Pos::new(1 + (frames % 14) as i32, 1 + (frames / 14 % 14) as i32),
                 None
             ),
-            resident(bob, "Bob", common::START, None),
+            // The second newcomer stands one tile east of the first.
+            resident(bob, "Bob", common::START.offset(1, 0), None),
         ]
     );
 

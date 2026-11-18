@@ -196,7 +196,7 @@ fn story(g: &mut Game) {
 
     // The plans fit the world: no request was refused.
     assert_eq!(refused, Vec::<String>::new());
-    assert_eq!(sent, 2_098);
+    assert_eq!(sent, 2_121);
 
     // Everybody lived through the four days, in good health.
     for actor in &actors {
@@ -207,23 +207,23 @@ fn story(g: &mut Game) {
 
     // What happened in the four days, exactly.
     let count = |kind: &str| g.events_of(kind).len();
-    assert_eq!(count("economy.shift_completed"), 169);
+    assert_eq!(count("economy.shift_completed"), 172);
     assert_eq!(count("economy.goods_produced"), 174, "harvests of the farmers and the miners");
-    assert_eq!(count("economy.goods_sold"), 183, "trades with the depot");
-    assert_eq!(count("life.meal_eaten"), 341);
-    assert_eq!(count("life.slept"), 127);
-    assert_eq!((count("society.said"), count("society.posted")), (10, 4));
-    assert_eq!(count("finance.account_opened"), 3);
-    // The thieves were busy, and the city watch took four of them in.
-    assert_eq!(count("crime.theft_committed"), 237);
-    assert_eq!(count("crime.arrest_made"), 4);
+    assert_eq!(count("economy.goods_sold"), 186, "trades with the depot");
+    assert_eq!(count("life.meal_eaten"), 353);
+    assert_eq!(count("life.slept"), 132);
+    assert_eq!((count("society.said"), count("society.posted")), (12, 5));
+    assert_eq!(count("finance.account_opened"), 4);
+    // The thieves were busy, and the city watch took five of them in.
+    assert_eq!(count("crime.theft_committed"), 285);
+    assert_eq!(count("crime.arrest_made"), 5);
     assert!(g.events_of("crime.arrest_made").iter().all(|event| event.data["watch"] == true));
 
     // The money of the world: public works and the sales to the depot made
     // it, the purchases at the depot destroyed it, and the rest is held.
     let totals = g.audit();
-    assert_eq!((totals.money.minted, totals.money.burned), (593_200, 227_250));
-    assert_eq!(totals.money.held + totals.money.in_flight, 593_200 - 227_250);
+    assert_eq!((totals.money.minted, totals.money.burned), (603_200, 231_750));
+    assert_eq!(totals.money.held + totals.money.in_flight, 603_200 - 231_750);
 }
 
 #[test]

@@ -192,14 +192,14 @@ fn issue_refuses_an_amount_that_the_treasury_cannot_hold() {
     let gov = banker(&mut w);
     // A treasury at the top of the range of the ledger. No game rule can
     // make one; the test writes the balance directly.
-    fund_global(&mut w, NATION, i64::MAX - 500);
+    fund_global(&mut w, NATION, unsup_kernel::SUPPLY_CAP - 500);
 
     let error = err(&mut w, gov, "central_bank_issue", json!({ "amount": 501 }));
     assert_eq!(error.code, ErrorCode::InvalidArgs);
     // Nothing was created, and nothing counts against the yearly limit.
     assert_eq!(minted(&w, "central_bank.issue"), 0);
     assert_eq!(w.global().res::<CentralBank>().issued_in(1), 0);
-    assert_eq!(w.money(NATION), Money(i64::MAX - 500));
+    assert_eq!(w.money(NATION), Money(unsup_kernel::SUPPLY_CAP - 500));
 
     // An amount that fits is issued.
     ok(&mut w, gov, "central_bank_issue", json!({ "amount": 500 }));

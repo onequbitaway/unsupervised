@@ -408,7 +408,11 @@ async fn a_clip_replays_the_frames_around_an_event() {
     assert_eq!(clip.residents, seen_at[&2]);
     assert_eq!(
         clip.residents,
-        vec![resident(ada, "Ada", Pos::new(8, 6), None), resident(bob, "Bob", START, None)]
+        vec![
+            resident(ada, "Ada", Pos::new(8, 6), None),
+            // The second newcomer stands one tile east of the first.
+            resident(bob, "Bob", START.offset(1, 0), None)
+        ]
     );
     assert_eq!(clip.frames.iter().map(|frame| frame.frame).collect::<Vec<_>>(), [3, 4, 5, 6, 7, 8]);
     assert_eq!(clip.frames[2].events.iter().map(|e| e.id.to_string()).collect::<Vec<_>>(), ["5-0"]);

@@ -532,8 +532,8 @@ fn a_loan_that_the_account_cannot_hold_is_refused() {
     let ann = account_holder(&mut w, "Ann", 100_000);
     // An account at the top of the range of the ledger. No game rule can
     // make one; the test writes the balance directly.
-    common::fund_global(&mut w, Bank::holder(ann), i64::MAX - 110_000);
-    assert_eq!(balance(&w, ann), i64::MAX - 10_000);
+    common::fund_global(&mut w, Bank::holder(ann), (unsup_kernel::SUPPLY_CAP + 100_000) - 110_000);
+    assert_eq!(balance(&w, ann), (unsup_kernel::SUPPLY_CAP + 100_000) - 10_000);
 
     let error = err(&mut w, ann, "loan_request", json!({ "amount": 10_001, "term_days": 4 }));
     assert_eq!(error.code, ErrorCode::InvalidArgs);
@@ -543,12 +543,12 @@ fn a_loan_that_the_account_cannot_hold_is_refused() {
     assert_eq!((bank.outstanding_principal(), bank.loan_count()), (0, 0));
     assert!(bank.account(ann).is_some_and(|account| account.loan.is_none()));
     drop(bank);
-    assert_eq!(balance(&w, ann), i64::MAX - 10_000);
+    assert_eq!(balance(&w, ann), (unsup_kernel::SUPPLY_CAP + 100_000) - 10_000);
 
     // An amount that fits is granted.
     ok(&mut w, ann, "loan_request", json!({ "amount": 10_000, "term_days": 4 }));
     assert_eq!(minted(&w, "bank.loan_issue"), 10_000);
-    assert_eq!(balance(&w, ann), i64::MAX);
+    assert_eq!(balance(&w, ann), (unsup_kernel::SUPPLY_CAP + 100_000));
     w.assert_conserved();
 }
 

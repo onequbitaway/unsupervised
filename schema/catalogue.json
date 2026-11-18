@@ -2892,6 +2892,13 @@
       "value": 12
     },
     {
+      "min": 0,
+      "name": "kernel.spawn_tiles",
+      "policy": false,
+      "summary": "The tile codes on which a new resident can appear at a spawn site, as a sum of powers of two: 2^n stands for tile code n. The default is the walkable codes 0, 1, 2, 3, 6 and 7. A code above 62 is never used.",
+      "value": 207
+    },
+    {
       "max": 40320,
       "min": 1,
       "name": "kernel.wait_max",

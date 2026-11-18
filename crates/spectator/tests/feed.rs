@@ -70,7 +70,10 @@ async fn a_subscription_gives_a_snapshot_and_then_deltas() {
         ServerMessage::Snapshot {
             zone: ZoneId(0),
             frame: 1,
-            residents: vec![resident(ada, "Ada", START, None), resident(bob, "Bob", START, None)],
+            residents: vec![
+                resident(ada, "Ada", START, None),
+                resident(bob, "Bob", START.offset(1, 0), None)
+            ],
         }
     );
 
