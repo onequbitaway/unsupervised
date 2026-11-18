@@ -138,10 +138,9 @@ async fn a_resident_moves_through_http_and_a_viewer_sees_it() {
     assert_eq!(status, StatusCode::OK, "{news}");
     let report = &news["sections"]["reports"][0];
     assert_eq!(report["action_id"], answer["acks"][0]["action_id"]);
-    assert_eq!(
-        (report["verb"].clone(), report["ok"].clone(), report["result"].clone()),
-        (json!("move_to"), json!(true), json!({ "x": target.0, "y": target.1 }))
-    );
+    assert_eq!((report["verb"].clone(), report["ok"].clone()), (json!("move_to"), json!(true)));
+    let result = &report["result"];
+    assert_eq!((result["x"].as_i64(), result["y"].as_i64()), (Some(target.0), Some(target.1)));
 
     let (_, after) = send(http.get(format!("{base}/v1/observe")).bearer_auth(&key)).await;
     assert_eq!(after["sections"]["self"]["pos"], json!({ "x": target.0, "y": target.1 }));
