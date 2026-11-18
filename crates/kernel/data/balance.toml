@@ -70,3 +70,10 @@ min = 0
 max = 1
 policy = false
 summary = "1: every action that a routine started writes a report, like any other action. 0: only a failed one does, and a success is only counted in the routine. Use 0 when the reports of routines push other notices out of the bounded inbox."
+
+[params."kernel.late_reports"]
+value = 0
+min = 0
+max = 1
+policy = false
+summary = "1: when the answer of an action that waits comes after the action ended (interrupted, cancelled, timed out), the kernel writes the answer as one more report. 0: the kernel drops the late answer."

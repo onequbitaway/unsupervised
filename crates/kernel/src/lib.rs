@@ -96,6 +96,7 @@ mod plugin;
 mod realm;
 mod rng;
 mod sites;
+mod spawn;
 pub mod testing;
 mod tiles;
 mod timers;
@@ -120,7 +121,7 @@ pub use plugin::{
     ActionCtx, Args, Begin, Blueprint, Builder, GlobalCtx, Message, NameTables, NoArgs, Plugin,
     Scope, Stage, VerbSpec, WorldGen,
 };
-pub use realm::{Identity, Membership, PosError, RESERVED_IDS, Realm};
+pub use realm::{Identity, Membership, Outsider, PosError, RESERVED_IDS, Realm};
 pub use rng::Rng;
 pub use sites::{Site, Sites};
 pub use tiles::TileMap;

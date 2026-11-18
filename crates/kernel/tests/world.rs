@@ -401,6 +401,40 @@ fn a_snapshot_restores_with_a_newer_set_of_plugins() {
 }
 
 #[test]
+fn a_snapshot_with_its_hash_is_the_snapshot_and_the_hash() {
+    let mut w = world();
+    let ada = w.spawn("Ada");
+    let bob = w.spawn_at("Bob", Pos::new(100, 100));
+    w.step(2);
+    // State of every kind, and messages on their way between realms.
+    w.act_ok(ada, "work", json!({ "ticks": 9 }));
+    w.act_ok(ada, "ping", json!({ "n": 4 }));
+    w.act_ok(bob, "deposit", json!({ "amount": 120 }));
+    w.act_ok(bob, "pay", json!({ "to": ada, "amount": 30 }));
+    let (bytes, hash) = w.world.snapshot_with_hash();
+    assert_eq!(hash, w.world.state_hash());
+    assert_eq!(bytes, w.world.snapshot());
+    let restored = World::restore(&[&Demo], &bytes).expect("the snapshot restores");
+    assert_eq!(restored.state_hash(), hash);
+    assert_eq!(restored.snapshot_with_hash(), (bytes.clone(), hash));
+
+    // The pair is that of the state now: a frame later both are new.
+    w.step(1);
+    let (later_bytes, later_hash) = w.world.snapshot_with_hash();
+    assert_ne!(later_hash, hash);
+    assert_ne!(later_bytes, bytes);
+    assert_eq!((later_bytes, later_hash), (w.world.snapshot(), w.world.state_hash()));
+
+    // A world that hosts a part of the realms.
+    let part = WorldConfig {
+        hosted: Some(vec![RealmId::Zone(ZoneId(1)), RealmId::Zone(ZoneId(3))]),
+        ..WorldConfig::default()
+    };
+    let east = World::new(&[&Demo], part);
+    assert_eq!(east.snapshot_with_hash(), (east.snapshot(), east.state_hash()));
+}
+
+#[test]
 fn a_bad_snapshot_is_refused_with_a_reason() {
     let mut w = world();
     let ada = w.spawn("Ada");

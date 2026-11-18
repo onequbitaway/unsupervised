@@ -59,9 +59,15 @@ impl EventMeta {
 pub enum Audience {
     /// Viewers see it. No resident gets a notice.
     Public,
-    /// Viewers see it. Every resident of the zone within this many tiles of
-    /// the place of the event gets a notice, except the actor. The place is
-    /// `pos`, or the position of the actor when `pos` is absent.
+    /// Viewers see it. Every resident within this many tiles of the place
+    /// of the event gets a notice, except the actor. The place is `pos`, or
+    /// the position of the actor when `pos` is absent.
+    ///
+    /// The residents of the zone of the event get the notice at once. The
+    /// residents of other zones that the zone knows of (see
+    /// `Realm::nearby_outside`) get it in the next frame. Across a zone
+    /// border the audience reaches at most `kernel.sight_radius` tiles,
+    /// also when the radius is larger.
     Nearby(u32),
     /// Only these residents get a notice, in whatever zone they are. Viewers
     /// do not see it.

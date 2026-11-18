@@ -1,6 +1,7 @@
 //! A realm: one single-threaded actor with its own state. See [`Realm`].
 
 mod actions;
+mod border;
 mod observe;
 mod state;
 mod tick;
@@ -18,6 +19,9 @@ use unsup_protocol::{
     ZoneDelta, ZoneId,
 };
 
+use self::border::Border;
+pub(crate) use self::border::BorderNews;
+pub use self::border::Outsider;
 pub(crate) use self::state::{RealmState, Transfer};
 use crate::agenda::{Agenda, Inbox, NoticeBody};
 use crate::codec;
@@ -43,6 +47,8 @@ const F_ROUTINES: u8 = 2;
 const F_MOVED: u8 = 4;
 /// The activity of the resident changed since the last delta.
 const F_ACTIVITY: u8 = 8;
+/// The copies of the resident in other zones may be out of date.
+const F_BORDER: u8 = 16;
 
 /// The end tick of a condition that has none.
 const FOREVER: u64 = u64::MAX;
@@ -245,7 +251,8 @@ struct Scratch {
 /// 4. Module systems run: stage `Pre`, then `Update`, then `Post`.
 /// 5. Routines of idle residents are checked.
 /// 6. Residents that leave (migration, despawn) are removed.
-/// 7. The ledger is audited.
+/// 7. The zones around this one are told what changed near their border.
+/// 8. The ledger is audited.
 ///
 /// After every message, after the timers and after every system the realm
 /// *settles*: residents whose action ended start their next action, and
@@ -285,11 +292,17 @@ pub struct Realm {
     fates: RefCell<BTreeMap<ResidentId, Fate>>,
     /// Number of residents with at least one routine.
     routine_holders: Cell<u32>,
+    /// Sight across the borders of the zone.
+    border: Border,
 
     // Singletons.
     resources: Vec<RefCell<Box<dyn AnyResource>>>,
     params: RefCell<ParamTable>,
     sites: RefCell<Sites>,
+    /// Grows each time the sites are borrowed for a change. The world reads
+    /// it to know when its list of spawn sites is out of date. It is not
+    /// simulation state.
+    sites_epoch: Cell<u64>,
     tiles: RefCell<TileMap>,
     ledger: RefCell<Ledger>,
     directory: RefCell<Directory>,
@@ -312,6 +325,8 @@ pub struct Realm {
     woke: RefCell<Vec<ResidentId>>,
     delta: RefCell<ZoneDelta>,
     dirty: RefCell<Vec<u32>>,
+    /// Messages from outside this process that no handler could take.
+    dropped: Cell<u64>,
     scratch: RefCell<Scratch>,
 }
 
@@ -364,6 +379,7 @@ impl Realm {
         let attr_count = if scope == Scope::Zone { bp.attrs().count() } else { 0 };
         let bounds = zone.as_ref().map(|z| z.bounds).unwrap_or_default();
         let city = zone.as_ref().map(|z| z.city);
+        let border = Border::new(&layout, zone.as_ref().map(|z| z.id));
         Realm {
             id,
             scope,
@@ -391,9 +407,11 @@ impl Realm {
             grid: RefCell::new(Grid::new(bounds)),
             fates: RefCell::new(BTreeMap::new()),
             routine_holders: Cell::new(0),
+            border,
             resources: def.resources.iter().map(|r| RefCell::new((r.make)())).collect(),
             params: RefCell::new(ParamTable::new(&bp, city)),
             sites: RefCell::new(Sites::default()),
+            sites_epoch: Cell::new(0),
             tiles: RefCell::new(TileMap::new(bounds)),
             ledger: RefCell::new(Ledger::new()),
             directory: RefCell::new(Directory::default()),
@@ -409,6 +427,7 @@ impl Realm {
             woke: RefCell::new(Vec::new()),
             delta: RefCell::new(ZoneDelta::default()),
             dirty: RefCell::new(Vec::new()),
+            dropped: Cell::new(0),
             scratch: RefCell::new(Scratch::default()),
             bp,
             layout,
@@ -665,6 +684,7 @@ impl Realm {
         if old != pos {
             self.grid.borrow_mut().relocate(idx.0, old, pos);
             self.mark_dirty(idx, F_MOVED);
+            self.border_moved(idx, pos);
         }
         Ok(())
     }
@@ -673,7 +693,9 @@ impl Realm {
     /// sorted by `ResidentId`.
     ///
     /// The distance is [`Pos::dist`]: a diagonal step counts as one. Only
-    /// residents of this zone are found, also near a zone border.
+    /// residents of this zone are found, also near a zone border: an `Idx`
+    /// names a row of this zone. [`Realm::nearby_outside`] gives the
+    /// residents on the other side of a border.
     #[must_use]
     pub fn nearby(&self, pos: Pos, radius: u32) -> Vec<Idx> {
         let mut out = Vec::new();
@@ -1028,7 +1050,14 @@ impl Realm {
     /// Borrows the sites of the zone for a change.
     pub fn sites_mut(&self) -> RefMut<'_, Sites> {
         self.guard_write();
+        self.sites_epoch.set(self.sites_epoch.get().wrapping_add(1));
         self.sites.borrow_mut()
+    }
+
+    /// Returns a number that grows each time the sites of the zone are
+    /// borrowed for a change or replaced.
+    pub(crate) fn sites_epoch(&self) -> u64 {
+        self.sites_epoch.get()
     }
 
     /// Borrows the tile map of the zone. The global realm has an empty map.
@@ -1069,9 +1098,11 @@ impl Realm {
     ///
     /// Viewers see events with audience `Public` or `Nearby`. Residents get
     /// a notice as the audience says; the notice has the kind, the actor and
-    /// the payload of the event. Event handlers of this realm run later in
-    /// the same tick. Handlers of the global realm get zone events in the
-    /// same frame.
+    /// the payload of the event. A `Nearby` audience also reaches the
+    /// residents on the other side of a zone border that this zone knows of
+    /// ([`Realm::nearby_outside`]); their notice arrives in the next frame.
+    /// Event handlers of this realm run later in the same tick. Handlers of
+    /// the global realm get zone events in the same frame.
     ///
     /// An event that nobody would receive costs almost nothing: the payload
     /// is not serialized.
@@ -1111,6 +1142,26 @@ impl Realm {
                         if Some(idx) != actor_idx {
                             self.push_inbox(idx, Arc::clone(&body));
                         }
+                    }
+                    // The residents on the other side of a border that this
+                    // zone knows of. The notice follows each one to
+                    // wherever it is in the next frame.
+                    let mut outside = Vec::new();
+                    self.for_each_outsider(place, *radius, |_, id, _| {
+                        if Some(id) != meta.actor {
+                            outside.push(id);
+                        }
+                    });
+                    for id in outside {
+                        self.push_kernel(
+                            Dest::Resident(id),
+                            KernelMsg::Notice {
+                                to: id,
+                                kind: meta.kind.to_string(),
+                                from: meta.actor,
+                                data: data.clone(),
+                            },
+                        );
                     }
                 }
             }
@@ -1248,7 +1299,7 @@ impl Realm {
     fn push_out(&self, to: Dest, body: Body) {
         let seq = self.out_seq.get() + 1;
         self.out_seq.set(seq);
-        self.outbox.borrow_mut().push(Envelope { from: self.id, seq, to, body });
+        self.outbox.borrow_mut().push(Envelope::new(self.id, seq, to, body));
     }
 
     fn push_kernel(&self, to: Dest, msg: KernelMsg) {
@@ -1325,6 +1376,7 @@ impl Realm {
             + inboxes
             + members
             + self.grid.borrow().memory_estimate()
+            + self.border.memory_estimate()
             + self.timers.borrow().memory_estimate()
             + self.ledger.borrow().memory_estimate()
     }

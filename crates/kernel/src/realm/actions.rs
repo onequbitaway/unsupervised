@@ -33,8 +33,8 @@ use unsup_protocol::{
 
 use super::{F_ACTIVITY, F_BUSY, F_ROUTINES, Realm};
 use crate::agenda::{
-    ActivityView, CONDITION_NODES_MAX, Cond, NoticeBody, Queued, RECENT_MAX, REQUEST_ID_MAX,
-    RoutineSlot, Running, hour_between,
+    ActivityView, CONDITION_NODES_MAX, Cond, Lapsed, NoticeBody, Queued, RECENT_MAX,
+    REQUEST_ID_MAX, RoutineSlot, Running, hour_between,
 };
 use crate::defs::AttrShow;
 use crate::event::EventMeta;
@@ -91,6 +91,7 @@ impl Realm {
         self.guard_write();
         if let Some(running) = self.take_running(idx) {
             self.emit_interrupted(self.id_of(idx), &running, "interrupted");
+            self.note_lapsed(idx, &running);
             self.end_action(idx, running, Err(ActionError::new(ErrorCode::Interrupted, reason)));
         }
     }
@@ -121,8 +122,17 @@ impl Realm {
     ///
     /// It works from every realm: when the resident is not in this realm the
     /// kernel routes the call to its zone, where it applies in the next
-    /// frame. A call that names no waiting action (wrong id, already ended)
-    /// does nothing.
+    /// frame. A call that names no action of the resident (a wrong id, an
+    /// action that was already completed) does nothing.
+    ///
+    /// The action can have ended before the answer comes: it was
+    /// interrupted or cancelled, or it timed out. Its report then says so,
+    /// but the work behind the answer can still have taken effect. With the
+    /// parameter `kernel.late_reports` at 1 the kernel writes the late
+    /// answer as one more report with the same action id, so that the
+    /// resident learns the real outcome. It does so once for an action, for
+    /// the last 8 such actions of a resident. With the parameter at 0 (the
+    /// default) the late answer is dropped.
     pub fn complete_action(
         &self,
         resident: ResidentId,
@@ -136,6 +146,13 @@ impl Realm {
                     self.take_running_if(idx, |run| run.action_id == action_id && run.wait)
                 {
                     self.end_action(idx, running, r);
+                    return;
+                }
+                // The answer of an action that ended before it came: the
+                // resident still learns the truth.
+                let lapsed = self.agenda.borrow_mut()[idx.index()].take_lapsed(action_id);
+                if let Some(lapsed) = lapsed {
+                    self.report(idx, lapsed.action_id, lapsed.request_id, lapsed.verb, r);
                 }
             }
             None => self.push_kernel(
@@ -375,9 +392,11 @@ impl Realm {
         let timer =
             Timer { resident: self.id_of(idx), kind: TimerKind::Action, key: running.action_id };
         self.timers.borrow_mut().insert(self.tick.get(), running.ends, timer);
+        let verb = running.verb;
         self.agenda.borrow_mut()[idx.index()].current = Some(running);
         self.flags.borrow_mut()[idx.index()] |= F_BUSY;
         self.mark_dirty(idx, F_ACTIVITY);
+        self.border_started(idx, verb);
     }
 
     fn take_running(&self, idx: Idx) -> Option<Running> {
@@ -417,7 +436,25 @@ impl Realm {
             self.report(idx, running.action_id, running.request_id, running.verb, result);
         }
         self.mark_dirty(idx, F_ACTIVITY);
+        self.border_ended(idx, running.verb);
         self.restart.borrow_mut().push(self.id_of(idx));
+    }
+
+    /// Remembers a waiting action that ends now without its answer, so that
+    /// a late `complete_action` can still be reported. The answer of a
+    /// global verb comes back by itself (`ActionDone`) and needs no entry.
+    fn note_lapsed(&self, idx: Idx, running: &Running) {
+        if !running.wait
+            || self.bp.verb(running.verb).is_global()
+            || self.param(self.bp.kernel_ids().late_reports) == 0
+        {
+            return;
+        }
+        self.agenda.borrow_mut()[idx.index()].remember_lapsed(Lapsed {
+            action_id: running.action_id,
+            verb: running.verb,
+            request_id: running.request_id.clone(),
+        });
     }
 
     /// Returns true when a routine action that succeeds writes a report.
@@ -469,6 +506,7 @@ impl Realm {
         let resident = self.id_of(idx);
         if running.wait {
             self.emit_interrupted(resident, &running, "timeout");
+            self.note_lapsed(idx, &running);
             let error =
                 ActionError::new(ErrorCode::Timeout, "The action waited too long for an answer.");
             self.end_action(idx, running, Err(error));
@@ -649,6 +687,7 @@ impl Realm {
         let cancelled = self.take_running(idx).map(|running| {
             let action_id = running.action_id;
             self.emit_interrupted(self.id_of(idx), &running, "cancelled");
+            self.note_lapsed(idx, &running);
             let error = ActionError::new(ErrorCode::Interrupted, "You cancelled the action.");
             self.end_action(idx, running, Err(error));
             action_id
@@ -656,12 +695,23 @@ impl Realm {
         json!({ "cancelled": cancelled, "cleared": cleared })
     }
 
-    /// The verb `set_routines`: replaces the routines of a resident.
-    pub(crate) fn set_routines(
-        &self,
-        idx: Idx,
-        routines: &[Routine],
-    ) -> Result<Value, ActionError> {
+    /// Replaces the routines of a resident. An empty list removes them.
+    ///
+    /// It does what the verb `set_routines` does, for module code: for
+    /// example an `on_spawn` hook that gives a new resident its default
+    /// routines, so that it lives when its owner is away.
+    ///
+    /// The list is checked as a whole and a refused list changes nothing.
+    /// It is refused with `invalid_args` when it has more routines than the
+    /// parameter `kernel.routines_max`, when a name is too long, when a
+    /// condition names an unknown attribute or item or is too large, when
+    /// the arguments of an action do not fit its verb, and when an action
+    /// uses `set_routines` or `cancel`. It is refused with `unknown_verb`
+    /// when an action names no verb.
+    ///
+    /// The running action goes on, but it no longer counts for a routine.
+    pub fn set_routines(&self, idx: Idx, routines: &[Routine]) -> Result<(), ActionError> {
+        self.guard_write();
         let max = self.param(self.bp.kernel_ids().routines_max);
         if routines.len() as i64 > max {
             return Err(ActionError::invalid_args(format!(
@@ -707,7 +757,7 @@ impl Realm {
             had
         };
         self.note_routines(idx, had, count > 0);
-        Ok(json!({ "routines": count }))
+        Ok(())
     }
 
     /// Keeps the routine flag and the routine counter right after the list
