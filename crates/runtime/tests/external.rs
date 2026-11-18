@@ -11,8 +11,8 @@ use serde_json::json;
 use unsup_kernel::{Message, RealmId, ResidentId, World, WorldConfig, ZoneId};
 use unsup_protocol::{ObserveOpts, SimError, WaitFilter};
 use unsup_runtime::{
-    DurableConfig, DurableJournal, Fault, MemStorage, RuntimeConfig, RuntimeJoin, SimHandle,
-    SimStats, SyncPolicy, recover, replay, start,
+    DurableConfig, DurableJournal, Fault, MemStorage, PostError, RuntimeConfig, RuntimeJoin,
+    SimHandle, SimStats, SyncPolicy, recover, replay, start,
 };
 
 use common::{Board, Decree, Posted, Town, hash_of, new_world, play, plugins, spec};
@@ -223,19 +223,37 @@ async fn a_message_that_cannot_be_delivered_is_refused_and_changes_nothing() {
     assert!(unchanged(&stats), "{stats:?}");
     assert_eq!(stats.journal_errors, 1);
 
-    // A message that no module takes is an input like any other. The
-    // global realm drops it.
-    assert_eq!(handle.send_global(&Unheard { text: "anybody?".into() }).await, Ok(()));
+    // No module takes this kind of message. The global realm would drop
+    // it, so it is refused before it is an input, and the error names the
+    // kind.
+    let unheard = Unheard { text: "anybody?".into() };
+    assert_eq!(
+        handle.post_global(&unheard).await,
+        Err(PostError::NoHandler { kind: "town.unheard".into() })
+    );
+    assert_eq!(handle.send_global(&unheard).await, Err(SimError::Invalid));
+    let stats = handle.stats().await.expect("stats");
+    assert!(unchanged(&stats), "{stats:?}");
+    assert_eq!(stats.journal_errors, 1, "a refusal of the runtime is not a journal error");
     handle.step(2).await.expect("step");
     let stats = handle.stats().await.expect("stats");
-    assert_eq!(stats.journal_records, before.journal_records + 3, "the message and two frames");
+    assert_eq!(stats.journal_records, before.journal_records + 2, "the two frames only");
 
-    // None of the three reached a handler.
+    // The reason of each refusal is a value, not only a line in the log.
+    let reason = handle.post_global(&one_way).await.expect_err("the message does not read back");
+    assert!(
+        matches!(&reason, PostError::Unreadable { kind, .. } if kind == "town.decree"),
+        "{reason}"
+    );
+    assert_eq!(SimError::from(reason), SimError::Invalid);
+
+    // None of the three reached a handler, and the world is the one of a
+    // run without them.
     let world = join.shutdown().expect("a clean stop");
     assert_eq!(board(&world), []);
+    assert_eq!(world.dropped_messages(), 0, "the kernel had nothing to drop");
     let expected = twin(|handle| async move {
         handle.spawn(spec("Ada")).await.expect("spawn");
-        handle.send_global(&Unheard { text: "anybody?".into() }).await.expect("send");
         handle.step(2).await.expect("step");
     })
     .await;

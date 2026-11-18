@@ -14,7 +14,7 @@ use unsup_protocol::{
     ObserveOpts, ResidentId, SimError, SpawnSpec, ViewQuery, WaitFilter, WorldView,
 };
 
-use crate::external;
+use crate::external::{self, PostError};
 use crate::journal::RollbackError;
 use crate::mailbox::{Command, Counters};
 use crate::stats::SimStats;
@@ -57,7 +57,7 @@ impl fmt::Debug for SimHandle {
 
 impl SimHandle {
     /// Puts a call into the mailbox. It never blocks.
-    fn send(&self, command: Command) -> Result<(), SimError> {
+    pub(crate) fn send(&self, command: Command) -> Result<(), SimError> {
         // Count first: the simulation thread can take the call at once.
         self.counters.depth.fetch_add(1, Ordering::Relaxed);
         let error = match self.tx.try_send(command) {
@@ -163,28 +163,48 @@ impl SimHandle {
     /// place. `Ok` means that the world has the message, not that a handler
     /// ran; a module answers through an event or a notice.
     ///
-    /// Use the message type of the module itself. A handler panics on a
-    /// payload that it cannot read, so a second type with the same `KIND`
-    /// and other fields would stop the simulation. Give a message that only
-    /// comes from outside a `KIND` of its own: then the handler knows that
-    /// no realm sent it.
+    /// Use the message type of the module itself. The kernel drops a
+    /// payload that the handler cannot read and counts it in
+    /// `World::dropped_messages`. Give a message that only comes from
+    /// outside a `KIND` of its own: then the handler knows that no realm
+    /// sent it.
     ///
     /// # Errors
     ///
-    /// `SimError::Invalid` when the message cannot be written as
-    /// MessagePack and read back. `SimError::NotHosted` when another
-    /// process hosts the global realm. `SimError::Overloaded` when the
-    /// mailbox is full or the journal cannot record the message. In each
-    /// case the world did not get the message.
+    /// The world did not get the message, and the message is not in the
+    /// input log:
+    ///
+    /// - [`PostError::Unreadable`] when the message cannot be written as
+    ///   MessagePack and read back.
+    /// - [`PostError::NoHandler`] when no module handles the kind
+    ///   `M::KIND` in the global realm.
+    /// - [`PostError::Sim`] with `SimError::NotHosted` when another process
+    ///   hosts the global realm, with `SimError::Overloaded` when the
+    ///   mailbox is full or the journal cannot record the message, and with
+    ///   `SimError::Shutdown` after the simulation stopped.
+    pub async fn post_global<M: Message>(&self, message: &M) -> Result<(), PostError> {
+        let envelope = external::envelope_for_global(message)?;
+        let (reply, answer) = oneshot::channel();
+        self.send(Command::Deliver { messages: vec![envelope], reply })?;
+        // The simulation thread drops the reply sender when it stops.
+        answer.await.unwrap_or(Err(PostError::Sim(SimError::Shutdown)))
+    }
+
+    /// Like [`SimHandle::post_global`], with the error as a `SimError`.
+    ///
+    /// # Errors
+    ///
+    /// `SimError::Invalid` when the message cannot be written and read
+    /// back, and when no module handles its kind. The log of the server
+    /// names the reason. The other errors are those of
+    /// [`PostError::Sim`].
     pub async fn send_global<M: Message>(&self, message: &M) -> Result<(), SimError> {
-        let envelope = match external::envelope_for_global(message) {
-            Ok(envelope) => envelope,
-            Err(reason) => {
-                tracing::warn!(kind = M::KIND, %reason, "a message from outside was refused");
-                return Err(SimError::Invalid);
+        self.post_global(message).await.map_err(|error| {
+            if !matches!(error, PostError::Sim(_)) {
+                tracing::warn!(kind = M::KIND, %error, "a message from outside was refused");
             }
-        };
-        self.call(|reply| Command::Deliver { messages: vec![envelope], reply }).await
+            SimError::from(error)
+        })
     }
 
     /// Rolls the whole world back to the newest snapshot at or before

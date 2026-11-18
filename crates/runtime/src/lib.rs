@@ -67,13 +67,18 @@
 //!   world. One zone alone cannot go back: money and goods cross zone
 //!   borders, so the totals of the world would no longer balance. The
 //!   runtime refuses `AdminCommand::RollbackZone` and says so.
-//! - [`SimHandle::send_global`]: a typed message from a service outside
+//! - [`SimHandle::post_global`]: a typed message from a service outside
 //!   the simulation to the global realm. It is an input like any other, so
-//!   it is in the log and a replay delivers it again.
+//!   it is in the log and a replay delivers it again. A message whose kind
+//!   no module handles is refused before it is in the log.
+//! - [`cluster`]: the same world with its zones spread over several
+//!   processes. A coordinator hosts the global realm and routes every
+//!   message between realms; workers host the zones. A
+//!   [`cluster::ClusterHandle`] is a [`SimHandle`].
 //!
 //! `README.md` in the crate directory describes the formats, the rules and
-//! the limits. The examples `replay` and `throughput` show the replay
-//! check and the load behaviour.
+//! the limits. The examples `replay`, `throughput` and `cluster` show the
+//! replay check, the load behaviour and a cluster of processes.
 //!
 //! # Extension points
 //!
@@ -93,6 +98,7 @@
 //! waiting [`SimHandle::wait`] calls is bounded too, and the cost of a
 //! frame does not grow with it. [`SimStats`] has the numbers to watch.
 
+pub mod cluster;
 mod config;
 mod dilation;
 mod durable;
@@ -114,6 +120,7 @@ mod waiters;
 pub use crate::config::RuntimeConfig;
 pub use crate::dilation::{Dilation, DilationConfig};
 pub use crate::durable::{DurableConfig, DurableJournal, OpenError, Opened, Plugins, SyncPolicy};
+pub use crate::external::PostError;
 pub use crate::handle::{RollbackReport, SimHandle};
 pub use crate::join::{RuntimeJoin, RuntimePanic, start};
 pub use crate::journal::{

@@ -25,6 +25,7 @@ use unsup_protocol::{
     ViewQuery, WaitFilter, WorldView,
 };
 
+use crate::external::{self, PostError};
 use crate::journal::{Journal, JournalError, Pacer, Rollback, RollbackError};
 use crate::mailbox::{Answer, Command, Counters, InputReply, Reply};
 use crate::replier::Replier;
@@ -33,7 +34,7 @@ use crate::waiters::{Waiter, Waiters};
 use crate::{RollbackReport, RuntimeConfig, SimStats};
 
 /// The answer to `AdminCommand::RollbackZone`.
-const ZONE_ROLLBACK_REFUSED: &str = "A single zone cannot be rolled back. Money and goods cross \
+pub(crate) const ZONE_ROLLBACK_REFUSED: &str = "A single zone cannot be rolled back. Money and goods cross \
     zone borders, so the totals of the world would no longer balance. Roll back the whole world \
     to a snapshot instead.";
 
@@ -123,7 +124,7 @@ struct Sim<'a> {
 
 /// Returns true when an observation holds news that the filter lets
 /// through.
-fn has_news(observation: &Observation, filter: &WaitFilter) -> bool {
+pub(crate) fn has_news(observation: &Observation, filter: &WaitFilter) -> bool {
     let reports = observation
         .sections
         .get("reports")
@@ -199,10 +200,15 @@ impl Sim<'_> {
                 // Another process hosts the global realm. This runtime has
                 // no way to send the messages there, so it does not take
                 // them.
-                let _ = reply.send(Err(SimError::NotHosted));
+                let _ = reply.send(Err(PostError::Sim(SimError::NotHosted)));
             }
             Command::Deliver { messages, reply } => {
-                self.record(Input::Deliver { messages }, InputReply::Deliver(reply));
+                // A message that no module handles would be dropped by the
+                // global realm. It is refused here, before it is an input.
+                match external::unhandled(self.world.blueprint(), &messages) {
+                    Some(kind) => drop(reply.send(Err(PostError::NoHandler { kind }))),
+                    None => self.record(Input::Deliver { messages }, InputReply::Deliver(reply)),
+                }
             }
             Command::Observe { resident, opts, reply } => {
                 self.batch.push(Pending::Read(Read::Observe { resident, opts, reply }));
@@ -223,6 +229,10 @@ impl Sim<'_> {
             Command::Step { frames, reply } => return Some(Alone::Step { frames, reply }),
             Command::Rollback { frame, reply } => return Some(Alone::Rollback { frame, reply }),
             Command::Shutdown => return Some(Alone::Shutdown),
+            // Only the coordinator of a cluster takes these calls, and only
+            // a cluster handle sends them. The caller sees the reply go
+            // away.
+            Command::Cluster(_) => {}
         }
         None
     }

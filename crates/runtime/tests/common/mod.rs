@@ -3,6 +3,10 @@
 
 #![allow(dead_code)]
 
+pub mod cluster;
+pub mod roads;
+pub mod script;
+
 use std::hint::black_box;
 use std::sync::Arc;
 

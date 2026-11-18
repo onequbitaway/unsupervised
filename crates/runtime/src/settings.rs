@@ -15,6 +15,7 @@ pub(crate) struct Settings {
     pub log: LogSettings,
     pub snapshots: SnapshotSettings,
     pub dilation: DilationSettings,
+    pub cluster: ClusterSettings,
 }
 
 /// The table `[runtime]`.
@@ -71,6 +72,18 @@ pub(crate) struct DilationSettings {
     pub calm_ticks: u32,
 }
 
+/// The table `[cluster]`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClusterSettings {
+    pub join_timeout_ms: u64,
+    pub connect_timeout_ms: u64,
+    pub retry_ms: u64,
+    pub reply_timeout_ms: u64,
+    pub max_frame_bytes: u32,
+    pub seals_keep: usize,
+}
+
 /// Returns the numbers of `data/runtime.toml`.
 ///
 /// # Panics
@@ -97,5 +110,8 @@ mod tests {
         assert!(s.snapshots.every_frames > 0 && s.snapshots.keep > 0);
         assert!(s.dilation.max_divisor >= 1 && s.dilation.smoothing >= 1);
         assert!(s.dilation.relax_percent < 100 && s.dilation.budget_percent <= 100);
+        assert!(s.cluster.join_timeout_ms > 0 && s.cluster.connect_timeout_ms > 0);
+        assert!(s.cluster.retry_ms > 0 && s.cluster.reply_timeout_ms > 0);
+        assert!(s.cluster.max_frame_bytes >= s.log.max_record_bytes && s.cluster.seals_keep > 0);
     }
 }

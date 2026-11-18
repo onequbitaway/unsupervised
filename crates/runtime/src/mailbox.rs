@@ -11,11 +11,15 @@ use unsup_protocol::{
     SimError, SpawnSpec, ViewQuery, WaitFilter, WorldView,
 };
 
+use crate::external::PostError;
 use crate::journal::RollbackError;
 use crate::{RollbackReport, SimStats};
 
 /// Where the answer to a call goes.
 pub(crate) type Reply<T> = oneshot::Sender<Result<T, SimError>>;
+
+/// Where the answer to a message from outside goes.
+pub(crate) type PostReply = oneshot::Sender<Result<(), PostError>>;
 
 /// One message in the mailbox of the simulation thread.
 pub(crate) enum Command {
@@ -51,7 +55,7 @@ pub(crate) enum Command {
     /// Messages from a service outside the simulation.
     Deliver {
         messages: Vec<Envelope>,
-        reply: Reply<()>,
+        reply: PostReply,
     },
     Stats {
         reply: Reply<SimStats>,
@@ -65,6 +69,8 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<RollbackReport, RollbackError>>,
     },
     Shutdown,
+    /// A call that only the coordinator of a cluster takes.
+    Cluster(crate::cluster::call::ClusterCall),
 }
 
 /// What the handles and the simulation thread both count.
@@ -81,7 +87,7 @@ pub(crate) enum InputReply {
     Spawn(Reply<ResidentId>),
     Act(Reply<ActionAck>),
     Admin(Reply<AdminReply>),
-    Deliver(Reply<()>),
+    Deliver(PostReply),
 }
 
 impl InputReply {
@@ -91,7 +97,7 @@ impl InputReply {
             InputReply::Spawn(reply) => Answer::Spawn(reply, Err(error)),
             InputReply::Act(reply) => Answer::Act(reply, Err(error)),
             InputReply::Admin(reply) => Answer::Admin(reply, Err(error)),
-            InputReply::Deliver(reply) => Answer::Delivered(reply, Err(error)),
+            InputReply::Deliver(reply) => Answer::Delivered(reply, Err(PostError::Sim(error))),
         }
     }
 
@@ -115,7 +121,7 @@ pub(crate) enum Answer {
     Spawn(Reply<ResidentId>, Result<ResidentId, SimError>),
     Act(Reply<ActionAck>, Result<ActionAck, SimError>),
     Admin(Reply<AdminReply>, Result<AdminReply, SimError>),
-    Delivered(Reply<()>, Result<(), SimError>),
+    Delivered(PostReply, Result<(), PostError>),
     Observation(Reply<Observation>, Result<Observation, SimError>),
     View(Reply<WorldView>, Result<WorldView, SimError>),
     Stats(Reply<SimStats>, Result<SimStats, SimError>),
