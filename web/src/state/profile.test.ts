@@ -22,6 +22,7 @@ function profile(extra: Partial<Profile> = {}): Profile {
     activity: 'work',
     frame: 40,
     events: [],
+    life: { jobs: [], homes: [], deals: [], crimes: [], offices: [], moments: [] },
     ...extra,
   };
 }

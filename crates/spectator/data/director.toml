@@ -1,0 +1,279 @@
+# The editorial data of the spectator service: how the director scores
+# events and chooses shots, how events become stories, which events make
+# the chapters of a life story, and the words for each kind of event.
+# `Config::default()` reads this file after `spectator.toml`.
+
+[director]
+# Lowest drama score of an event that the director counts.
+min_drama = 11
+# Frames for which an event counts. Its weight falls in a straight line
+# from its drama score to zero.
+fresh_frames = 90
+# Each more event around the same resident or place adds this percent to
+# the score of that subject.
+gather_percent = 25
+# Greatest sum of that addition, in percent.
+gather_max_percent = 100
+# Percent of the weight of an event that a resident of the event gets
+# when it is not the actor.
+party_share_percent = 80
+# Percent of the weight of an event that the site of the event gets.
+place_share_percent = 70
+# Percent of the weight of an event that the district of the event gets.
+# A district wins the shot only when many events gather there.
+zone_share_percent = 25
+# Lowest score of a subject that gets a shot.
+cut_score = 30
+# Below this score the subject on air loses the shot.
+keep_score = 12
+# Frames that a shot stays at least. Only breaking news cuts in earlier.
+min_hold_frames = 12
+# Frames that a shot stays at most when another subject can take it.
+max_hold_frames = 60
+# After the least time, another subject takes the shot when its score is
+# at least this percent of the score of the subject on air.
+switch_percent = 130
+# Lowest drama score of breaking news. Such an event cuts in at once.
+breaking_drama = 71
+# Frames for which breaking news holds the shot against other breaking
+# news that is not more dramatic.
+breaking_hold_frames = 8
+# Variety: percent that the score of a subject loses just after it left
+# the air. The loss falls to zero over `variety_frames`.
+repeat_penalty_percent = 60
+# The same for another subject in the district that just left the air.
+zone_penalty_percent = 20
+# Variety of kinds: percent that the score of a subject loses when the
+# event that speaks for it has the kind of a shot that started just now.
+# The loss falls to zero over `variety_frames`.
+kind_penalty_percent = 50
+# Frames after which a subject that left the air has its full score again.
+variety_frames = 180
+# Frames for which breaking news of one kind keeps other events of that
+# kind from cutting in. Such an event still counts in the scores. A more
+# dramatic event of the kind cuts in.
+breaking_kind_frames = 120
+# Frames that a wide view stays at least before a subject takes the shot.
+wide_min_frames = 4
+# Frames after which a wide view changes to the next city or the country.
+wide_hold_frames = 30
+# Lowest drama score of an event that gets a close view of its resident.
+close_drama = 55
+# Subjects that the director scores at the same time. The subjects with
+# the oldest events leave.
+max_subjects = 512
+
+[facts]
+# Fields of the data of an event that name a resident: a resident id, a
+# list of ids, or a holder that is a resident.
+resident_fields = [
+    "resident", "thief", "victim", "suspect", "officer", "judge", "target",
+    "a", "b", "buyer", "seller", "tenant", "founder", "by", "winner",
+    "loser", "candidate", "voter", "about", "from", "to", "host", "owner",
+    "heir", "other", "parties", "candidates", "accused", "witness",
+]
+# Fields that name the site of an event.
+site_fields = ["site"]
+# Fields that name the city of an event.
+city_fields = ["city"]
+# Residents of one event that the service uses.
+max_residents = 8
+# Names that one `{name:field}` slot of a line shows. Then: "and others".
+slot_names = 3
+# Longest text of one `{word:field}` slot, in characters.
+word_chars = 24
+# Longest name of a resident, a site or an organization in a line.
+name_chars = 40
+# Longest text of a resident in a line.
+text_chars = 80
+# Longest line.
+line_chars = 160
+
+# Stories. An event joins the stories of each kind whose `prefixes` hold
+# the start of its kind.
+#
+# `threads`: lists of data fields. The first list whose fields are all in
+# the data names the thread of the event. Events with the same thread are
+# one story.
+# `share`: an event without a thread joins the open story with which it
+# shares at least this many residents. 0: only a thread joins events.
+# `link_frames`: such a story must have an event in the last frames.
+# `open_drama`: lowest drama score of an event that opens a story.
+# `min_events`: viewers see the story from this number of events.
+# `headline`: `{lead}` is the line of the most dramatic event, `{latest}`
+# the line of the newest event, `{count}` the number of events.
+# `only` (optional): data fields with the values that an event must have
+# there. An event without the field passes.
+
+[[story]]
+kind = "crime"
+label = "Crime"
+prefixes = ["crime."]
+threads = [["case"], ["crime"]]
+share = 1
+link_frames = 720
+open_drama = 41
+min_events = 1
+headline = "{lead}"
+
+[[story]]
+kind = "election"
+label = "Election"
+prefixes = ["politics.election", "politics.candidate", "politics.campaign", "politics.vote", "politics.recall"]
+threads = [["election"], ["city", "office"], ["city"]]
+share = 0
+link_frames = 1440
+open_drama = 11
+min_events = 1
+headline = "{latest}"
+
+[[story]]
+kind = "law"
+label = "Politics"
+prefixes = ["politics.law", "politics.bill"]
+threads = [["law"], ["bill"]]
+share = 0
+link_frames = 1440
+open_drama = 11
+min_events = 1
+headline = "{latest}"
+
+[[story]]
+kind = "feud"
+label = "Feud"
+prefixes = ["society.contract_breached", "society.opinion_given", "society.divorced", "crime.assault", "crime.vandal"]
+threads = []
+share = 2
+link_frames = 2880
+open_drama = 0
+min_events = 2
+headline = "{latest}"
+only = { verdict = ["condemn"] }
+
+[[story]]
+kind = "bankruptcy"
+label = "Bankruptcy"
+prefixes = [
+    "finance.loan_defaulted", "economy.property_foreclosed", "economy.tenant_evicted",
+    "economy.business_closed", "economy.shift_unpaid",
+]
+threads = []
+share = 1
+link_frames = 1440
+open_drama = 35
+min_events = 1
+headline = "{lead}"
+
+[[story]]
+kind = "death"
+label = "Obituary"
+prefixes = [
+    "life.resident_died", "life.estate_settled", "finance.estate_settled",
+    "economy.property_inherited", "society.household_dissolved",
+]
+threads = []
+share = 1
+link_frames = 240
+open_drama = 60
+min_events = 1
+headline = "{lead}"
+
+[[story]]
+kind = "business"
+label = "Business"
+prefixes = ["economy.business_opened", "economy.worker_hired", "economy.property_sold", "finance.shares_issued"]
+threads = [["site"], ["org"]]
+share = 0
+link_frames = 1440
+open_drama = 25
+min_events = 2
+headline = "{lead}"
+
+# The chapters of a life story. An event goes into the first chapter whose
+# list holds the start of its kind.
+[chapters]
+born = ["kernel.spawned"]
+death = ["life.resident_died", "kernel.despawned"]
+crimes = ["crime."]
+offices = ["politics.", "society.org_granted", "society.org_grant_revoked", "finance.rate_changed", "finance.money_"]
+jobs = [
+    "economy.worker_hired", "economy.worker_left", "economy.business_opened",
+    "economy.business_closed", "economy.shift_unpaid", "life.level_gained",
+]
+homes = [
+    "economy.lease_started", "economy.lease_ended", "economy.tenant_evicted",
+    "economy.property_sold", "economy.property_foreclosed", "economy.property_inherited",
+    "society.household_joined", "society.household_left", "life.traveled",
+]
+deals = [
+    "society.contract_", "society.married", "society.divorced", "society.org_created",
+    "society.org_joined", "society.org_left", "finance.loan_", "finance.shares_issued",
+    "finance.dividend_paid", "life.will_written", "life.gift_given",
+]
+
+# The words for each kind of event. A slot is `{what:field|default}`:
+#   {actor}        the name of the actor
+#   {name:field}   the name of the resident in a data field (an id or a holder)
+#   {money:field}  cents as money
+#   {word:field}   a short text or a number, `_` as a space
+#   {text:field}   text that a resident wrote
+#   {site:field}   the name of the site in a data field
+#   {city:field}   the name of the city in a data field
+#   {place}        the site, the district or the city of the event
+# A kind without words gets its name as words.
+[phrases]
+"kernel.spawned" = "{actor} arrived in {place|the world}"
+"kernel.despawned" = "{actor} left the world ({word:cause|unknown cause})"
+"life.resident_died" = "{actor} died at the age of {word:age|unknown} ({word:cause|unknown cause})"
+"life.estate_settled" = "The estate of {name:resident|a resident} was settled"
+"life.level_gained" = "{actor} reached level {word:level|up} in {word:skill|a skill}"
+"life.traveled" = "{actor} traveled to {city:to_city|another city}"
+"life.will_written" = "{actor} wrote a will"
+"life.gift_given" = "{actor} gave a gift to {name:to|someone}"
+"economy.shift_completed" = "{actor} finished a shift and earned {money:wage}"
+"economy.shift_unpaid" = "{name:resident|A worker} was not paid for a shift at {site:site|work}"
+"economy.goods_sold" = "{name:buyer|Someone} bought {word:item|goods} for {money:unit_price}"
+"economy.goods_produced" = "{actor} produced {word:item|goods}"
+"economy.property_sold" = "{name:to|Someone} bought {site:site|a property} for {money:price}"
+"economy.property_foreclosed" = "{site:site|A property} of {name:from|a resident} was foreclosed"
+"economy.property_inherited" = "{name:to|An heir} inherited {site:site|a property}"
+"economy.lease_started" = "{name:tenant|Someone} rented {site:site|a place} for {money:rent} a day"
+"economy.lease_ended" = "{name:tenant|A tenant} left {site:site|a rented place}"
+"economy.tenant_evicted" = "{name:tenant|A tenant} was evicted from {site:site|a rented place}"
+"economy.business_opened" = "{name:owner|Someone} opened a {word:kind|business} at {site:site|a new place}"
+"economy.business_closed" = "The {word:kind|business} at {site:site|a site} closed ({word:reason|no reason given})"
+"economy.worker_hired" = "{name:resident|Someone} got a job at {site:site|a business}"
+"economy.worker_left" = "{name:resident|A worker} left the job at {site:site|a business} ({word:reason|no reason given})"
+"economy.job_posted" = "A job for {money:wage} a shift opened at {site:site|a business}"
+"finance.account_opened" = "{actor} opened a bank account"
+"finance.loan_granted" = "{name:resident|Someone} got a loan of {money:amount}"
+"finance.loan_repaid" = "{name:resident|Someone} repaid a loan"
+"finance.loan_defaulted" = "{name:resident|Someone} defaulted on a loan of {money:outstanding}"
+"finance.order_filled" = "{word:item|Goods} traded at {money:price} on the exchange"
+"finance.shares_issued" = "A firm issued {word:shares|new} shares at {money:price}"
+"finance.dividend_paid" = "A firm paid a dividend of {money:amount}"
+"finance.rate_changed" = "{name:resident|The central banker} set the base rate to {word:rate_bp|a new value} basis points"
+"finance.money_issued" = "{name:resident|The central banker} issued {money:amount}"
+"finance.money_retired" = "{name:resident|The central banker} retired {money:amount}"
+"society.said" = "{actor}: “{text:text|…}”"
+"society.posted" = "{actor} posted: “{text:text|…}”"
+"society.org_created" = "{name:founder|Someone} founded {text:name|an organization}"
+"society.org_joined" = "{name:resident|Someone} joined {text:name|an organization}"
+"society.org_left" = "{name:resident|Someone} left {text:name|an organization} ({word:cause|left})"
+"society.org_dissolved" = "{text:name|An organization} was dissolved"
+"society.contract_signed" = "{name:parties|Two residents} signed a contract"
+"society.contract_fulfilled" = "A contract of {name:parties|two residents} was fulfilled"
+"society.contract_breached" = "{name:by|Someone} broke a contract"
+"society.contract_expired" = "A contract of {name:parties|two residents} expired"
+"society.married" = "{name:a|Someone} and {name:b|someone} married"
+"society.divorced" = "{name:a|Someone} and {name:b|someone} divorced"
+"society.household_joined" = "{name:resident|Someone} moved in with {name:host|a host}"
+"society.household_left" = "{name:resident|Someone} moved out from {name:host|a host}"
+"society.opinion_given" = "{name:from|Someone} spoke in public about {name:about|someone} ({word:verdict|an opinion})"
+"crime.theft_committed" = "{name:thief|Someone} stole {money:amount} from {name:victim|a victim}"
+"crime.heist_committed" = "{name:thief|Someone} took {money:amount} in a heist"
+"crime.investigation_opened" = "{name:officer|The police} opened an investigation against {name:suspect|a suspect}"
+"crime.arrest_made" = "{name:suspect|A suspect} was arrested"
+"crime.trial_ended" = "The trial of {name:accused|a suspect} ended ({word:verdict|no verdict})"
+"politics.candidate_registered" = "{name:candidate|A resident} runs for {word:office|an office} in {city:city|the country}"
+"politics.election_decided" = "{name:winner|A candidate} won the election for {word:office|an office} in {city:city|the country}"

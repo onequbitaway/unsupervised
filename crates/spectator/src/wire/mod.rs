@@ -3,12 +3,23 @@
 //! `docs/design/protocol.md`, section "Viewer feed", describes these types.
 //! JSON field names are `snake_case`. A field that is empty is left out.
 
+mod clip;
+mod life;
+mod show;
+
 use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use unsup_protocol::{CityId, Clock, Pos, RealmId, ResidentId, ResidentView, Tick, ZoneId};
+
+pub use self::clip::{Clip, ClipFrame, ClipList, ClipRef, PinAnswer};
+pub use self::life::{LifeEntry, LifeStory, PlaceHistory};
+pub use self::show::{
+    Channel, DirectorState, Focus, Shot, StoriesPage, Story, StoryBeat, StoryResident, StoryStatus,
+    Zoom,
+};
 
 /// Version of the feed protocol. The `world` message carries it.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -134,6 +145,13 @@ pub enum ClientMessage {
         /// The zones to remove.
         zones: Vec<ZoneId>,
     },
+    /// Choose the channels of the show. The list replaces the channels of
+    /// the viewer. The server answers with the state of each channel: one
+    /// `director` message, one `stories` message.
+    Tune {
+        /// The channels that the viewer wants.
+        channels: Vec<Channel>,
+    },
     /// Ask for a `pong`.
     Ping,
 }
@@ -214,6 +232,23 @@ pub enum ServerMessage {
         /// Viewers that are connected now.
         viewers: u32,
     },
+    /// The shot of the director, for a viewer of the `director` channel. It
+    /// comes after `tune`, and when the director cuts or changes the words
+    /// of the shot on air.
+    Director {
+        /// The shot on air.
+        shot: Shot,
+    },
+    /// Stories, for a viewer of the `stories` channel. It comes after
+    /// `tune`, and when stories change.
+    Stories {
+        /// The stories that are new or that changed. With `reset`: every
+        /// story that the service lists now.
+        stories: Vec<Story>,
+        /// True when the viewer must forget every other story.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reset: bool,
+    },
     /// The answer to `unsubscribe`. No `delta` of these zones follows.
     Unsubscribed {
         /// The zones that were removed.
@@ -286,6 +321,9 @@ pub struct Profile {
     /// The newest public events of the resident that the cache still has,
     /// in ascending id order.
     pub events: Vec<FeedEvent>,
+    /// The life story of the resident, from the chronicle.
+    #[serde(default)]
+    pub life: LifeStory,
 }
 
 /// One series of published state: the newest event of one kind and key.
@@ -347,6 +385,8 @@ pub struct FeedStats {
     pub dropped_frames: u64,
     /// Times that a viewer was resynchronized after it lost frames.
     pub resyncs: u64,
+    /// Frames that everything for viewers is behind the simulation.
+    pub delay_frames: u64,
 }
 
 #[cfg(test)]

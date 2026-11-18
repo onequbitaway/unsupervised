@@ -58,3 +58,75 @@ max_key_bytes = 64
 stats_kind = "finance.stats_published"
 # The kind that `/v1/leaderboards/{board}` serves. The board is the key.
 leaderboard_kind = "missions.leaderboard_published"
+
+[stream]
+# Frames that everything for viewers is behind the simulation: the feed,
+# every HTTP read, the director, the stories, the chronicle and the clips.
+# The live view shows what residents cannot see. A delay keeps an owner
+# from using it in a competitive season. 0: no delay.
+delay_frames = 0
+
+[stories]
+# Open stories that the service keeps. The story with the oldest update
+# closes when a new story needs the room.
+max_open = 64
+# Closed stories that the service keeps.
+max_closed = 64
+# Entries in the timeline of one story. The first entry stays; of the
+# others, the oldest leave.
+timeline = 24
+# Residents that one story lists.
+residents = 12
+# Residents that one story remembers, to see that an event shares a
+# resident with it.
+remembered = 64
+# Frames without a new event after which a story closes.
+close_frames = 720
+# Stories in one `stories` message of a frame. Stories that wait come in
+# the next frames.
+updates_per_frame = 8
+# Stories in one answer of `/v1/stories` when the query has no `limit`.
+page_default = 20
+# Greatest `limit` of `/v1/stories`.
+page_max = 128
+
+[chronicle]
+# Lowest drama score of an event that the chronicle keeps. An event of a
+# chapter of the life story (data/director.toml) is kept with any score.
+min_drama = 11
+# Events that the chronicle keeps for one resident.
+resident_events = 64
+# Events that the chronicle keeps for one place.
+place_events = 64
+# Residents with a history. The resident with the oldest event leaves when
+# a new resident needs the room.
+residents = 20000
+# Places with a history.
+places = 5000
+# When there are too many residents or places, the chronicle forgets some
+# more than it must, so that it does not search at every event: one more
+# for each this many of the limit.
+forget_one_in = 16
+# Events in one answer of `/v1/places/{site}/history`.
+place_page = 40
+# Frames between two writes of the chronicle to the storage.
+flush_frames = 30
+# Records in the journal after which the service writes the journal again
+# from what it holds in memory.
+compact_records = 50000
+
+[clips]
+# Frames of the feed that the service keeps for replay. 0 turns clips off.
+window_frames = 240
+# Frames of one clip before the frame of its event.
+before_frames = 20
+# Frames of one clip after the frame of its event.
+after_frames = 40
+# Pinned clips that the service keeps. The oldest leaves when a new pin
+# needs the room.
+max_pinned = 128
+# Lowest drama score of an event whose clip the service pins by itself.
+# 101: it pins none.
+auto_pin_drama = 85
+# True: `POST /v1/clips/{event}/pin` pins a clip for any viewer.
+public_pin = true

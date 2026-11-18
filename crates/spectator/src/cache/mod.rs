@@ -13,9 +13,12 @@ mod published;
 mod zones;
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use axum::extract::ws::Utf8Bytes;
-use unsup_protocol::{CityView, Clock, Pos, ResidentId, WorldView, ZoneId, ZoneView};
+use unsup_protocol::{
+    CityId, CityView, Clock, Pos, ResidentId, ResidentView, SiteId, WorldView, ZoneId, ZoneView,
+};
 
 pub(crate) use self::events::FeedQuery;
 pub(crate) use self::published::PUBLISHED_SUFFIX;
@@ -27,8 +30,10 @@ use self::published::PublishedStore;
 use self::zones::ZoneCache;
 use crate::config::Config;
 use crate::digest::to_text;
+use crate::facts::{Atlas, CityRef, SiteRef};
 use crate::wire::{
-    FeedPage, FeedStats, PROTOCOL_VERSION, Profile, Published, PublishedRef, ServerMessage,
+    EventId, FeedEvent, FeedPage, FeedStats, LifeStory, PROTOCOL_VERSION, Profile, Published,
+    PublishedRef, ServerMessage,
 };
 
 /// The read-only cache of the world.
@@ -41,6 +46,8 @@ pub(crate) struct Cache {
     zones: BTreeMap<ZoneId, ZoneCache>,
     /// The zone of every resident.
     index: HashMap<ResidentId, ZoneId>,
+    /// The zone of every site that the cache has a map of.
+    site_index: HashMap<SiteId, ZoneId>,
     events: EventLog,
     published: PublishedStore,
     departed: DepartedList,
@@ -55,6 +62,7 @@ impl Cache {
             cities: Vec::new(),
             zones: BTreeMap::new(),
             index: HashMap::new(),
+            site_index: HashMap::new(),
             events: EventLog::new(
                 config.feed.recent_events,
                 config.feed.notable_events,
@@ -87,6 +95,29 @@ impl Cache {
         self.cities = cities;
         self.zones = zones.into_iter().map(|zone| (zone.id, ZoneCache::new(zone))).collect();
         self.index.clear();
+        self.site_index.clear();
+    }
+
+    /// Returns the signature of the world: a number that is the same for
+    /// the same cities and zones.
+    pub fn signature(&self) -> u64 {
+        let zones: Vec<ZoneView> = self.zones.values().map(|zone| zone.info().clone()).collect();
+        crate::vault::signature(&self.cities, &zones)
+    }
+
+    /// Returns the residents of every zone, for the recorder of the clips.
+    pub fn residents_by_zone(&self) -> impl Iterator<Item = (ZoneId, Vec<ResidentView>)> + '_ {
+        self.zones.iter().map(|(id, zone)| (*id, zone.residents.values().cloned().collect()))
+    }
+
+    /// Says in which zone the sites of a map are.
+    fn index_sites(&mut self, zone: ZoneId) {
+        self.site_index.retain(|_, home| *home != zone);
+        if let Some(cache) = self.zones.get(&zone) {
+            for site in &cache.map.sites {
+                self.site_index.insert(site.id, zone);
+            }
+        }
     }
 
     /// Replaces the residents and the map of one zone with what the
@@ -103,6 +134,7 @@ impl Cache {
             self.index.insert(resident.id, zone.id);
         }
         cache.load(residents, ZoneMap { width, height, tiles, sites, read_at });
+        self.index_sites(zone.id);
     }
 
     /// Replaces the tiles and the sites of one zone. The residents stay.
@@ -113,7 +145,10 @@ impl Cache {
         let read_at = self.frame;
         if let Some(cache) = self.zones.get_mut(&zone.id) {
             cache.map = ZoneMap { width, height, tiles, sites, read_at };
+            // A read that waited in the delay of the stream ends here.
+            cache.refreshing.store(false, std::sync::atomic::Ordering::Release);
         }
+        self.index_sites(zone.id);
     }
 
     /// Returns true when the zone exists and this process hosts it.
@@ -199,9 +234,15 @@ impl Cache {
         self.events.page(query)
     }
 
+    /// Returns a public event that the log still has.
+    pub fn event(&self, id: EventId) -> Option<Arc<FeedEvent>> {
+        self.events.get(id)
+    }
+
     /// Returns the profile of a resident: one that lives, or one of the
-    /// last residents that left the world.
-    pub fn profile(&self, id: ResidentId, events: usize) -> Option<Profile> {
+    /// last residents that left the world. `life` is the life story from
+    /// the chronicle.
+    pub fn profile(&self, id: ResidentId, events: usize, life: LifeStory) -> Option<Profile> {
         let (view, zone, alive, frame, cause) = match self.index.get(&id) {
             Some(zone) => {
                 let view = self.zones.get(zone)?.residents.get(&id)?;
@@ -233,6 +274,7 @@ impl Cache {
             frame,
             cause,
             events: self.events.about(id, events),
+            life,
         })
     }
 
@@ -259,6 +301,7 @@ impl Cache {
             viewers,
             dropped_frames,
             resyncs,
+            delay_frames: 0,
         }
     }
 
@@ -286,5 +329,54 @@ impl Cache {
             self.zones.get(zone).is_some_and(|cache| cache.info().bounds.contains(pos))
         };
         guess.filter(holds).or_else(|| city.zones.iter().copied().find(|zone| holds(zone)))
+    }
+}
+
+impl Atlas for Cache {
+    fn resident_name(&self, id: ResidentId) -> Option<String> {
+        self.name_of(id)
+            .map(str::to_string)
+            .or_else(|| self.departed.get(id).map(|departed| departed.view.name.clone()))
+    }
+
+    fn resident_place(&self, id: ResidentId) -> Option<(ZoneId, Pos)> {
+        let zone = self.index.get(&id)?;
+        self.zones.get(zone)?.residents.get(&id).map(|view| (*zone, view.pos))
+    }
+
+    fn site(&self, id: SiteId) -> Option<SiteRef> {
+        let zone = *self.site_index.get(&id)?;
+        let site = self.zones.get(&zone)?.map.sites.iter().find(|site| site.id == id)?;
+        Some(SiteRef { id, name: site.name.clone(), zone, centre: site.rect.centre() })
+    }
+
+    fn site_at(&self, zone: ZoneId, pos: Pos) -> Option<SiteRef> {
+        let site = self.zones.get(&zone)?.map.sites.iter().find(|site| site.rect.contains(pos))?;
+        Some(SiteRef { id: site.id, name: site.name.clone(), zone, centre: site.rect.centre() })
+    }
+
+    fn zone(&self, zone: ZoneId) -> Option<(String, CityId)> {
+        self.zones.get(&zone).map(|cache| (cache.info().name.clone(), cache.info().city))
+    }
+
+    fn city_name(&self, city: CityId) -> Option<String> {
+        self.cities.iter().find(|known| known.id == city).map(|known| known.name.clone())
+    }
+
+    fn cities(&self) -> Vec<CityRef> {
+        self.cities
+            .iter()
+            .map(|city| CityRef {
+                id: city.id,
+                name: city.name.clone(),
+                centre: city.bounds.centre(),
+                residents: city
+                    .zones
+                    .iter()
+                    .filter_map(|zone| self.zones.get(zone))
+                    .map(|zone| u64::from(zone.population()))
+                    .sum(),
+            })
+            .collect()
     }
 }

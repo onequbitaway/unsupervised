@@ -79,6 +79,7 @@ impl Cache {
 
         // Events.
         let mut headlines = Vec::new();
+        let mut news = Vec::new();
         for (at, event) in frame.events.iter().enumerate() {
             if !event.public {
                 continue;
@@ -92,6 +93,7 @@ impl Cache {
             let id = EventId { frame: frame.frame, index: u32::try_from(at).unwrap_or(u32::MAX) };
             let event = Arc::new(self.feed_event(event, id, frame.clock, &gone));
             self.events.push(Arc::clone(&event));
+            news.push(Arc::clone(&event));
             if event.drama >= config.feed.headline_drama {
                 headlines.push(Arc::clone(&event));
             }
@@ -125,7 +127,7 @@ impl Cache {
         for beat in &mut zones {
             keep_most_dramatic(&mut beat.events, config.socket.zone_events_per_frame);
         }
-        Digest::new(frame, zones, populations, &headlines, viewers)
+        Digest::new(frame, zones, populations, &headlines, news, viewers)
     }
 
     /// Makes the viewer form of an event.
@@ -167,7 +169,7 @@ mod tests {
 
     use super::*;
     use crate::cache::FeedQuery;
-    use crate::wire::ServerMessage;
+    use crate::wire::{LifeStory, ServerMessage};
 
     /// A cache of one city with two zones side by side, 8 tiles each.
     fn cache(config: &Config) -> Cache {
@@ -385,7 +387,9 @@ mod tests {
         };
         assert_eq!(events[0].actor_name.as_deref(), Some("r5"));
 
-        let gone = cache.profile(ResidentId(5), 10).expect("a profile of the departed");
+        let gone = cache
+            .profile(ResidentId(5), 10, LifeStory::default())
+            .expect("a profile of the departed");
         assert_eq!(
             (gone.alive, gone.zone, gone.frame, gone.cause.as_deref(), gone.name.as_str()),
             (false, ZoneId(0), 2, Some("old_age"), "r5")
@@ -394,9 +398,11 @@ mod tests {
             gone.events.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>(),
             ["kernel.despawned"]
         );
-        let moved = cache.profile(ResidentId(6), 10).expect("a profile of the living");
+        let moved = cache
+            .profile(ResidentId(6), 10, LifeStory::default())
+            .expect("a profile of the living");
         assert_eq!((moved.alive, moved.zone, moved.pos), (true, ZoneId(1), Pos::new(8, 1)));
-        assert_eq!(cache.profile(ResidentId(7), 10), None);
+        assert_eq!(cache.profile(ResidentId(7), 10, LifeStory::default()), None);
         assert_eq!(cache.stats(0, 0, 0).residents, 1);
     }
 

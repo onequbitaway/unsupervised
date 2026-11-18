@@ -163,7 +163,11 @@ describe('the HTTP answers', () => {
       frame: 9,
       events: [],
     };
-    expect(readProfile(profile)).toEqual(profile);
+    // A server without a chronicle sends no life story: the profile has an empty one.
+    const noLife = { jobs: [], homes: [], deals: [], crimes: [], offices: [], moments: [] };
+    expect(readProfile(profile)).toEqual({ ...profile, life: noLife });
+    const born = { event: '1-0', frame: 1, clock, kind: 'kernel.spawned', drama: 10, line: 'Ada arrived in Plaza', zone: 0 };
+    expect(readProfile({ ...profile, life: { born, jobs: [born] } })?.life).toEqual({ ...noLife, born, jobs: [born] });
     const gone = readProfile({ ...profile, model: undefined, activity: undefined, alive: false, cause: 'old_age' });
     expect(gone).toMatchObject({ alive: false, cause: 'old_age' });
     expect(gone).not.toHaveProperty('model');

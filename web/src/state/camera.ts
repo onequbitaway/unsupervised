@@ -106,6 +106,24 @@ export function clampToWorld(cam: Camera, bounds: Rect): Camera {
 }
 
 /**
+ * Keeps the picture inside a rectangle: the camera moves so that the screen
+ * shows nothing outside of it. On an axis where the rectangle is smaller
+ * than the screen, the camera looks at the middle of the rectangle.
+ */
+export function clampView(cam: Camera, view: Size, rect: Rect): Camera {
+  const axis = (at: number, low: number, high: number, pixels: number): number => {
+    const half = pixels / 2 / cam.scale;
+    if (high - low <= half * 2) return (low + high) / 2;
+    return Math.min(Math.max(at, low + half), high - half);
+  };
+  return {
+    ...cam,
+    x: axis(cam.x, rect.x0, rect.x1, view.width),
+    y: axis(cam.y, rect.y0, rect.y1, view.height),
+  };
+}
+
+/**
  * Moves a camera towards a target. After `halfLifeMs` half of the way is
  * left, whatever the frame rate. The scale moves in equal ratios.
  */

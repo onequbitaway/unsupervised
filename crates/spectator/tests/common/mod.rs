@@ -2,11 +2,13 @@
 //!
 //! The town is a kernel plugin with verbs that make exactly the output
 //! that a test needs: a move, a speech event, an event with a chosen drama
-//! score, published state. The simulation runs in manual stepping mode.
+//! score, an event of a chosen kind with chosen data, published state. The
+//! simulation runs in manual stepping mode.
 
 #![allow(dead_code)]
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
@@ -25,9 +27,10 @@ use unsup_kernel::{
 use unsup_protocol::{
     ActionRequest, ActionStatus, CityId, OwnerId, ResidentView, SpawnSpec, WorldView,
 };
+use unsup_runtime::storage::{MemStorage, Storage};
 use unsup_runtime::{RuntimeConfig, RuntimeJoin, SimHandle};
-use unsup_spectator::wire::{ClientMessage, ServerMessage};
-use unsup_spectator::{Config, router_with};
+use unsup_spectator::wire::{Channel, ClientMessage, ServerMessage};
+use unsup_spectator::{Config, router_with_storage};
 
 /// Tiles on one side of a zone of the test world.
 pub const ZONE_SIZE: u32 = 16;
@@ -89,6 +92,35 @@ pub struct BoardArgs {
     /// The resident at the top of the board.
     pub top: ResidentId,
 }
+
+/// Arguments of `report`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct ReportArgs {
+    /// Kind of the event. It must be one of [`REPORT_KINDS`].
+    pub kind: String,
+    /// Drama score of the event.
+    pub drama: u8,
+    /// Data of the event.
+    #[serde(default)]
+    pub data: Value,
+}
+
+/// The kinds of events that `report` can make. The kernel takes the kind
+/// of an event as static text.
+pub const REPORT_KINDS: [&str; 12] = [
+    "crime.theft_committed",
+    "crime.arrest_made",
+    "crime.trial_ended",
+    "economy.lease_started",
+    "economy.worker_hired",
+    "finance.loan_defaulted",
+    "finance.loan_granted",
+    "life.resident_died",
+    "politics.election_decided",
+    "society.contract_breached",
+    "society.opinion_given",
+    "town.news",
+];
 
 /// Arguments of verbs that take none.
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -156,6 +188,19 @@ impl Plugin for Town {
             }
             Ok(Value::Null)
         });
+        b.instant_verb::<ReportArgs>(
+            spec("report", "Make a public event of a kind, with data."),
+            |realm, ctx, args| {
+                let kind =
+                    REPORT_KINDS.iter().find(|kind| **kind == args.kind).ok_or_else(|| {
+                        ActionError::invalid_args("The test town does not know this kind.")
+                    })?;
+                let meta =
+                    EventMeta::public(kind, args.drama).actor(ctx.resident).at(realm.pos(ctx.idx));
+                realm.emit(meta, &args.data);
+                Ok(Value::Null)
+            },
+        );
         b.instant_verb::<BuildArgs>(spec("build", "Build a shop here."), |realm, ctx, args| {
             let pos = realm.pos(ctx.idx);
             let rect = Rect::sized(pos.x, pos.y, 2, 2);
@@ -256,6 +301,11 @@ impl Viewer {
         self.send(&ClientMessage::Subscribe { zones }).await;
     }
 
+    /// Chooses the channels of the show.
+    pub async fn tune(&mut self, channels: &[Channel]) {
+        self.send(&ClientMessage::Tune { channels: channels.to_vec() }).await;
+    }
+
     /// Returns the next message of the feed, or `None` when the server
     /// closed the connection.
     pub async fn try_next(&mut self) -> Option<ServerMessage> {
@@ -307,6 +357,8 @@ pub struct Harness {
     control: Viewer,
     server: JoinHandle<()>,
     join: Option<RuntimeJoin>,
+    /// Frames that the service is behind the simulation.
+    delay: u64,
 }
 
 impl Harness {
@@ -318,17 +370,60 @@ impl Harness {
 
     /// Starts the test world with other limits.
     pub async fn start_with(config: Config, runtime: RuntimeConfig) -> Harness {
-        let (sim, join) = unsup_runtime::start(world(), runtime);
-        let app = router_with(sim.clone(), config).expect("the limits are valid");
+        Harness::start_world(world(), config, runtime, Arc::new(MemStorage::new())).await
+    }
+
+    /// Starts a world with a storage for the service. With a delay of the
+    /// stream in the limits, it first runs that many frames: the service
+    /// answers nobody before.
+    pub async fn start_world(
+        world: World,
+        config: Config,
+        runtime: RuntimeConfig,
+        storage: Arc<dyn Storage>,
+    ) -> Harness {
+        let delay = config.stream.delay_frames;
+        let (sim, join) = unsup_runtime::start(world, runtime);
+        let app = router_with_storage(sim.clone(), config, storage).expect("the limits are valid");
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("a local port");
         let addr = listener.local_addr().expect("the address of the port");
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.expect("the server runs");
         });
+        if delay > 0 {
+            // The service answers nobody until the simulation is `delay`
+            // frames past the frame at which the service read the world.
+            // The harness runs frames until the service answers. A test
+            // cannot know how many these are: it uses the frame numbers
+            // that `step` returns.
+            let client = reqwest::Client::new();
+            let ready = client.get(format!("http://{addr}/v1/spectate/stats")).send();
+            tokio::pin!(ready);
+            loop {
+                tokio::select! {
+                    biased;
+                    answer = &mut ready => {
+                        answer.expect("the service answers after the delay");
+                        break;
+                    }
+                    frame = sim.step(1) => {
+                        frame.expect("step");
+                    }
+                }
+            }
+        }
         let mut control = Viewer::connect(addr).await;
         let first = control.next().await;
         assert!(matches!(first, ServerMessage::World { .. }), "{first:?}");
-        Harness { sim, addr, http: reqwest::Client::new(), control, server, join: Some(join) }
+        Harness {
+            sim,
+            addr,
+            http: reqwest::Client::new(),
+            control,
+            server,
+            join: Some(join),
+            delay,
+        }
     }
 
     /// Connects one more viewer and reads its `world` message.
@@ -363,9 +458,11 @@ impl Harness {
         frame
     }
 
-    /// Waits until the cache has applied a frame.
+    /// Waits until the service has applied what the simulation gave it
+    /// up to a frame: with a delay of the stream, the cache then holds the
+    /// frame that is the delay older.
     pub async fn settle(&mut self, frame: u64) {
-        self.control.until_frame(frame).await;
+        self.control.until_frame(frame - self.delay).await;
     }
 
     /// Runs `frames` frames, one at a time.
@@ -403,10 +500,31 @@ impl Harness {
         }
     }
 
+    /// Sends a POST request without a body and returns the status and
+    /// the JSON body.
+    pub async fn post(&self, path: &str) -> (StatusCode, Value) {
+        let response =
+            self.http.post(format!("http://{}{path}", self.addr)).send().await.expect("a response");
+        let status = response.status();
+        let body = response.json().await.expect("a JSON body");
+        (status, body)
+    }
+
     /// Stops the simulation. The server stays.
     pub fn stop_simulation(&mut self) {
+        self.take_world();
+    }
+
+    /// Stops the simulation and returns its world. The server stays.
+    pub fn take_world(&mut self) -> World {
         let join = self.join.take().expect("the simulation runs");
-        join.shutdown().expect("the simulation stops without a panic");
+        join.shutdown().expect("the simulation stops without a panic")
+    }
+
+    /// Waits until the service has written everything to its storage and
+    /// closed the feed. Call it after the simulation stopped.
+    pub async fn feed_closed(&mut self) {
+        while self.control.try_next().await.is_some() {}
     }
 
     /// Stops the simulation, when it still runs, and the server.

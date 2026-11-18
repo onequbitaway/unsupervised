@@ -252,6 +252,9 @@ export function reduce(state: ViewerState, message: ServerMessage, now: number):
       for (const zone of message.zones) zones.delete(zone);
       return { ...state, zones };
     }
+    // The show has its own state: see `state/show.ts`.
+    case 'director':
+    case 'stories':
     case 'error':
     case 'pong':
       return state;

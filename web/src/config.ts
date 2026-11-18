@@ -170,4 +170,64 @@ export const CONFIG = {
     /** Frames that the speed numbers cover. */
     samples: 600,
   },
+  broadcast: {
+    /** Time in which the camera covers half of the way to a near target. */
+    easeHalfLifeMs: 520,
+    /** A target farther than this many screens gets a cut through black, not a move. */
+    cutScreens: 1.6,
+    /** Time of each half of a cut: to black, and back. */
+    fadeMs: 380,
+    /** Longest time that the picture stays black while the new place loads. */
+    holdMaxMs: 1_400,
+    /** Time that the breaking-news banner stays. */
+    breakingMs: 14_000,
+    /** Time that one card of the side panel stays. */
+    cardMs: 11_000,
+    /** Time between two reads of the boards and of the numbers of the economy. */
+    pollMs: 12_000,
+    /** Time between two reads of the list of boards. */
+    indexMs: 30_000,
+    /** Boards that the side panel shows at most. */
+    maxBoards: 4,
+    /** Rows of one board, and stories of the story card. */
+    rows: 6,
+    /** Cities of the world card. */
+    cities: 6,
+    /** Longest caption and longest headline in the lower third. */
+    captionMax: 110,
+    /** Longest line of a card. */
+    rowMax: 46,
+    /** Longest word in front of the lower third. */
+    tagMax: 18,
+    /** Profiles that the viewer reads at the same time for the names of a board. */
+    nameRequests: 3,
+    /** Names of residents that the viewer remembers for the boards. */
+    namesMax: 400,
+    /** Stories that the viewer remembers. */
+    maxStories: 60,
+    /** How much nearer than the street view the camera is in a close shot. */
+    closeZoom: 1.9,
+    /** How much nearer than the street view the camera is in a street shot of a subject. */
+    streetZoom: 1.25,
+  },
+  clip: {
+    /** Time that one frame of a clip takes in the player. */
+    frameMs: 420,
+    /** Time that the last picture stays before the clip starts again. */
+    endHoldMs: 2_600,
+    /** Time between two reads of a clip that is not complete. */
+    pollMs: 2_500,
+    /** How much nearer than the street view the camera of the player is. */
+    zoom: 1.6,
+  },
+  page: {
+    /** Time between two reads of the profile on the page of a resident. */
+    refreshMs: 6_000,
+    /** Longest line of the life story. */
+    lineMax: 140,
+    /** Longest name of a resident on its page. */
+    nameMax: 40,
+    /** Longest cause of the end of a resident. */
+    causeMax: 32,
+  },
 } as const;

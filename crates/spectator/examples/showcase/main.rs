@@ -11,13 +11,21 @@
 //! cargo run --release -p unsup-spectator --example showcase -- --residents 5000
 //! ```
 //!
-//! Then open `http://127.0.0.1:8090/`. The world is not the game: it has no
+//! Then open `http://127.0.0.1:8090/`, or `/?broadcast=1` for the show. The
+//! driver also plays stories for the director: crimes with an
+//! investigation and a trial, feuds, bankruptcies, elections with
+//! candidates. It publishes boards and numbers of the economy. `--delay`
+//! delays the stream, and `--data-dir` keeps the chronicle and the pinned
+//! clips on the disk.
+//!
+//! The world is not the game: it has no
 //! money, no needs and no rules. Some residents say text that tries to
 //! break a viewer (markup, very long text, control characters); the viewer
 //! must show it as plain text.
 
 mod map;
 mod numbers;
+mod plots;
 mod town;
 
 use std::net::SocketAddr;
@@ -62,6 +70,13 @@ struct Args {
     /// Directory with the built viewer.
     #[arg(long, default_value = "web/dist")]
     web_dir: PathBuf,
+    /// Frames that viewers are behind the simulation.
+    #[arg(long, default_value_t = 0)]
+    delay: u64,
+    /// Directory for the chronicle and the pinned clips. Without it they
+    /// live in memory.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
 }
 
 const CITIES: [&str; 6] =
@@ -158,16 +173,58 @@ fn request(driver: &Driver, dice: &mut Dice, other: ResidentId) -> (&'static str
 /// Sends requests for residents, like agents would, until the simulation
 /// stops.
 async fn drive(sim: SimHandle, mut residents: Vec<ResidentId>, numbers: Numbers, args: &Args) {
-    let driver = numbers.driver;
+    let driver = numbers.driver.clone();
     let mut dice = Dice(args.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let mut next_name = residents.len() as u64;
     let mut ticker = tokio::time::interval(Duration::from_millis(args.tick_ms.max(1)));
     let mut frame: u64 = 0;
+    // The events of the stories that wait for their frame.
+    let mut waiting: Vec<plots::Step> = Vec::new();
+    let election_every = driver.election_every.max(1);
     loop {
         ticker.tick().await;
         frame += 1;
         if residents.is_empty() {
             continue;
+        }
+        // The stories: what starts now, the campaign of the next election,
+        // and the published state.
+        let pick = |n: u64| residents[(n % residents.len() as u64) as usize];
+        waiting.extend(plots::start(frame, &numbers, &pick));
+        if (frame + numbers.plots.campaign_frames).is_multiple_of(election_every) {
+            let decided = frame + numbers.plots.campaign_frames;
+            waiting.extend(plots::campaign(decided, decided / election_every % 2, &numbers, &pick));
+        }
+        if frame % numbers.plots.stats_every.max(1) == 1 {
+            let data = plots::stats(frame, residents.len() as u64);
+            waiting.push(plots::Step {
+                due: frame,
+                actor: pick(0),
+                verb: "declare",
+                args: json!({ "kind": "finance.stats_published", "drama": 0, "data": data }),
+            });
+        }
+        if frame % numbers.plots.boards_every.max(1) == 2 {
+            for data in plots::boards(frame, &numbers, &pick) {
+                waiting.push(plots::Step {
+                    due: frame,
+                    actor: pick(0),
+                    verb: "declare",
+                    args: json!({ "kind": "missions.leaderboard_published", "drama": 0, "data": data }),
+                });
+            }
+        }
+        let (due, later): (Vec<plots::Step>, Vec<plots::Step>) =
+            std::mem::take(&mut waiting).into_iter().partition(|step| step.due <= frame);
+        waiting = later;
+        for step in due {
+            // A resident of a story can be dead by now. The event is then
+            // refused, and the story goes on without it.
+            if let Err(SimError::Shutdown) =
+                sim.act(step.actor, ActionRequest::new(step.verb, step.args)).await
+            {
+                return;
+            }
         }
         let count = (residents.len() as u64 / driver.one_in.max(1)).max(1);
         for _ in 0..count {
@@ -188,9 +245,12 @@ async fn drive(sim: SimHandle, mut residents: Vec<ResidentId>, numbers: Numbers,
                 Err(_) => return,
             }
         }
-        if frame.is_multiple_of(driver.election_every.max(1)) {
-            let winner = residents[dice.roll(residents.len() as u64) as usize];
-            let _ = sim.act(winner, ActionRequest::new("win_election", json!({}))).await;
+        if frame.is_multiple_of(election_every) {
+            // The first candidate of the campaign wins.
+            let winner = residents[((frame * 3) % residents.len() as u64) as usize];
+            let city = frame / election_every % 2;
+            let _ =
+                sim.act(winner, ActionRequest::new("win_election", json!({ "city": city }))).await;
         }
     }
 }
@@ -227,7 +287,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         residents.push(sim.spawn(spec(number, city)).await?);
     }
 
-    let mut app = unsup_spectator::router(sim.clone());
+    let mut config = unsup_spectator::Config::default();
+    config.stream.delay_frames = args.delay;
+    let app = match &args.data_dir {
+        Some(dir) => {
+            let storage = unsup_runtime::storage::FsStorage::open(dir)?;
+            unsup_spectator::router_with_storage(sim.clone(), config, std::sync::Arc::new(storage))?
+        }
+        None => unsup_spectator::router_with(sim.clone(), config)?,
+    };
+    let mut app = app;
     if args.web_dir.is_dir() {
         app = app.fallback_service(ServeDir::new(&args.web_dir));
     } else {
