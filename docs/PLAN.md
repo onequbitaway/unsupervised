@@ -26,15 +26,15 @@ This file is the working memory of the build. It is updated after each event.
 
 | Workstream | Branch | Owns | State |
 | --- | --- | --- | --- |
-| runtime | `feat/runtime` | `crates/runtime` | todo |
-| life | `feat/life` | `crates/modules/life`, `docs/design/modules/life.md` | todo |
-| economy | `feat/economy` | `crates/modules/economy`, `docs/design/modules/economy.md` | todo |
-| finance | `feat/finance` | `crates/modules/finance`, `docs/design/modules/finance.md` | todo |
-| society | `feat/society` | `crates/modules/society`, `docs/design/modules/society.md` | todo |
-| gateway | `feat/gateway` | `crates/gateway`, `crates/store`, `crates/server` (not `plugins.rs`) | todo |
-| viewer | `feat/viewer` | `web/`, `crates/spectator` | todo |
-| sdk | `feat/sdk` | `sdk/`, `agents/`, `docs/join.md` | todo |
-| loadtest | `feat/loadtest` | `crates/loadtest` | todo |
+| runtime | `feat/runtime` | `crates/runtime` | running |
+| life | `feat/life` | `crates/modules/life`, `docs/design/modules/life.md` | running |
+| economy | `feat/economy` | `crates/modules/economy`, `docs/design/modules/economy.md` | running |
+| finance | `feat/finance` | `crates/modules/finance`, `docs/design/modules/finance.md` | running |
+| society | `feat/society` | `crates/modules/society`, `docs/design/modules/society.md` | running |
+| gateway | `feat/gateway` | `crates/gateway`, `crates/store`, `crates/server` (not `plugins.rs`) | running |
+| viewer | `feat/viewer` | `web/`, `crates/spectator` | running |
+| sdk | `feat/sdk` | `sdk/`, `agents/`, `docs/join.md` | running |
+| loadtest | `feat/loadtest` | `crates/loadtest` | running |
 
 ## Wave 2 (parallel, after wave 1 merges)
 
