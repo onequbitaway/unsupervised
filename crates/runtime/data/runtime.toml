@@ -61,3 +61,21 @@ max_divisor = 10
 smoothing = 4
 # Measurements in a row below the relax threshold before a zone runs faster.
 calm_ticks = 8
+
+[cluster]
+# Milliseconds that the coordinator waits for all workers to join.
+join_timeout_ms = 30000
+# Milliseconds that a worker tries to connect to the coordinator.
+connect_timeout_ms = 30000
+# Milliseconds between two tries of a worker to connect, and between two
+# looks of the coordinator for a new connection.
+retry_ms = 10
+# Milliseconds that a process waits for the answer of another process. When
+# they pass, the cluster stops.
+reply_timeout_ms = 60000
+# Greatest size of one transport frame in bytes. A larger frame stops the
+# cluster.
+max_frame_bytes = 268435456
+# Number of seals that each realm keeps. A seal marks a point to which the
+# whole cluster can recover. Each frame makes one seal.
+seals_keep = 512

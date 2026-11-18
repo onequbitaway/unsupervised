@@ -219,13 +219,10 @@ impl DurableJournal {
                 // The first snapshot comes before the first segment. A
                 // crash between the two leaves a world that a recovery can
                 // read.
-                let meta = SnapshotMeta {
-                    frame: world.frame(),
-                    seq: 0,
-                    segment: id.index,
-                    state_hash: world.state_hash(),
-                };
-                snapshot::write(&*storage, &meta, &world.snapshot())?;
+                let (payload, state_hash) = world.snapshot_with_hash();
+                let meta =
+                    SnapshotMeta { frame: world.frame(), seq: 0, segment: id.index, state_hash };
+                snapshot::write(&*storage, &meta, &payload)?;
                 (meta.frame, meta.seq)
             }
         };
@@ -269,8 +266,8 @@ impl DurableJournal {
     /// With `wait` it returns when the snapshot is on the disk.
     fn capture(&mut self, world: &World, wait: bool) {
         let start = Instant::now();
-        let payload = world.snapshot();
-        let state_hash = world.state_hash();
+        // One pass over the state gives the bytes and the hash.
+        let (payload, state_hash) = world.snapshot_with_hash();
         self.capture_micros = micros(start.elapsed());
         let meta = SnapshotMeta {
             frame: world.frame(),

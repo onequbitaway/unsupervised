@@ -3,7 +3,8 @@
 `unsup-runtime` drives a `World` in real time. It owns the simulation
 thread, the input log, the snapshots, recovery, replay, time dilation and
 rollback. The gateway and the spectator service reach the world only
-through `SimHandle`.
+through `SimHandle`. The runtime can also run one world as a cluster of
+processes (section 14).
 
 The contract is `docs/design/architecture.md`, section 6. This document
 gives the formats, the rules and the limits of the implementation.
@@ -26,6 +27,7 @@ gives the formats, the rules and the limits of the implementation.
 | Recovery and replay | `src/replay.rs` | From storage back to a world |
 | Time dilation | `src/dilation.rs` | The pacer that makes slow zones skip frames |
 | Outside messages | `src/external.rs` | A message from a service to the global realm |
+| Cluster | `src/cluster/` | One world in several processes (section 14) |
 | Numbers | `data/runtime.toml` | Every tunable number |
 
 ## 2. How to start a durable world
@@ -165,8 +167,9 @@ that moment.
 - The journal keeps the newest `snapshots.keep` snapshots. It deletes the
   older ones, and the log segments that only they need.
 
-The simulation thread serializes the world and computes the state hash.
-A second thread writes the file. That thread first forces the log to the
+The simulation thread serializes the world and computes the state hash
+in one pass over the state (`World::snapshot_with_hash`). A second thread
+writes the file. That thread first forces the log to the
 disk, so a snapshot is never newer than the log on the disk.
 
 `SimStats` has the frame of the last snapshot, the time that the
@@ -300,20 +303,34 @@ cargo run --release -p unsup-runtime --example throughput
 
 ## 11. Messages from outside
 
-`SimHandle::send_global(&message)` sends a typed message from a service
+`SimHandle::post_global(&message)` sends a typed message from a service
 outside the simulation to the global realm. The message type implements
 `unsup_kernel::Message`. A module takes the message with
 `Builder::on_message` in the global scope.
 
+- The kernel makes the envelope (`Envelope::module`).
 - The message becomes `Input::Deliver`. It is in the log, and a recovery
   or a replay delivers it again.
 - The handler runs at the start of the next frame.
 - The handler sees `RealmId::Global` as the sender. Give a message from
   outside a `KIND` of its own.
-- Use the message type of the module itself. A handler panics on a payload
-  that it cannot read.
 - `Ok` means that the world has the message. A module answers through an
   event or a notice.
+
+The runtime refuses a message before it is an input. The world does not
+change and the log does not get the message. `PostError` gives the reason:
+
+| `PostError` | Reason |
+| --- | --- |
+| `Unreadable { kind, reason }` | The message cannot be written as MessagePack, or it does not read back |
+| `NoHandler { kind }` | No module handles this kind in the global realm (`Blueprint::handles_message`) |
+| `Sim(SimError::NotHosted)` | Another process hosts the global realm |
+| `Sim(SimError::Overloaded)` | The mailbox is full, or the journal cannot record the message |
+| `Sim(SimError::Shutdown)` | The simulation stopped |
+
+`SimHandle::send_global` is the same call with the error as a `SimError`.
+`Unreadable` and `NoHandler` become `SimError::Invalid`, and the log of the
+server names the reason.
 
 ## 12. Numbers
 
@@ -328,19 +345,350 @@ A host changes a number through the fields of those types.
   before the next write. A recovery then applies the record.
 - An input that is larger than `log.max_record_bytes` gets
   `SimError::Overloaded`, not `SimError::Invalid`.
-- The runtime cannot check that the type of an outside message is the
-  type that the module registered. The kernel has no public way to ask.
-- A message that no module takes is dropped by the global realm. The call
-  still returns `Ok`.
+- The runtime checks the kind of an outside message, not its type. A
+  message with the right kind and other fields gets into the log. The
+  kernel then drops it in the global realm and counts it in
+  `World::dropped_messages`.
 - The simulation thread stands still while it serializes the world and
-  computes the state hash. Both walk the whole state.
+  computes the state hash. One pass over the whole state gives both.
 - The simulation thread looks for a due frame only between two batches. A
   journal that is slow for each input (`EveryRecord`) makes frames late
   when the batch is large.
 - `FsStorage::open` takes the lock of the directory. A tool that only
   reads, such as the replay check, cannot open the directory of a server
   that runs. Copy the directory first.
-- A world that does not host all realms has an outbox for other
-  processes. The runtime does not send that outbox anywhere.
+- `start` drives one world and does not send its outbox for other
+  processes anywhere. A world that does not host all realms needs the
+  cluster (section 14).
 - The catalogue of `SimHandle::catalogue` is the one at the start. A
   rollback or a parameter change does not update it.
+
+## 14. The cluster
+
+A cluster runs one world in several processes. The state of every realm is
+the state that one process reaches with the same inputs. So more
+processes are a change of the deployment, not of the modules.
+
+### Topology
+
+```text
+        gateway, spectator
+               |  ClusterHandle (a SimHandle)
+        +-------------+
+        | coordinator |   global realm, frame clock, directory, router
+        +-------------+
+          |    |    |     TCP, one connection per worker
+     +------+ +------+ +------+
+     |worker| |worker| |worker|   each hosts a set of zones
+     +------+ +------+ +------+
+```
+
+- The **coordinator** hosts the global realm. It owns the frame clock and
+  the mailbox of the handle. It routes every message between two realms.
+- A **worker** hosts a set of zones. `ClusterConfig::workers` gives each
+  worker slot its zones; `partition` splits the zones in rows of numbers.
+- Workers talk only to the coordinator. A message from a zone of one
+  worker to a zone of the same worker also goes through the coordinator.
+- Each realm has a kernel `World` of its own, which hosts only that realm.
+  The kernel routes a message between two realms of one world by itself,
+  in an order that depends on the set of realms in that world. With one
+  realm per world, every message leaves through `World::take_external`,
+  and one router gives every realm its messages in the order of the single
+  process.
+
+| Part | File | Job |
+| --- | --- | --- |
+| Coordinator | `src/cluster/coordinator/` | Start, mailbox loop, frames, inputs, reads |
+| Worker | `src/cluster/worker.rs`, `session.rs` | Handshake, and the loop that answers the coordinator |
+| One realm | `src/cluster/cell.rs` | A world with one realm, its journal and its seals |
+| Router | `src/cluster/plan.rs` | Which zone gets which message, in which order |
+| Directory | `src/cluster/lookup.rs` | In which zone a resident is |
+| Transport | `src/cluster/wire.rs`, `proto.rs`, `link.rs` | Frames, messages, the connection to a worker |
+| Seals | `src/cluster/seals.rs` | The points to which the cluster can recover |
+| Handle | `src/cluster/handle.rs` | `ClusterHandle` and `ClusterJoin` |
+
+### How to start
+
+```rust
+let coordinator = Coordinator::bind("127.0.0.1:7000")?;
+// In each worker process:
+//   run_worker(plugins, WorkerConfig::new(world_config, slot, address))?;
+let config = ClusterConfig::real_time(world_config, 3, Duration::from_secs(1));
+let (handle, join) = coordinator.start(plugins, config)?;
+// `handle` has every method of `SimHandle`. `handle.sim()` is a `SimHandle`.
+join.shutdown()?; // a stop in order: every process writes its final snapshots
+```
+
+`Coordinator::start` returns when every worker has joined and every realm
+is ready. A worker can start before the coordinator: it tries to connect
+until `WorkerConfig::connect_timeout` has passed.
+
+A `ClusterHandle` is a `SimHandle` with more calls: `cluster_stats`,
+`hashes`, `snapshots` and `audit`. The coordinator sends each call to the
+process that hosts the resident or the realm. `audit` checks the ledgers
+of every world and the union of all processes: nothing is created or lost,
+also not on the way between two processes.
+
+### Transport and handshake
+
+A connection carries frames. A frame is a length of four bytes
+(little-endian) and a payload. The payload is one protocol message as
+MessagePack with field names. A frame larger than
+`cluster.max_frame_bytes` stops the cluster. A kernel envelope travels as
+the bytes of `Envelope::to_bytes`.
+
+The coordinator asks and the worker answers: each message of the
+coordinator has exactly one answer. The handshake:
+
+1. The worker sends `Hello`: the protocol version, the hash of the world
+   configuration, the hash of the set of plugins, and its slot.
+2. The coordinator checks them. It answers `Welcome` with the zones of the
+   slot, or `Refuse` with the reason. The reason says which of the four
+   is wrong.
+3. The worker sends the seals that the storage of each zone holds.
+4. When all workers have joined, the coordinator sends `Begin`: make new
+   worlds, or recover to one seal.
+5. The worker makes or recovers its worlds and sends `Ready`.
+
+The hash of the world configuration covers every field but `hosted`. The
+hash of the set of plugins covers the plugin names in their order and the
+catalogue: verbs with argument schemas, parameters with values, items,
+attributes and conditions.
+
+### The frame protocol
+
+One process runs a frame in three steps (`World::apply` in the kernel).
+The cluster runs the same three steps. The coordinator waits for every
+answer of a step before it starts the next step.
+
+1. **Zones.** The coordinator sends `Step` with the list of zones that
+   skip the frame. Each worker ticks its zones in parallel. It answers
+   with the viewer output of each zone, the tick time of each zone and
+   every message that each zone sent.
+2. **Global realm.** The coordinator gives the global realm the messages
+   of the zones for it, in zone order. Then the global realm ticks.
+3. **Exchange.** The coordinator makes one batch for each zone:
+   - first the residents that arrive, in the order of the zones that they
+     left;
+   - then the messages of the global realm, in sending order;
+   - then the messages of the zones, in zone order, each zone in sending
+     order.
+
+   A message for a resident goes to the zone in which the resident is
+   after the arrivals. Each worker gives its zones their batches and
+   answers. Then every realm writes a seal.
+
+The order of the messages comes from the zone numbers and the sending
+order. It does not come from the time at which a worker answers. So the
+result does not depend on timing, and it does not depend on the split of
+the zones over the workers.
+
+Time dilation works as in one process. The workers measure the zone tick
+times. The pacer of the coordinator (`ClusterConfig::pacer`) decides the
+`skip` list, and every realm records it in its log.
+
+### Inputs between frames
+
+The coordinator applies one input at a time. It sends the input to the
+world of the right realm and waits for the answer. Then it gives every
+message that the input made to its target, one after the other. The
+caller gets its answer after that. So all worlds see inputs and their
+messages in one order, as one process does.
+
+- A spawn goes to the world of the spawn zone (`ClusterConfig::spawn_zone`).
+- An action and a command for a resident go to the zone of the resident.
+- A parameter change and a message from outside go to the global realm.
+- An observation comes from the zone of the resident.
+- The layout view comes from the coordinator. A zone view comes from the
+  worker of the zone.
+- The coordinator keeps the `wait` calls. After a frame it asks each
+  worker once for the observations of the residents that got news.
+
+### The directory
+
+The kernel keeps the directory of residents in the global realm. Zones
+tell it about each spawn, migration and despawn. It is exact after the
+tick of the global realm. Between two frames, the coordinator adds what
+the inputs since that tick did: the worker of a zone reports each resident
+that arrives.
+
+The kernel of each world also decides if a resident exists. A world knows
+a resident when the resident is in it or has passed through it. So the
+coordinator passes every resident that migrates through the world of the
+global realm on the way to its new zone. That world then knows every
+resident that has changed zone, and the global realm can answer them.
+
+A message for a resident that left the world goes to the world of the zone
+in which it left. The kernel there applies its rule for a resident that is
+gone: a wire goes to the unclaimed account of the global realm, and
+everything else is dropped.
+
+### Failure rules
+
+A cluster never goes on without one of its processes.
+
+- The coordinator sees that a worker is gone when the connection closes,
+  when a write fails, or when an answer does not come in
+  `ClusterConfig::reply_timeout`. A thread reads each connection, so the
+  coordinator also sees it while nobody calls the cluster.
+- The coordinator then tells every other worker to stop, with the reason.
+  It runs no more frames. Every call fails with `SimError::Shutdown`, and
+  the stream of frames ends. `ClusterJoin::shutdown` returns the error,
+  for example `ClusterError::WorkerLost { slot, reason }`.
+- A worker stops when the coordinator tells it to, and when its connection
+  closes. `run_worker` returns the error.
+- A panic in a zone stops the worker of the zone. The worker first takes
+  the input that caused the panic out of its log and tells the coordinator
+  the zone and the panic message (`ClusterError::Failed`).
+- A journal that cannot record an input of a resident refuses that input:
+  the caller gets `SimError::Overloaded` and nothing changes. A journal
+  that cannot record a frame or a message between realms stops the
+  cluster. One realm cannot refuse a frame that the others ran.
+- A message that the frame protocol does not allow stops the cluster
+  (`ClusterError::Protocol`).
+
+### Reconnect rules
+
+- Before the cluster runs, a worker tries to connect until its time limit.
+- A connection that fails the handshake is refused. Its slot stays free
+  for the right worker. A second worker for a slot that is taken is
+  refused.
+- When a slot is still free after `ClusterConfig::join_timeout`, the start
+  fails. The workers that joined stop.
+- The coordinator closes its socket when the cluster runs. No worker joins
+  a cluster that runs.
+- A connection that breaks is final. A process cannot connect again and
+  go on. Start every process again; the cluster then recovers.
+
+### Input log, snapshots and recovery
+
+Each process has one storage (`ClusterDurable`). Each realm of the process
+has a directory in it: `global`, `zone-00000`, `zone-00001` and so on. A
+directory holds the input log and the snapshots of that realm, in the
+formats of sections 4 and 5, and the file `seals`. Every message that a
+realm gets from another realm is an input in its log.
+
+A **seal** is a point at which every realm had taken every message that
+was sent to it. The coordinator numbers the seals. Each realm writes down,
+for each seal, the number of inputs in its log at that point.
+
+```text
+file   = "UNSUPSEA" | version u32 | record*
+record = epoch u64 | frame u64 | seq u64 | check u32
+```
+
+- Seal 0 is the start of a new world, after world generation.
+- Every frame ends with a seal.
+- A stop in order writes one more seal when inputs came after the last
+  frame. So a stop in order loses nothing.
+- A snapshot is taken at a seal.
+- A realm keeps the newest `cluster.seals_keep` seals.
+
+When the processes die, they stop at different inputs. At the next start
+each process reports the seals that it can recover to: the log must hold
+every input before the seal, and a snapshot at or before it must exist.
+The coordinator takes the newest seal that every realm has. Every realm
+goes back to that seal: it restores a snapshot, replays its log up to the
+seal and drops the later inputs for good. The whole cluster is then at one
+frame.
+
+- Inputs after the last seal are lost when a process dies: at most the
+  inputs since the last frame. A stop in order loses none.
+- The start fails when no seal is common to all realms, and when a realm
+  has a world that ran frames but no seal that can be used. The cluster
+  does not start a new world next to an old one. The error names the
+  realm.
+- A start that was cut off before seal 0 was in every realm starts again
+  as a new world. No input came before that seal.
+
+### Numbers
+
+`SimHandle::stats` works for a cluster. Frame times are those of a whole
+cluster frame. Journal numbers are sums over all realms. `ClusterStats`
+has the numbers that only a cluster has:
+
+| `ClusterStats` field | Meaning |
+| --- | --- |
+| `frame`, `epoch` | The last frame and the last seal |
+| `workers` | Per worker: zones, residents, bytes sent and received, time of the last step |
+| `migrations`, `messages` | Residents that changed zone, and messages that the coordinator routed |
+| `dropped_messages` | Messages that the kernel dropped in any world |
+| `last_zones_micros`, `last_global_micros`, `last_exchange_micros` | The three steps of the last frame |
+| `zones_micros`, `global_micros`, `exchange_micros` | The same, summed over all frames |
+
+### The example
+
+The example `cluster` runs one load in one process and then in a cluster.
+The coordinator is the example process. Each worker is a child process.
+The load is a crowd that walks across the zone borders.
+
+```sh
+cargo run --release -p unsup-runtime --example cluster
+cargo run --release -p unsup-runtime --example cluster -- WORKERS RESIDENTS FRAMES DISTRICTS ZONE_SIZE
+cargo run --release -p unsup-runtime --example cluster -- crash
+```
+
+It prints the frame time and the input rate of both runs and the time of
+each step of a cluster frame. Then it compares the state of every realm of
+both runs. `crash` kills one worker process and shows that the cluster
+stops.
+
+All processes of the example share the processors of one machine. One
+process already ticks its zones in parallel on those processors. So the
+example cannot show that a cluster is faster. It shows that the cluster
+gives the same world, and what the protocol costs for each frame and each
+input.
+
+### Limits
+
+The first six limits come from the kernel, which this crate must not
+change. The tests in `tests/cluster_limits.rs` hold each of them in place:
+each test shows what one process does and what the cluster does instead.
+
+- **A world treats a resident that it has never seen as gone.** The kernel
+  of the sender drops a notice or a module message for such a resident
+  and sends a wire to the unclaimed account. The coordinator does not get
+  the message. So:
+  - A zone can reach a living resident only when the resident is in the
+    zone or has been in it.
+  - The global realm can reach a living resident only after the resident
+    has changed zone one time. Before that, a verb of the global realm
+    gets no answer and ends with its timeout.
+
+  `ClusterStats::dropped_messages` counts these messages.
+- **One world gives out the resident ids.** So every resident is made in
+  the spawn zone. A spawn in a city that the spawn zone is not in fails
+  with `SimError::NotHosted`. A spawn without a city goes to the city of
+  the spawn zone, not to the emptiest city. Only spawn sites of the spawn
+  zone are used.
+- **A zone gets its own messages first.** The world of a zone gives a
+  message of the zone to itself (`Dest::Zone` of its own number, its copy
+  of `Dest::AllZones`) before the coordinator brings the messages of the
+  global realm and of the lower zones. One process gives them in zone
+  order. The inbox order of that zone can differ in such a frame.
+- **An observation has no section of the global realm.** The kernel builds
+  those sections only in a world that hosts the zone of the resident.
+- **A viewer sees a resident enter a zone one frame after it left the
+  other zone.** The world of a zone gives its viewer output only when it
+  runs a frame, and the resident arrives after that. The state is not
+  affected.
+- The state bytes of a realm differ from one process while the realm holds
+  a message of another realm in its inbox. The kernel marks such a
+  message. The realm takes the message in its next tick, and the bytes are
+  the same again. `ClusterHandle::hashes` gives the hashes of worlds with
+  one realm each. They compare between clusters, not with a world of one
+  process.
+- The handshake cannot see a change in the code of a plugin that does not
+  change the catalogue, for example another number in the code of a
+  system.
+- The coordinator applies one input at a time and waits for its answer.
+  The input rate is at most one round trip per input. Every message
+  between two zones passes through the coordinator.
+- `SimHandle::rollback` answers `RollbackError::Unsupported` for a
+  cluster.
+- Each realm has a journal of its own: with `DurableJournal`, one snapshot
+  thread and, with the `Interval` policy, one sync thread per realm.
+- A process cannot join again after its connection broke. All processes
+  start again.
+- The transport has no encryption and no login. Use it on one machine or
+  on a private network.
