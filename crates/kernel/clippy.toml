@@ -1,0 +1,10 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order is not deterministic; use BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order is not deterministic; use BTreeSet" },
+]
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "simulation code must not read the wall clock" },
+    { path = "std::time::SystemTime::now", reason = "simulation code must not read the wall clock" },
+]

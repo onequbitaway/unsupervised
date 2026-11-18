@@ -1,0 +1,28 @@
+# Rust
+/target/
+**/target/
+
+# JavaScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Runtime data written by the server (database, snapshots, logs)
+/var/
+
+# Parallel checkouts used during development
+/.worktrees/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log
