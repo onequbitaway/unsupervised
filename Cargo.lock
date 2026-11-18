@@ -2404,7 +2404,9 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "unsup-finance",
  "unsup-kernel",
+ "unsup-society",
 ]
 
 [[package]]

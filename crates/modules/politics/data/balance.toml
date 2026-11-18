@@ -1,1 +1,498 @@
 # Balance numbers of the politics module. See docs/design/architecture.md, section 7.
+# docs/design/modules/politics.md says how the module uses each number.
+#
+# Money is in cents. A day is a game day of 1,440 game minutes.
+
+# ---- Calendar ---------------------------------------------------------------
+
+[params."politics.city_term_days"]
+value = 14
+min = 1
+max = 365
+policy = false
+summary = "Game days between two regular elections of a city."
+
+[params."politics.nation_term_days"]
+value = 28
+min = 1
+max = 365
+policy = false
+summary = "Game days between two regular elections of the nation."
+
+[params."politics.city_first_vote_day"]
+value = 3
+min = 1
+max = 365
+policy = false
+summary = "Day of the world, from 1, of the first voting day of every city."
+
+[params."politics.nation_first_vote_day"]
+value = 5
+min = 1
+max = 365
+policy = false
+summary = "Day of the world, from 1, of the first voting day of the nation."
+
+[params."politics.registration_days"]
+value = 1
+min = 1
+max = 28
+policy = false
+summary = "Game days that the registration window of an election lasts."
+
+[params."politics.campaign_days"]
+value = 1
+min = 0
+max = 28
+policy = false
+summary = "Game days between the end of the registration window and the voting day."
+
+[params."politics.polls_open_minute"]
+value = 360
+min = 0
+max = 1439
+policy = false
+summary = "Minute of the voting day at which the polls open."
+
+[params."politics.polls_close_minute"]
+value = 1200
+min = 1
+max = 1440
+policy = false
+summary = "Minute of the voting day at which the polls close and the votes are counted."
+
+# ---- Offices ----------------------------------------------------------------
+
+[params."politics.council_seats"]
+value = 5
+min = 1
+max = 25
+policy = true
+summary = "Seats of a city council."
+
+[params."politics.legislature_seats"]
+value = 7
+min = 1
+max = 51
+policy = true
+summary = "Seats of the national legislature."
+
+[params."politics.police_officers_max"]
+value = 6
+min = 0
+max = 100
+policy = true
+summary = "Greatest number of police officers of one city."
+
+[params."politics.judges_max"]
+value = 2
+min = 0
+max = 20
+policy = true
+summary = "Greatest number of judges of one city."
+
+# ---- Candidates and votes ---------------------------------------------------
+
+[params."politics.candidate_fee"]
+value = 5000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that `register_candidate` costs. The fee goes to the treasury of the government."
+
+[params."politics.platform_max"]
+value = 280
+min = 1
+max = 2000
+policy = false
+summary = "Greatest length of the platform text of a candidate, in bytes."
+
+[params."politics.candidates_max"]
+value = 12
+min = 1
+max = 100
+policy = false
+summary = "Greatest number of candidates of one election."
+
+[params."politics.win_votes_min"]
+value = 1
+min = 0
+max = 1000000
+policy = false
+summary = "Least number of votes with which a candidate can win a seat."
+
+[params."politics.voter_min_age"]
+value = 1440
+min = 0
+max = 40320
+policy = true
+summary = "Game minutes that a resident must have lived before it can vote, start a recall or sign one."
+
+[params."politics.close_margin"]
+value = 1
+min = 0
+max = 1000
+policy = false
+summary = "An election is close when the last winner leads the best loser by this many votes or fewer."
+
+# ---- Campaign ---------------------------------------------------------------
+
+[params."politics.campaign_minutes"]
+value = 30
+min = 1
+max = 720
+policy = false
+summary = "Game minutes that one `campaign` action takes."
+
+[params."politics.campaign_cost_min"]
+value = 100
+min = 1
+max = 1000000
+policy = false
+summary = "Least number of cents that one `campaign` action spends."
+
+[params."politics.campaign_radius_base"]
+value = 6
+min = 0
+max = 64
+policy = false
+summary = "Tiles at which residents hear a rally of the least cost."
+
+[params."politics.campaign_cents_per_tile"]
+value = 100
+min = 1
+max = 1000000
+policy = false
+summary = "Cents of campaign money that add one tile to the reach of a rally."
+
+[params."politics.campaign_radius_max"]
+value = 24
+min = 0
+max = 64
+policy = false
+summary = "Greatest reach of a rally in tiles."
+
+# ---- Laws -------------------------------------------------------------------
+
+[params."politics.bill_voting_minutes"]
+value = 720
+min = 1
+max = 40320
+policy = false
+summary = "Game minutes that the members have to vote on a bill."
+
+[params."politics.bill_sign_minutes"]
+value = 360
+min = 1
+max = 40320
+policy = false
+summary = "Game minutes that the executive has to sign or veto a bill. After that the bill becomes law."
+
+[params."politics.bill_override_minutes"]
+value = 360
+min = 1
+max = 40320
+policy = false
+summary = "Game minutes that the members have to override a veto."
+
+[params."politics.quorum_permille"]
+value = 500
+min = 0
+max = 1000
+policy = false
+summary = "Part of the members, in thousandths, whose votes a decision needs."
+
+[params."politics.override_num"]
+value = 2
+min = 1
+max = 1000
+policy = false
+summary = "Numerator of the part of the votes cast that overrides a veto."
+
+[params."politics.override_den"]
+value = 3
+min = 1
+max = 1000
+policy = false
+summary = "Denominator of the part of the votes cast that overrides a veto."
+
+[params."politics.bills_open_max"]
+value = 5
+min = 1
+max = 100
+policy = false
+summary = "Greatest number of open bills of one government."
+
+[params."politics.bill_text_max"]
+value = 280
+min = 1
+max = 2000
+policy = false
+summary = "Greatest length of the reason text of a bill, in bytes."
+
+[params."politics.register_max"]
+value = 20
+min = 0
+max = 500
+policy = false
+summary = "Closed bills that the public register keeps for each government."
+
+# ---- Salaries, in cents for one game day -------------------------------------
+
+[params."politics.salary_mayor"]
+value = 8000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that a mayor gets each game day from the city treasury."
+
+[params."politics.salary_councillor"]
+value = 3000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that a member of a city council gets each game day from the city treasury."
+
+[params."politics.salary_president"]
+value = 12000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that the president gets each game day from the national treasury."
+
+[params."politics.salary_legislator"]
+value = 4000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that a member of the legislature gets each game day from the national treasury."
+
+[params."politics.salary_police_chief"]
+value = 6000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that a police chief gets each game day from the city treasury."
+
+[params."politics.salary_police_officer"]
+value = 5000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that a police officer gets each game day from the city treasury."
+
+[params."politics.salary_judge"]
+value = 6000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that a judge gets each game day from the city treasury."
+
+[params."politics.salary_central_banker"]
+value = 8000
+min = 0
+max = 10000000
+policy = true
+summary = "Cents that the central banker gets each game day from the national treasury."
+
+# ---- Recall -----------------------------------------------------------------
+
+[params."politics.recall_days"]
+value = 2
+min = 1
+max = 28
+policy = false
+summary = "Game days that a recall petition stays open."
+
+[params."politics.recall_signatures_min"]
+value = 3
+min = 1
+max = 1000000
+policy = false
+summary = "Least number of signatures that a recall needs."
+
+[params."politics.recall_permille"]
+value = 100
+min = 0
+max = 1000
+policy = false
+summary = "Part of the residents of the city or the nation, in thousandths, whose signatures a recall needs."
+
+# ---- Public state and observation -------------------------------------------
+
+[params."politics.publish_minutes"]
+value = 5
+min = 1
+max = 1440
+policy = false
+summary = "Least number of game minutes between two publications of public state."
+
+[params."politics.brief_list_max"]
+value = 4
+min = 1
+max = 50
+policy = false
+summary = "Greatest number of entries in each list of the `politics` section with brief detail."
+
+# ---- Drama scores of the events, 0 to 100 -----------------------------------
+
+[params."politics.drama_routine"]
+value = 2
+min = 0
+max = 100
+policy = false
+summary = "Drama of published state and of paid salaries."
+
+[params."politics.drama_election_called"]
+value = 15
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.election_called`."
+
+[params."politics.drama_candidate_registered"]
+value = 20
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.candidate_registered`."
+
+[params."politics.drama_donation"]
+value = 5
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.donation_made`."
+
+[params."politics.drama_rally"]
+value = 25
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.rally_held`."
+
+[params."politics.drama_polls_opened"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.polls_opened`."
+
+[params."politics.drama_lead_changed"]
+value = 45
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.lead_changed`."
+
+[params."politics.drama_election_decided"]
+value = 85
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.election_decided` with a clear winner."
+
+[params."politics.drama_election_close"]
+value = 95
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.election_decided` after a close count or a tie."
+
+[params."politics.drama_election_empty"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.election_decided` when nobody won a seat."
+
+[params."politics.drama_bill_proposed"]
+value = 20
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.bill_proposed`."
+
+[params."politics.drama_bill_voted"]
+value = 5
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.bill_voted`."
+
+[params."politics.drama_bill_passed"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.bill_passed`."
+
+[params."politics.drama_bill_rejected"]
+value = 25
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.bill_rejected`."
+
+[params."politics.drama_law_vetoed"]
+value = 50
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.law_vetoed`."
+
+[params."politics.drama_law_enacted"]
+value = 60
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.law_enacted`."
+
+[params."politics.drama_law_override"]
+value = 75
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.law_enacted` after the members overrode a veto."
+
+[params."politics.drama_appointed"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.official_appointed`."
+
+[params."politics.drama_dismissed"]
+value = 35
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.official_dismissed`."
+
+[params."politics.drama_recall_started"]
+value = 50
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.recall_started`."
+
+[params."politics.drama_recall_succeeded"]
+value = 70
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.recall_succeeded`."
+
+[params."politics.drama_recall_failed"]
+value = 15
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.recall_failed`."
+
+[params."politics.drama_salaries_unpaid"]
+value = 40
+min = 0
+max = 100
+policy = false
+summary = "Drama of `politics.salaries_paid` when a treasury could not pay an official."

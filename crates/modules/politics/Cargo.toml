@@ -12,6 +12,10 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 unsup-kernel.workspace = true
+unsup-society.workspace = true
+
+[dev-dependencies]
+unsup-finance.workspace = true
 
 [lints]
 workspace = true
