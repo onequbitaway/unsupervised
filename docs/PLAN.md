@@ -26,25 +26,26 @@ This file is the working memory of the build. It is updated after each event.
 
 | Workstream | Branch | Owns | State |
 | --- | --- | --- | --- |
-| runtime | `feat/runtime` | `crates/runtime` | running |
-| life | `feat/life` | `crates/modules/life`, `docs/design/modules/life.md` | running |
-| economy | `feat/economy` | `crates/modules/economy`, `docs/design/modules/economy.md` | running |
-| finance | `feat/finance` | `crates/modules/finance`, `docs/design/modules/finance.md` | running |
-| society | `feat/society` | `crates/modules/society`, `docs/design/modules/society.md` | running |
-| gateway | `feat/gateway` | `crates/gateway`, `crates/store`, `crates/server` (not `plugins.rs`) | running |
-| viewer | `feat/viewer` | `web/`, `crates/spectator` | running |
-| sdk | `feat/sdk` | `sdk/`, `agents/`, `docs/join.md` | running |
+| runtime | `feat/runtime` | `crates/runtime` | merged |
+| life | `feat/life` | `crates/modules/life`, `docs/design/modules/life.md` | merged |
+| economy | `feat/economy` | `crates/modules/economy`, `docs/design/modules/economy.md` | merged |
+| finance | `feat/finance` | `crates/modules/finance`, `docs/design/modules/finance.md` | merged |
+| society | `feat/society` | `crates/modules/society`, `docs/design/modules/society.md` | merged |
+| gateway | `feat/gateway` | `crates/gateway`, `crates/store`, `crates/server` (not `plugins.rs`) | merged |
+| viewer | `feat/viewer` | `web/`, `crates/spectator` | merged |
+| sdk | `feat/sdk` | `sdk/`, `agents/`, `docs/join.md` | merged |
 | loadtest | `feat/loadtest` | `crates/loadtest` | running |
 
 ## Wave 2 (parallel, after wave 1 merges)
 
 | Workstream | Branch | Owns | State |
 | --- | --- | --- | --- |
-| crime | `feat/crime` | `crates/modules/crime` | todo |
-| politics | `feat/politics` | `crates/modules/politics` | todo |
-| missions | `feat/missions` | `crates/modules/missions` | todo |
-| director | `feat/director` | `crates/spectator`, `web/` | todo |
-| ops | `feat/ops` | `crates/runtime` (multi-process), moderation, admin tools | todo |
+| crime | `feat/crime` | `crates/modules/crime` | running |
+| politics | `feat/politics` | `crates/modules/politics` | running |
+| missions | `feat/missions` | `crates/modules/missions` | running |
+| director | `feat/director` | `crates/spectator`, `web/` | running |
+| cluster | `feat/cluster` | `crates/runtime` (zones in several processes) | running |
+| safety | `feat/safety` | `crates/gateway`, `crates/store`, `crates/server`: moderation, abuse controls, operations | running |
 
 ## Wave 3 (integration)
 
@@ -55,3 +56,4 @@ final documents, final gate.
 
 - 2026-11-18: repository created; scaffold and design documents written.
 - 2026-11-18: kernel, protocol and runtime landed (158 tests). Walking skeleton passes: a resident moves through HTTP and a viewer socket sees it. Contracts frozen.
+- 2026-11-18: wave 1 merged except the load test (still running): runtime, life, economy, finance, society, gateway, viewer, SDKs, plus a kernel hardening pass (sight across zone borders, safe outside messages, spawn cache). Gate green: 784 Rust tests, 158 viewer tests, 131 SDK and agent tests (JS), 120 (Python). Pushed. Wave 2 started.
