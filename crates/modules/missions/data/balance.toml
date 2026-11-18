@@ -1,1 +1,335 @@
 # Balance numbers of the missions module. See docs/design/architecture.md, section 7.
+# docs/design/modules/missions.md says how the module uses each number.
+# Money is in cents. Shares are in basis points (1/10,000). Times are in game
+# minutes; one frame is one game minute.
+
+# ---- The definition of a mission ------------------------------------------------
+
+[params."missions.title_max"]
+value = 80
+min = 1
+max = 400
+policy = false
+summary = "Greatest length of the title of a mission, in bytes."
+
+[params."missions.text_max"]
+value = 1000
+min = 0
+max = 4000
+policy = false
+summary = "Greatest length of the text of a mission, in bytes."
+
+[params."missions.objectives_max"]
+value = 4
+min = 1
+max = 16
+policy = false
+summary = "Greatest number of objectives of one mission."
+
+[params."missions.match_max"]
+value = 4
+min = 0
+max = 16
+policy = false
+summary = "Greatest number of data fields that one objective compares."
+
+[params."missions.event_kind_max"]
+value = 64
+min = 3
+max = 128
+policy = false
+summary = "Greatest length of the event kind of an objective, in bytes."
+
+[params."missions.field_name_max"]
+value = 32
+min = 1
+max = 64
+policy = false
+summary = "Greatest length of the name of a data field of an objective, in bytes."
+
+[params."missions.field_text_max"]
+value = 64
+min = 1
+max = 128
+policy = false
+summary = "Greatest length of a text value of an objective, in bytes."
+
+[params."missions.count_max"]
+value = 1000
+min = 1
+max = 1000000
+policy = false
+summary = "Greatest number of events that one objective can ask for."
+
+[params."missions.reward_min"]
+value = 100
+min = 1
+max = 1000000000
+policy = false
+summary = "Least reward of a mission for each taker, in cents."
+
+[params."missions.reward_max"]
+value = 10000000
+min = 1
+max = 1000000000000
+policy = false
+summary = "Greatest reward of a mission for each taker, in cents."
+
+[params."missions.takers_max"]
+value = 50
+min = 1
+max = 10000
+policy = false
+summary = "Greatest number of takers of one mission."
+
+[params."missions.deadline_min"]
+value = 10
+min = 1
+max = 1440
+policy = false
+summary = "Least time from the publication of a mission to its deadline, in game minutes."
+
+[params."missions.deadline_max"]
+value = 40320
+min = 1
+max = 4000000
+policy = false
+summary = "Greatest time from the publication of a mission to its deadline, in game minutes."
+
+[params."missions.sponsor_name_max"]
+value = 64
+min = 1
+max = 200
+policy = false
+summary = "Greatest length of the name of a sponsor, in bytes."
+
+# ---- Limits ------------------------------------------------------------------------
+
+[params."missions.open_max"]
+value = 2000
+min = 0
+max = 1000000
+policy = false
+summary = "Greatest number of open missions in the world."
+
+[params."missions.posted_max"]
+value = 5
+min = 0
+max = 1000
+policy = false
+summary = "Greatest number of open missions that one resident has published."
+
+[params."missions.accepted_max"]
+value = 5
+min = 0
+max = 1000
+policy = false
+summary = "Greatest number of missions that one resident works on at the same time."
+
+[params."missions.team_members_max"]
+value = 50
+min = 1
+max = 10000
+policy = false
+summary = "Greatest number of members of one team in one mission."
+
+[params."missions.list_max"]
+value = 20
+min = 1
+max = 200
+policy = false
+summary = "Greatest number of missions in one answer of `mission_list`."
+
+# ---- Sponsors ----------------------------------------------------------------------
+
+[params."missions.sponsor_daily_limit"]
+value = 5000000
+min = 0
+max = 1000000000000
+policy = false
+summary = "Cents that the faucet `sponsor.reward` can create in one game day, for all sponsors together."
+
+# ---- Mission points ----------------------------------------------------------------
+
+[params."missions.points_sponsor"]
+value = 10
+min = 0
+max = 1000000
+policy = false
+summary = "Points on the board `missions` for a completed mission of a sponsor."
+
+[params."missions.points_resident"]
+value = 3
+min = 0
+max = 1000000
+policy = false
+summary = "Points on the board `missions` for a completed mission of a resident."
+
+[params."missions.points_per_day"]
+value = 6
+min = 0
+max = 1000000000
+policy = false
+summary = "Greatest number of points that one resident gets from missions of residents in one game day."
+
+# ---- Leaderboards ------------------------------------------------------------------
+
+[params."missions.report_period"]
+value = 60
+min = 1
+max = 100000
+policy = false
+summary = "Frames between two reports of a zone to the leaderboards."
+
+[params."missions.board_period"]
+value = 60
+min = 1
+max = 1000000
+policy = false
+summary = "Frames between two publications of the leaderboards."
+
+[params."missions.board_top"]
+value = 10
+min = 1
+max = 100
+policy = false
+summary = "Number of residents in the top list of a leaderboard."
+
+[params."missions.board_groups"]
+value = 10
+min = 1
+max = 100
+policy = false
+summary = "Number of owners, of organizations and of models in the lists of a leaderboard."
+
+# ---- Seasons -----------------------------------------------------------------------
+
+[params."missions.season_first"]
+value = 1
+min = 1
+max = 1000000
+policy = false
+summary = "Number of the first season of a new world."
+
+[params."missions.season_days"]
+value = 1680
+min = 1
+max = 1000000
+policy = false
+summary = "Length of a season in game days. 1680 days are 60 game years."
+
+[params."missions.hall_of_fame_max"]
+value = 12
+min = 1
+max = 1000
+policy = false
+summary = "Number of past seasons whose final standings the hall of fame keeps."
+
+[params."missions.reset_standing_keep_bp"]
+value = 5000
+min = 0
+max = 10000
+policy = false
+summary = "Part of `rep.standing` that a resident keeps at the end of a season, in basis points."
+
+[params."missions.reset_notoriety_keep_bp"]
+value = 5000
+min = 0
+max = 10000
+policy = false
+summary = "Part of `rep.notoriety` that a resident keeps at the end of a season, in basis points."
+
+[params."missions.reset_wealth_floor"]
+value = 100000
+min = 0
+max = 1000000000000
+policy = false
+summary = "Cash that the end of a season does not touch, in cents."
+
+[params."missions.reset_wealth_cut_bp"]
+value = 5000
+min = 0
+max = 10000
+policy = false
+summary = "Part of the cash above the floor that the end of a season destroys, in basis points."
+
+# ---- Observation -------------------------------------------------------------------
+
+[params."missions.observe_max"]
+value = 3
+min = 0
+max = 50
+policy = false
+summary = "Greatest number of entries in each list of the observation section `missions` with brief detail."
+
+[params."missions.new_minutes"]
+value = 1440
+min = 1
+max = 1000000
+policy = false
+summary = "Game minutes during which a mission counts as new in the observation section `missions`."
+
+# ---- Drama scores of the events ----------------------------------------------------
+
+[params."missions.drama_posted"]
+value = 15
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `missions.mission_posted` for a mission of a resident."
+
+[params."missions.drama_sponsored"]
+value = 40
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `missions.mission_posted` for a mission of a sponsor."
+
+[params."missions.drama_accepted"]
+value = 5
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `missions.mission_accepted` and `missions.mission_abandoned`."
+
+[params."missions.drama_completed"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `missions.mission_completed`."
+
+[params."missions.drama_closed"]
+value = 10
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `missions.mission_closed`."
+
+[params."missions.drama_season_ended"]
+value = 90
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `missions.season_ended`."
+
+[params."missions.drama_season_started"]
+value = 60
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `missions.season_started`."
+
+[params."missions.drama_reset"]
+value = 20
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `missions.season_reset_applied`."
+
+[params."missions.drama_routine"]
+value = 0
+min = 0
+max = 100
+policy = false
+summary = "Drama score of the events that only carry state or an answer: `missions.leaderboard_published`, `missions.hall_of_fame_published` and `missions.sponsor_refused`."
