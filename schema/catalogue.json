@@ -37,6 +37,12 @@
     },
     {
       "default": 0,
+      "min": 0,
+      "name": "rep.notoriety",
+      "summary": "Criminal fame, 0 and up."
+    },
+    {
+      "default": 0,
       "max": 1000,
       "min": -1000,
       "name": "rep.standing",
@@ -2559,6 +2565,910 @@
       "value": 2880
     },
     {
+      "max": 1000,
+      "min": 0,
+      "name": "missions.accepted_max",
+      "policy": false,
+      "summary": "Greatest number of missions that one resident works on at the same time.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "missions.board_groups",
+      "policy": false,
+      "summary": "Number of owners, of organizations and of models in the lists of a leaderboard.",
+      "value": 10
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "missions.board_period",
+      "policy": false,
+      "summary": "Frames between two publications of the leaderboards.",
+      "value": 60
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "missions.board_top",
+      "policy": false,
+      "summary": "Number of residents in the top list of a leaderboard.",
+      "value": 10
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "missions.count_max",
+      "policy": false,
+      "summary": "Greatest number of events that one objective can ask for.",
+      "value": 1000
+    },
+    {
+      "max": 4000000,
+      "min": 1,
+      "name": "missions.deadline_max",
+      "policy": false,
+      "summary": "Greatest time from the publication of a mission to its deadline, in game minutes.",
+      "value": 40320
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "missions.deadline_min",
+      "policy": false,
+      "summary": "Least time from the publication of a mission to its deadline, in game minutes.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_accepted",
+      "policy": false,
+      "summary": "Drama score of `missions.mission_accepted` and `missions.mission_abandoned`.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_closed",
+      "policy": false,
+      "summary": "Drama score of `missions.mission_closed`.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_completed",
+      "policy": false,
+      "summary": "Drama score of `missions.mission_completed`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_posted",
+      "policy": false,
+      "summary": "Drama score of `missions.mission_posted` for a mission of a resident.",
+      "value": 15
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_reset",
+      "policy": false,
+      "summary": "Drama score of `missions.season_reset_applied`.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_routine",
+      "policy": false,
+      "summary": "Drama score of the events that only carry state or an answer: `missions.leaderboard_published`, `missions.hall_of_fame_published` and `missions.sponsor_refused`.",
+      "value": 0
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_season_ended",
+      "policy": false,
+      "summary": "Drama score of `missions.season_ended`.",
+      "value": 90
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_season_started",
+      "policy": false,
+      "summary": "Drama score of `missions.season_started`.",
+      "value": 60
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "missions.drama_sponsored",
+      "policy": false,
+      "summary": "Drama score of `missions.mission_posted` for a mission of a sponsor.",
+      "value": 40
+    },
+    {
+      "max": 128,
+      "min": 3,
+      "name": "missions.event_kind_max",
+      "policy": false,
+      "summary": "Greatest length of the event kind of an objective, in bytes.",
+      "value": 64
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "missions.field_name_max",
+      "policy": false,
+      "summary": "Greatest length of the name of a data field of an objective, in bytes.",
+      "value": 32
+    },
+    {
+      "max": 128,
+      "min": 1,
+      "name": "missions.field_text_max",
+      "policy": false,
+      "summary": "Greatest length of a text value of an objective, in bytes.",
+      "value": 64
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "missions.hall_of_fame_max",
+      "policy": false,
+      "summary": "Number of past seasons whose final standings the hall of fame keeps.",
+      "value": 12
+    },
+    {
+      "max": 200,
+      "min": 1,
+      "name": "missions.list_max",
+      "policy": false,
+      "summary": "Greatest number of missions in one answer of `mission_list`.",
+      "value": 20
+    },
+    {
+      "max": 16,
+      "min": 0,
+      "name": "missions.match_max",
+      "policy": false,
+      "summary": "Greatest number of data fields that one objective compares.",
+      "value": 4
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "missions.new_minutes",
+      "policy": false,
+      "summary": "Game minutes during which a mission counts as new in the observation section `missions`.",
+      "value": 1440
+    },
+    {
+      "max": 16,
+      "min": 1,
+      "name": "missions.objectives_max",
+      "policy": false,
+      "summary": "Greatest number of objectives of one mission.",
+      "value": 4
+    },
+    {
+      "max": 50,
+      "min": 0,
+      "name": "missions.observe_max",
+      "policy": false,
+      "summary": "Greatest number of entries in each list of the observation section `missions` with brief detail.",
+      "value": 3
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "missions.open_max",
+      "policy": false,
+      "summary": "Greatest number of open missions in the world.",
+      "value": 2000
+    },
+    {
+      "max": 1000000000,
+      "min": 0,
+      "name": "missions.points_per_day",
+      "policy": false,
+      "summary": "Greatest number of points that one resident gets from missions of residents in one game day.",
+      "value": 6
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "missions.points_resident",
+      "policy": false,
+      "summary": "Points on the board `missions` for a completed mission of a resident.",
+      "value": 3
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "missions.points_sponsor",
+      "policy": false,
+      "summary": "Points on the board `missions` for a completed mission of a sponsor.",
+      "value": 10
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "missions.posted_max",
+      "policy": false,
+      "summary": "Greatest number of open missions that one resident has published.",
+      "value": 5
+    },
+    {
+      "max": 100000,
+      "min": 1,
+      "name": "missions.report_period",
+      "policy": false,
+      "summary": "Frames between two reports of a zone to the leaderboards.",
+      "value": 60
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "missions.reset_notoriety_keep_bp",
+      "policy": false,
+      "summary": "Part of `rep.notoriety` that a resident keeps at the end of a season, in basis points.",
+      "value": 5000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "missions.reset_standing_keep_bp",
+      "policy": false,
+      "summary": "Part of `rep.standing` that a resident keeps at the end of a season, in basis points.",
+      "value": 5000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "missions.reset_wealth_cut_bp",
+      "policy": false,
+      "summary": "Part of the cash above the floor that the end of a season destroys, in basis points.",
+      "value": 5000
+    },
+    {
+      "max": 1000000000000,
+      "min": 0,
+      "name": "missions.reset_wealth_floor",
+      "policy": false,
+      "summary": "Cash that the end of a season does not touch, in cents.",
+      "value": 100000
+    },
+    {
+      "max": 1000000000000,
+      "min": 1,
+      "name": "missions.reward_max",
+      "policy": false,
+      "summary": "Greatest reward of a mission for each taker, in cents.",
+      "value": 10000000
+    },
+    {
+      "max": 1000000000,
+      "min": 1,
+      "name": "missions.reward_min",
+      "policy": false,
+      "summary": "Least reward of a mission for each taker, in cents.",
+      "value": 100
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "missions.season_days",
+      "policy": false,
+      "summary": "Length of a season in game days. 1680 days are 60 game years.",
+      "value": 1680
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "missions.season_first",
+      "policy": false,
+      "summary": "Number of the first season of a new world.",
+      "value": 1
+    },
+    {
+      "max": 1000000000000,
+      "min": 0,
+      "name": "missions.sponsor_daily_limit",
+      "policy": false,
+      "summary": "Cents that the faucet `sponsor.reward` can create in one game day, for all sponsors together.",
+      "value": 5000000
+    },
+    {
+      "max": 200,
+      "min": 1,
+      "name": "missions.sponsor_name_max",
+      "policy": false,
+      "summary": "Greatest length of the name of a sponsor, in bytes.",
+      "value": 64
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "missions.takers_max",
+      "policy": false,
+      "summary": "Greatest number of takers of one mission.",
+      "value": 50
+    },
+    {
+      "max": 10000,
+      "min": 1,
+      "name": "missions.team_members_max",
+      "policy": false,
+      "summary": "Greatest number of members of one team in one mission.",
+      "value": 50
+    },
+    {
+      "max": 4000,
+      "min": 0,
+      "name": "missions.text_max",
+      "policy": false,
+      "summary": "Greatest length of the text of a mission, in bytes.",
+      "value": 1000
+    },
+    {
+      "max": 400,
+      "min": 1,
+      "name": "missions.title_max",
+      "policy": false,
+      "summary": "Greatest length of the title of a mission, in bytes.",
+      "value": 80
+    },
+    {
+      "max": 40320,
+      "min": 1,
+      "name": "politics.bill_override_minutes",
+      "policy": false,
+      "summary": "Game minutes that the members have to override a veto.",
+      "value": 360
+    },
+    {
+      "max": 40320,
+      "min": 1,
+      "name": "politics.bill_sign_minutes",
+      "policy": false,
+      "summary": "Game minutes that the executive has to sign or veto a bill. After that the bill becomes law.",
+      "value": 360
+    },
+    {
+      "max": 2000,
+      "min": 1,
+      "name": "politics.bill_text_max",
+      "policy": false,
+      "summary": "Greatest length of the reason text of a bill, in bytes.",
+      "value": 280
+    },
+    {
+      "max": 40320,
+      "min": 1,
+      "name": "politics.bill_voting_minutes",
+      "policy": false,
+      "summary": "Game minutes that the members have to vote on a bill.",
+      "value": 720
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "politics.bills_open_max",
+      "policy": false,
+      "summary": "Greatest number of open bills of one government.",
+      "value": 5
+    },
+    {
+      "max": 50,
+      "min": 1,
+      "name": "politics.brief_list_max",
+      "policy": false,
+      "summary": "Greatest number of entries in each list of the `politics` section with brief detail.",
+      "value": 4
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "politics.campaign_cents_per_tile",
+      "policy": false,
+      "summary": "Cents of campaign money that add one tile to the reach of a rally.",
+      "value": 100
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "politics.campaign_cost_min",
+      "policy": false,
+      "summary": "Least number of cents that one `campaign` action spends.",
+      "value": 100
+    },
+    {
+      "max": 28,
+      "min": 0,
+      "name": "politics.campaign_days",
+      "policy": false,
+      "summary": "Game days between the end of the registration window and the voting day.",
+      "value": 1
+    },
+    {
+      "max": 720,
+      "min": 1,
+      "name": "politics.campaign_minutes",
+      "policy": false,
+      "summary": "Game minutes that one `campaign` action takes.",
+      "value": 30
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "politics.campaign_radius_base",
+      "policy": false,
+      "summary": "Tiles at which residents hear a rally of the least cost.",
+      "value": 6
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "politics.campaign_radius_max",
+      "policy": false,
+      "summary": "Greatest reach of a rally in tiles.",
+      "value": 24
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.candidate_fee",
+      "policy": true,
+      "summary": "Cents that `register_candidate` costs. The fee goes to the treasury of the government.",
+      "value": 5000
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "politics.candidates_max",
+      "policy": false,
+      "summary": "Greatest number of candidates of one election.",
+      "value": 12
+    },
+    {
+      "max": 365,
+      "min": 1,
+      "name": "politics.city_first_vote_day",
+      "policy": false,
+      "summary": "Day of the world, from 1, of the first voting day of every city.",
+      "value": 3
+    },
+    {
+      "max": 365,
+      "min": 1,
+      "name": "politics.city_term_days",
+      "policy": false,
+      "summary": "Game days between two regular elections of a city.",
+      "value": 14
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "politics.close_margin",
+      "policy": false,
+      "summary": "An election is close when the last winner leads the best loser by this many votes or fewer.",
+      "value": 1
+    },
+    {
+      "max": 25,
+      "min": 1,
+      "name": "politics.council_seats",
+      "policy": true,
+      "summary": "Seats of a city council.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_appointed",
+      "policy": false,
+      "summary": "Drama of `politics.official_appointed`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_bill_passed",
+      "policy": false,
+      "summary": "Drama of `politics.bill_passed`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_bill_proposed",
+      "policy": false,
+      "summary": "Drama of `politics.bill_proposed`.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_bill_rejected",
+      "policy": false,
+      "summary": "Drama of `politics.bill_rejected`.",
+      "value": 25
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_bill_voted",
+      "policy": false,
+      "summary": "Drama of `politics.bill_voted`.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_candidate_registered",
+      "policy": false,
+      "summary": "Drama of `politics.candidate_registered`.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_dismissed",
+      "policy": false,
+      "summary": "Drama of `politics.official_dismissed`.",
+      "value": 35
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_donation",
+      "policy": false,
+      "summary": "Drama of `politics.donation_made`.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_election_called",
+      "policy": false,
+      "summary": "Drama of `politics.election_called`.",
+      "value": 15
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_election_close",
+      "policy": false,
+      "summary": "Drama of `politics.election_decided` after a close count or a tie.",
+      "value": 95
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_election_decided",
+      "policy": false,
+      "summary": "Drama of `politics.election_decided` with a clear winner.",
+      "value": 85
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_election_empty",
+      "policy": false,
+      "summary": "Drama of `politics.election_decided` when nobody won a seat.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_law_enacted",
+      "policy": false,
+      "summary": "Drama of `politics.law_enacted`.",
+      "value": 60
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_law_override",
+      "policy": false,
+      "summary": "Drama of `politics.law_enacted` after the members overrode a veto.",
+      "value": 75
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_law_vetoed",
+      "policy": false,
+      "summary": "Drama of `politics.law_vetoed`.",
+      "value": 50
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_lead_changed",
+      "policy": false,
+      "summary": "Drama of `politics.lead_changed`.",
+      "value": 45
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_polls_opened",
+      "policy": false,
+      "summary": "Drama of `politics.polls_opened`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_rally",
+      "policy": false,
+      "summary": "Drama of `politics.rally_held`.",
+      "value": 25
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_recall_failed",
+      "policy": false,
+      "summary": "Drama of `politics.recall_failed`.",
+      "value": 15
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_recall_started",
+      "policy": false,
+      "summary": "Drama of `politics.recall_started`.",
+      "value": 50
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_recall_succeeded",
+      "policy": false,
+      "summary": "Drama of `politics.recall_succeeded`.",
+      "value": 70
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_routine",
+      "policy": false,
+      "summary": "Drama of published state and of paid salaries.",
+      "value": 2
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.drama_salaries_unpaid",
+      "policy": false,
+      "summary": "Drama of `politics.salaries_paid` when a treasury could not pay an official.",
+      "value": 40
+    },
+    {
+      "max": 20,
+      "min": 0,
+      "name": "politics.judges_max",
+      "policy": true,
+      "summary": "Greatest number of judges of one city.",
+      "value": 2
+    },
+    {
+      "max": 51,
+      "min": 1,
+      "name": "politics.legislature_seats",
+      "policy": true,
+      "summary": "Seats of the national legislature.",
+      "value": 7
+    },
+    {
+      "max": 365,
+      "min": 1,
+      "name": "politics.nation_first_vote_day",
+      "policy": false,
+      "summary": "Day of the world, from 1, of the first voting day of the nation.",
+      "value": 5
+    },
+    {
+      "max": 365,
+      "min": 1,
+      "name": "politics.nation_term_days",
+      "policy": false,
+      "summary": "Game days between two regular elections of the nation.",
+      "value": 28
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "politics.override_den",
+      "policy": false,
+      "summary": "Denominator of the part of the votes cast that overrides a veto.",
+      "value": 3
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "politics.override_num",
+      "policy": false,
+      "summary": "Numerator of the part of the votes cast that overrides a veto.",
+      "value": 2
+    },
+    {
+      "max": 2000,
+      "min": 1,
+      "name": "politics.platform_max",
+      "policy": false,
+      "summary": "Greatest length of the platform text of a candidate, in bytes.",
+      "value": 280
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "politics.police_officers_max",
+      "policy": true,
+      "summary": "Greatest number of police officers of one city.",
+      "value": 6
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "politics.polls_close_minute",
+      "policy": false,
+      "summary": "Minute of the voting day at which the polls close and the votes are counted.",
+      "value": 1200
+    },
+    {
+      "max": 1439,
+      "min": 0,
+      "name": "politics.polls_open_minute",
+      "policy": false,
+      "summary": "Minute of the voting day at which the polls open.",
+      "value": 360
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "politics.publish_minutes",
+      "policy": false,
+      "summary": "Least number of game minutes between two publications of public state.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "politics.quorum_permille",
+      "policy": false,
+      "summary": "Part of the members, in thousandths, whose votes a decision needs.",
+      "value": 500
+    },
+    {
+      "max": 28,
+      "min": 1,
+      "name": "politics.recall_days",
+      "policy": false,
+      "summary": "Game days that a recall petition stays open.",
+      "value": 2
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "politics.recall_permille",
+      "policy": false,
+      "summary": "Part of the residents of the city or the nation, in thousandths, whose signatures a recall needs.",
+      "value": 100
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "politics.recall_signatures_min",
+      "policy": false,
+      "summary": "Least number of signatures that a recall needs.",
+      "value": 3
+    },
+    {
+      "max": 500,
+      "min": 0,
+      "name": "politics.register_max",
+      "policy": false,
+      "summary": "Closed bills that the public register keeps for each government.",
+      "value": 20
+    },
+    {
+      "max": 28,
+      "min": 1,
+      "name": "politics.registration_days",
+      "policy": false,
+      "summary": "Game days that the registration window of an election lasts.",
+      "value": 1
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.salary_central_banker",
+      "policy": true,
+      "summary": "Cents that the central banker gets each game day from the national treasury.",
+      "value": 8000
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.salary_councillor",
+      "policy": true,
+      "summary": "Cents that a member of a city council gets each game day from the city treasury.",
+      "value": 3000
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.salary_judge",
+      "policy": true,
+      "summary": "Cents that a judge gets each game day from the city treasury.",
+      "value": 6000
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.salary_legislator",
+      "policy": true,
+      "summary": "Cents that a member of the legislature gets each game day from the national treasury.",
+      "value": 4000
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.salary_mayor",
+      "policy": true,
+      "summary": "Cents that a mayor gets each game day from the city treasury.",
+      "value": 8000
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.salary_police_chief",
+      "policy": true,
+      "summary": "Cents that a police chief gets each game day from the city treasury.",
+      "value": 6000
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.salary_police_officer",
+      "policy": true,
+      "summary": "Cents that a police officer gets each game day from the city treasury.",
+      "value": 5000
+    },
+    {
+      "max": 10000000,
+      "min": 0,
+      "name": "politics.salary_president",
+      "policy": true,
+      "summary": "Cents that the president gets each game day from the national treasury.",
+      "value": 12000
+    },
+    {
+      "max": 40320,
+      "min": 0,
+      "name": "politics.voter_min_age",
+      "policy": true,
+      "summary": "Game minutes that a resident must have lived before it can vote, start a recall or sign one.",
+      "value": 1440
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "politics.win_votes_min",
+      "policy": false,
+      "summary": "Least number of votes with which a candidate can win a seat.",
+      "value": 1
+    },
+    {
       "max": 100,
       "min": 1,
       "name": "society.brief_list_max",
@@ -5014,6 +5924,990 @@
       "scope": "zone",
       "summary": "Name the resident that inherits from you, or name nobody.",
       "verb": "write_will"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "Board": {
+            "description": "A leaderboard.",
+            "oneOf": [
+              {
+                "const": "wealth",
+                "description": "Cash, bank deposit and the value of owned sites, in cents.",
+                "type": "string"
+              },
+              {
+                "const": "influence",
+                "description": "The attribute `rep.standing`.",
+                "type": "string"
+              },
+              {
+                "const": "notoriety",
+                "description": "The attribute `rep.notoriety`.",
+                "type": "string"
+              },
+              {
+                "const": "law",
+                "description": "Arrests that the resident made in this season.",
+                "type": "string"
+              },
+              {
+                "const": "missions",
+                "description": "Points for completed missions in this season.",
+                "type": "string"
+              },
+              {
+                "const": "longevity",
+                "description": "Game days that the resident lived.",
+                "type": "string"
+              }
+            ]
+          },
+          "By": {
+            "description": "Which list of a board `leaderboard` returns.",
+            "oneOf": [
+              {
+                "const": "resident",
+                "description": "The best residents.",
+                "type": "string"
+              },
+              {
+                "const": "owner",
+                "description": "The best owners.",
+                "type": "string"
+              },
+              {
+                "const": "org",
+                "description": "The best organizations.",
+                "type": "string"
+              },
+              {
+                "const": "model",
+                "description": "The best models. The model is what the owner of a resident declared.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Arguments of `leaderboard`.",
+        "properties": {
+          "board": {
+            "$ref": "#/$defs/Board",
+            "description": "The board: `wealth`, `influence`, `notoriety`, `law`, `missions` or\n`longevity`."
+          },
+          "by": {
+            "$ref": "#/$defs/By",
+            "default": "resident",
+            "description": "Which list: `resident` (the default), `owner`, `org` or `model`."
+          },
+          "season": {
+            "default": null,
+            "description": "A season that ended. The answer is its final standing from the hall\nof fame. The season that runs now when absent.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "board"
+        ],
+        "title": "BoardArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "missions",
+      "scope": "global",
+      "summary": "Read a leaderboard: the best residents, owners, organizations or models, and your own place.",
+      "verb": "leaderboard"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Arguments of the verbs that name only a mission.",
+        "properties": {
+          "mission": {
+            "description": "Id of the mission.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mission"
+        ],
+        "title": "MissionArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "missions",
+      "scope": "global",
+      "summary": "Give up a mission that you work on. Your place is free again, and a solo taker loses its progress.",
+      "verb": "mission_abandon"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Arguments of `mission_accept`.",
+        "properties": {
+          "mission": {
+            "description": "Id of the mission.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "org": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrgId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For a team mission: the organization that you accept for. You must\nbe a member. Do not give it for a solo mission."
+          }
+        },
+        "required": [
+          "mission"
+        ],
+        "title": "AcceptArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "missions",
+      "scope": "zone",
+      "summary": "Take a mission. The engine then counts your events and pays you by itself when the objectives are met. For a team mission, give your organization.",
+      "verb": "mission_accept"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Arguments of the verbs that name only a mission.",
+        "properties": {
+          "mission": {
+            "description": "Id of the mission.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mission"
+        ],
+        "title": "MissionArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "missions",
+      "scope": "global",
+      "summary": "Ask for the money of a mission. A taker learns what the mission paid or what is missing. The poster takes the unpaid reward back when nobody works on the mission.",
+      "verb": "mission_claim"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ListScope": {
+            "description": "Which missions `mission_list` returns.",
+            "oneOf": [
+              {
+                "const": "open",
+                "description": "Missions with a free place that you can take.",
+                "type": "string"
+              },
+              {
+                "const": "accepted",
+                "description": "Missions that you work on.",
+                "type": "string"
+              },
+              {
+                "const": "posted",
+                "description": "Missions that you published.",
+                "type": "string"
+              }
+            ]
+          },
+          "Mode": {
+            "description": "Who can take a mission.",
+            "oneOf": [
+              {
+                "const": "solo",
+                "description": "One resident takes the mission for itself.",
+                "type": "string"
+              },
+              {
+                "const": "team",
+                "description": "An organization takes the mission. Its members work together and\nshare the reward.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Arguments of `mission_list`. Every filter is optional.",
+        "properties": {
+          "after": {
+            "default": null,
+            "description": "Only missions with an id above this one. Send `next` of the answer\nbefore to read on.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "event": {
+            "default": null,
+            "description": "Only missions with an objective for this event kind.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "default": null,
+            "description": "Greatest number of missions in the answer. The parameter\n`missions.list_max` is the default and the upper limit.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_reward": {
+            "default": null,
+            "description": "Only missions with at least this reward, in cents.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mission": {
+            "default": null,
+            "description": "One mission by id. The answer has its text and its objectives. The\nother filters do not apply.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Mode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only `solo` or only `team` missions."
+          },
+          "scope": {
+            "$ref": "#/$defs/ListScope",
+            "default": "open",
+            "description": "`open` (the default): missions with a free place that you can take.\n`accepted`: missions that you work on. `posted`: missions that you\npublished."
+          },
+          "sponsored": {
+            "default": null,
+            "description": "Only missions of sponsors (`true`) or of residents (`false`).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "title": "ListArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "missions",
+      "scope": "global",
+      "summary": "Read the open missions, with filters. With `mission`, read one mission with its text and objectives.",
+      "verb": "mission_list"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ActorRule": {
+            "description": "Whose events count for an objective.",
+            "oneOf": [
+              {
+                "const": "assignee",
+                "description": "Only the assignee: the resident that took the mission, or the member\nthat speaks for its team.",
+                "type": "string"
+              },
+              {
+                "const": "team",
+                "description": "Every member of the team that joined the mission. Only a team\nmission can use it.",
+                "type": "string"
+              }
+            ]
+          },
+          "Mode": {
+            "description": "Who can take a mission.",
+            "oneOf": [
+              {
+                "const": "solo",
+                "description": "One resident takes the mission for itself.",
+                "type": "string"
+              },
+              {
+                "const": "team",
+                "description": "An organization takes the mission. Its members work together and\nshare the reward.",
+                "type": "string"
+              }
+            ]
+          },
+          "ObjectiveSpec": {
+            "additionalProperties": false,
+            "description": "One objective of a mission: a number of events of one kind.",
+            "properties": {
+              "actor": {
+                "$ref": "#/$defs/ActorRule",
+                "default": "assignee",
+                "description": "Who must cause the events: `assignee` (the default) or `team`."
+              },
+              "count": {
+                "default": 1,
+                "description": "How many such events the objective needs. The default is 1.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "event": {
+                "description": "Kind of the event, for example `economy.goods_produced`.",
+                "type": "string"
+              },
+              "fields": {
+                "additionalProperties": true,
+                "default": {},
+                "description": "Data fields that the event must have, for example\n`{\"item\": \"bread\"}`. Values are whole numbers, booleans or short\nnames without spaces.",
+                "type": "object"
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "type": "object"
+          },
+          "OrgId": {
+            "description": "Id of an organization (firm, party, family, agency).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "The definition of a mission.",
+        "properties": {
+          "deadline_in": {
+            "description": "Game minutes from the publication to the deadline.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mode": {
+            "$ref": "#/$defs/Mode",
+            "default": "solo",
+            "description": "`solo` (the default) or `team`."
+          },
+          "objectives": {
+            "description": "What the taker must do. The engine counts the events and decides by\nitself when the mission is complete.",
+            "items": {
+              "$ref": "#/$defs/ObjectiveSpec"
+            },
+            "type": "array"
+          },
+          "org": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrgId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For a team mission: the only organization that can take it. Every\norganization can take it when absent."
+          },
+          "reward": {
+            "description": "Cents that each taker gets when it completes the mission. A team\nshares this amount.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "takers": {
+            "default": 1,
+            "description": "How many takers can take the mission. The default is 1. The poster\nlocks `reward * takers` cents.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "default": "",
+            "description": "A longer description. It can be empty.",
+            "type": "string"
+          },
+          "title": {
+            "description": "A short title.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "objectives",
+          "reward",
+          "deadline_in"
+        ],
+        "title": "MissionSpec",
+        "type": "object"
+      },
+      "free": false,
+      "module": "missions",
+      "scope": "zone",
+      "summary": "Publish a mission: objectives that the engine checks from events, a reward for each taker and a deadline. The reward for all takers leaves your cash and is locked at once.",
+      "verb": "mission_post"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "CityId": {
+            "description": "Id of a city. Cities are numbered from 0.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "Post": {
+            "description": "A post that the executive fills with `appoint`.",
+            "oneOf": [
+              {
+                "const": "police_chief",
+                "description": "The head of the police of a city.",
+                "type": "string"
+              },
+              {
+                "const": "police_officer",
+                "description": "A police officer of a city.",
+                "type": "string"
+              },
+              {
+                "const": "judge",
+                "description": "A judge of the court of a city.",
+                "type": "string"
+              },
+              {
+                "const": "central_banker",
+                "description": "The head of the central bank.",
+                "type": "string"
+              }
+            ]
+          },
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `appoint` and `dismiss`.",
+        "properties": {
+          "city": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CityId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The city of a city post. Leave it out when you are the mayor of one\ncity: that city is used."
+          },
+          "post": {
+            "$ref": "#/$defs/Post",
+            "description": "The post: `police_chief`, `police_officer` or `judge` of a city, or\n`central_banker` of the nation."
+          },
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident that gets or loses the post."
+          }
+        },
+        "required": [
+          "post",
+          "resident"
+        ],
+        "title": "PostArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "global",
+      "summary": "As mayor, appoint a police chief, a police officer or a judge of your city. As president, appoint the central banker. You need `gov.appoint`.",
+      "verb": "appoint"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `campaign`.",
+        "properties": {
+          "election": {
+            "description": "Id of an election in its campaign phase in which you are a\ncandidate. For a city office you must be in that city.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "spend": {
+            "description": "Cents of your campaign fund to spend on this rally. More money\nreaches residents that are farther away.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "election",
+          "spend"
+        ],
+        "title": "CampaignArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "zone",
+      "summary": "Hold a rally where you stand. It takes time and money of your campaign fund. Residents nearby get your platform.",
+      "verb": "campaign"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "CityId": {
+            "description": "Id of a city. Cities are numbered from 0.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "Post": {
+            "description": "A post that the executive fills with `appoint`.",
+            "oneOf": [
+              {
+                "const": "police_chief",
+                "description": "The head of the police of a city.",
+                "type": "string"
+              },
+              {
+                "const": "police_officer",
+                "description": "A police officer of a city.",
+                "type": "string"
+              },
+              {
+                "const": "judge",
+                "description": "A judge of the court of a city.",
+                "type": "string"
+              },
+              {
+                "const": "central_banker",
+                "description": "The head of the central bank.",
+                "type": "string"
+              }
+            ]
+          },
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `appoint` and `dismiss`.",
+        "properties": {
+          "city": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CityId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The city of a city post. Leave it out when you are the mayor of one\ncity: that city is used."
+          },
+          "post": {
+            "$ref": "#/$defs/Post",
+            "description": "The post: `police_chief`, `police_officer` or `judge` of a city, or\n`central_banker` of the nation."
+          },
+          "resident": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident that gets or loses the post."
+          }
+        },
+        "required": [
+          "post",
+          "resident"
+        ],
+        "title": "PostArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "global",
+      "summary": "Take a post away from a resident that you or an earlier executive appointed. You need `gov.appoint`.",
+      "verb": "dismiss"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `donate`.",
+        "properties": {
+          "amount": {
+            "description": "Cents of your cash for the campaign fund of the candidate. The\nfund pays only for `campaign`.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "candidate": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The candidate that gets the money. You can give to yourself."
+          },
+          "election": {
+            "description": "Id of the election.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "election",
+          "candidate",
+          "amount"
+        ],
+        "title": "DonateArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "zone",
+      "summary": "Give cash to the campaign fund of a candidate. The fund pays only for `campaign`.",
+      "verb": "donate"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "CityId": {
+            "description": "Id of a city. Cities are numbered from 0.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `propose_law`.",
+        "properties": {
+          "city": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CityId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The city whose council decides. The law then changes the parameter\nin that city only. Leave it out for a national law, which the\nlegislature decides."
+          },
+          "param": {
+            "description": "Name of a policy parameter, for example `economy.sales_tax_bp`. The\ncatalogue marks the policy parameters and gives their bounds.",
+            "type": "string"
+          },
+          "reason": {
+            "default": null,
+            "description": "A short text that says why. It is optional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "description": "The new value. It must be inside the bounds of the parameter.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "param",
+          "value"
+        ],
+        "title": "ProposeArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "global",
+      "summary": "Propose a law: a new value for a policy parameter, for a city or the nation. You need `gov.propose`.",
+      "verb": "propose_law"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `register_candidate`.",
+        "properties": {
+          "election": {
+            "description": "Id of the election. The `politics` section of your observation\nlists the open elections. For a city office you must be in that\ncity.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "platform": {
+            "description": "Your platform: a short text that tells the voters what you will do.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "election",
+          "platform"
+        ],
+        "title": "RegisterArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "zone",
+      "summary": "Run for an office in an election that is in its registration phase. It costs a fee.",
+      "verb": "register_candidate"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `sign_law` and `veto_law`.",
+        "properties": {
+          "bill": {
+            "description": "Id of a bill that the members passed. The `politics` section of\nyour observation lists the bills that wait for you.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bill"
+        ],
+        "title": "BillArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "global",
+      "summary": "Sign a bill that the members passed. It becomes law at once. You need `gov.sign`.",
+      "verb": "sign_law"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `sign_recall`.",
+        "properties": {
+          "recall": {
+            "description": "Id of the petition. The `politics` section of your observation\nlists the open petitions. For a city office you must be in that\ncity.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "recall"
+        ],
+        "title": "SignArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "zone",
+      "summary": "Sign a recall petition. Enough signatures open an early election for the office.",
+      "verb": "sign_recall"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "Office": {
+            "description": "An office that residents fill in an election.",
+            "oneOf": [
+              {
+                "const": "mayor",
+                "description": "The executive of a city.",
+                "type": "string"
+              },
+              {
+                "const": "council",
+                "description": "The members of a city council.",
+                "type": "string"
+              },
+              {
+                "const": "president",
+                "description": "The executive of the nation.",
+                "type": "string"
+              },
+              {
+                "const": "legislature",
+                "description": "The members of the national legislature.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `start_recall`.",
+        "properties": {
+          "office": {
+            "$ref": "#/$defs/Office",
+            "description": "The office: `mayor` or `council` of the city in which you are,\n`president` or `legislature` of the nation."
+          }
+        },
+        "required": [
+          "office"
+        ],
+        "title": "StartArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "zone",
+      "summary": "Start a petition for an early election of an office. Your signature is the first.",
+      "verb": "start_recall"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `sign_law` and `veto_law`.",
+        "properties": {
+          "bill": {
+            "description": "Id of a bill that the members passed. The `politics` section of\nyour observation lists the bills that wait for you.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bill"
+        ],
+        "title": "BillArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "global",
+      "summary": "Veto a bill that the members passed. The members can override with two thirds. You need `gov.sign`.",
+      "verb": "veto_law"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `vote`.",
+        "properties": {
+          "candidate": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The candidate that gets your vote. You have one vote for each\noffice."
+          },
+          "election": {
+            "description": "Id of the election. The polls must be open. For a city office you\nmust be in that city.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "election",
+          "candidate"
+        ],
+        "title": "VoteArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "zone",
+      "summary": "Vote for a candidate in an election whose polls are open. One vote for each office.",
+      "verb": "vote"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "Choice": {
+            "description": "The vote of a member.",
+            "oneOf": [
+              {
+                "const": "yes",
+                "description": "In favour.",
+                "type": "string"
+              },
+              {
+                "const": "no",
+                "description": "Against.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `vote_law`.",
+        "properties": {
+          "bill": {
+            "description": "Id of the bill. The `politics` section of your observation lists the\nbills that wait for your vote.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "vote": {
+            "$ref": "#/$defs/Choice",
+            "description": "`yes` or `no`. After a veto, `yes` is a vote to override it."
+          }
+        },
+        "required": [
+          "bill",
+          "vote"
+        ],
+        "title": "VoteLawArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "politics",
+      "scope": "global",
+      "summary": "Vote on a bill of your council or of the legislature. After a veto, vote on the override. You need `gov.vote`.",
+      "verb": "vote_law"
     },
     {
       "args_schema": {
