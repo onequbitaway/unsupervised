@@ -30,7 +30,7 @@ ActionStatus (tag "state") =
   | Pending                              // waits for the global realm or another party; a report follows
   | Queued { position: u32 }             // resident is busy; request is in the queue; position from 1
   | Rejected { error: ActionError }      // nothing changed; no report follows
-ActionReport { action_id: u64, request_id: Option<String>, verb: String, tick: Tick,
+ActionReport { seq: u64, action_id: u64, request_id: Option<String>, verb: String, tick: Tick,
                ok: bool, result: Value, error: Option<ActionError> }
 ActionError { code: ErrorCode, message: String, details: Value }
 ErrorCode = unknown_verb | invalid_args | blocked | queue_full | rate_limited

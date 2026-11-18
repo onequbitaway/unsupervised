@@ -260,6 +260,10 @@ _ActionReportOptional = TypedDict(
         "request_id": Optional[str],
         # Result of a successful action.
         "result": Any,
+        # Place of the report in the sequence that the notices and the reports
+        # of one resident share. A client that keeps the highest number that it
+        # saw can drop a repeat and can order a report against a notice.
+        "seq": int,
     },
     total=False,
 )

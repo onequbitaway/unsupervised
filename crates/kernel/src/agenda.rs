@@ -422,6 +422,7 @@ impl InboxEntry {
                     Err(error) => (false, Value::Null, Some(error.clone())),
                 };
                 Shown::Report(ActionReport {
+                    seq: self.seq,
                     action_id: *action_id,
                     request_id: request_id.clone(),
                     verb: verb_name(*verb).to_string(),

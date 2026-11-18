@@ -98,6 +98,11 @@ impl ActionStatus {
 /// writes it to the resident's inbox.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ActionReport {
+    /// Place of the report in the sequence that the notices and the reports
+    /// of one resident share. A client that keeps the highest number that it
+    /// saw can drop a repeat and can order a report against a notice.
+    #[serde(default)]
+    pub seq: u64,
     /// Id of the action, as in the [`ActionAck`].
     pub action_id: u64,
     /// The idempotency key of the request, if it had one.

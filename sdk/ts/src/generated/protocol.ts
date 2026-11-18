@@ -172,6 +172,14 @@ export interface ActionReport {
   request_id?: string | null;
   /** Result of a successful action. */
   result?: Value;
+  /**
+   * Place of the report in the sequence that the notices and the reports
+   * of one resident share. A client that keeps the highest number that it
+   * saw can drop a repeat and can order a report against a notice.
+   *
+   * @default 0
+   */
+  seq?: number;
 }
 
 /** Why an action was refused or failed. */

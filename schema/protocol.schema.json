@@ -87,6 +87,13 @@
         "result": {
           "description": "Result of a successful action."
         },
+        "seq": {
+          "default": 0,
+          "description": "Place of the report in the sequence that the notices and the reports\nof one resident share. A client that keeps the highest number that it\nsaw can drop a repeat and can order a report against a notice.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "tick": {
           "$ref": "#/$defs/Tick",
           "description": "Tick of the resident's zone at which the action ended."

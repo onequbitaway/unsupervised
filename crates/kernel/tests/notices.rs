@@ -201,7 +201,8 @@ fn reports_and_notices_share_one_sequence() {
     assert_eq!(
         observation.sections["reports"],
         json!([{
-            "action_id": reports[0].action_id, "verb": "work", "tick": 1, "ok": true, "result": { "pay": 500 }
+            "seq": 2, "action_id": reports[0].action_id, "verb": "work", "tick": 1, "ok": true,
+            "result": { "pay": 500 }
         }])
     );
     assert_eq!(Value::Null, observation.sections["self"]["activity"]);

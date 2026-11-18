@@ -59,6 +59,7 @@ fn an_answer_after_a_timeout_is_one_more_report() {
     assert_eq!(
         reports[1],
         ActionReport {
+            seq: reports[1].seq,
             action_id: offer.action_id,
             request_id: Some("offer-1".into()),
             verb: "offer".into(),
@@ -68,6 +69,7 @@ fn an_answer_after_a_timeout_is_one_more_report() {
             error: None,
         }
     );
+    assert!(reports[1].seq > reports[0].seq, "a later report has a higher sequence number");
     // Ada stays idle: the report is news, not a new action.
     assert_eq!(w.activity(ada), None);
 
