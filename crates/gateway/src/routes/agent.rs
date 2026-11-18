@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use unsup_protocol::{ActionStatus, Detail, ErrorCode, Observation, ObserveOpts};
 
-use crate::actions::{observe_opts, run_plan, set_routines, wait_filter};
+use crate::actions::{observe_opts, routines_request, run_plan, set_routines, wait_filter};
 use crate::auth::ResidentAuth;
 use crate::error::ApiError;
 use crate::extract::{Body, Params};
@@ -81,6 +81,7 @@ pub(crate) async fn act(
     let opts = query.into_opts(&gateway)?;
     let (requests, _) =
         validate::act_body(body, gateway.config().limits.max_plan).map_err(ApiError::invalid)?;
+    gateway.admit(resident, &requests).await?;
     let acks = match run_plan(gateway.sim(), resident, requests).await {
         Ok(acks) => acks,
         Err(error) => return Err(gateway.resident_error(resident, error).await),
@@ -168,6 +169,7 @@ pub(crate) async fn wait(
             Err(error) => Err(gateway.resident_error(resident, error).await),
         },
         () = gateway.stopped() => Err(ApiError::shutdown()),
+        () = gateway.inner.sanctions.banned(auth.owner) => Err(ApiError::banned()),
     }
 }
 
@@ -188,6 +190,7 @@ pub(crate) async fn routines(
     let resident = auth.resident;
     let routines =
         validate::routines_from_values("routines", body.routines).map_err(ApiError::invalid)?;
+    gateway.admit(resident, &[routines_request(&routines)]).await?;
     let ack = match set_routines(gateway.sim(), resident, &routines).await {
         Ok(ack) => ack,
         Err(error) => return Err(gateway.resident_error(resident, error).await),

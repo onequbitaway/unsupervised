@@ -11,6 +11,7 @@ use unsup_store::{NewResident, ResidentRecord, StoreError, Token, TokenKind, uni
 use crate::auth::OwnerAuth;
 use crate::error::ApiError;
 use crate::extract::{Body, PathId};
+use crate::moderation::{Author, TextUse};
 use crate::state::Gateway;
 use crate::validate;
 
@@ -47,6 +48,12 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let name = validate::name("name", &body.name)?;
     let model = validate::optional_name("model", body.model.as_deref())?;
+    // Viewers see both: they pass the text filters.
+    let author = Author::Owner(owner);
+    gateway.admit_name(author, TextUse::ResidentName, "name", &name).await?;
+    if let Some(model) = &model {
+        gateway.admit_name(author, TextUse::ModelName, "model", model).await?;
+    }
 
     // One creation at a time: the count below stays true until the new
     // record is written.

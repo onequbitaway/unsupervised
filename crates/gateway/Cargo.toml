@@ -29,6 +29,8 @@ unsup-store.workspace = true
 [dev-dependencies]
 rmp-serde.workspace = true
 tokio-tungstenite.workspace = true
+# A test reads the log, to see that it holds no secret.
+tracing-subscriber.workspace = true
 unsup-kernel.workspace = true
 
 [lints]

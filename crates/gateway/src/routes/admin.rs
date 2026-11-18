@@ -6,10 +6,12 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use unsup_protocol::{AdminCommand, AdminReply, CityId, ResidentId};
+use unsup_store::{Sanction, StoreError, unix_now};
 
 use crate::auth::AdminAuth;
 use crate::error::ApiError;
-use crate::extract::{Body, PathId};
+use crate::extract::{Body, OptionalBody, PathId};
+use crate::routes::sanctions::ReasonBody;
 use crate::state::{Counters, Gateway};
 
 /// Runs a command in the simulation. A refusal of the simulation is the
@@ -24,14 +26,35 @@ async fn run(gateway: &Gateway, command: AdminCommand) -> Result<Json<Value>, Ap
 }
 
 /// `POST /admin/residents/{id}/freeze`: stops a resident. Its action
-/// fails, its queue is cleared and every later request is refused.
+/// fails, its queue is cleared and every later request is refused. The
+/// store keeps the freeze, so that it comes back after a rollback of the
+/// world.
 pub(crate) async fn freeze(
     State(gateway): State<Gateway>,
     _admin: AdminAuth,
     PathId(id): PathId,
+    OptionalBody(body): OptionalBody<ReasonBody>,
 ) -> Result<Json<Value>, ApiError> {
-    tracing::info!(resident = id, "admin: freeze");
-    run(&gateway, AdminCommand::Freeze { resident: ResidentId(id) }).await
+    let resident = ResidentId(id);
+    let reason = body.into_reason()?;
+    tracing::info!(%resident, %reason, "admin: freeze");
+    let answer = run(&gateway, AdminCommand::Freeze { resident }).await?;
+    let sanction = Sanction::Freeze(resident);
+    let kept = gateway
+        .store(move |store| match store.impose(sanction, &reason, unix_now()) {
+            Ok(_) => Ok(true),
+            // A resident without an owner record: the world holds the
+            // freeze, the store cannot.
+            Err(StoreError::NotFound(_)) => Ok(false),
+            Err(error) => Err(error),
+        })
+        .await?;
+    if kept {
+        gateway.inner.sanctions.set(sanction, true);
+    } else {
+        tracing::warn!(%resident, "the freeze is not in the store: the resident has no record");
+    }
+    Ok(answer)
 }
 
 /// `POST /admin/residents/{id}/unfreeze`: undoes `freeze`.
@@ -40,8 +63,12 @@ pub(crate) async fn unfreeze(
     _admin: AdminAuth,
     PathId(id): PathId,
 ) -> Result<Json<Value>, ApiError> {
-    tracing::info!(resident = id, "admin: unfreeze");
-    run(&gateway, AdminCommand::Unfreeze { resident: ResidentId(id) }).await
+    let resident = ResidentId(id);
+    tracing::info!(%resident, "admin: unfreeze");
+    // The store first: a freeze that the world no longer has must not
+    // come back.
+    gateway.lift(Sanction::Freeze(resident)).await?;
+    run(&gateway, AdminCommand::Unfreeze { resident }).await
 }
 
 /// `POST /admin/residents/{id}/despawn`: removes a resident from the

@@ -44,10 +44,16 @@ impl Gateway {
             .store(move |store| store.authenticate(&hash))
             .await?
             .ok_or_else(ApiError::invalid_token)?;
-        let key = match principal {
-            Principal::Owner(owner) => LimitKey::Owner(owner),
-            Principal::Resident { resident, .. } => LimitKey::Resident(resident),
+        let (owner, key) = match principal {
+            Principal::Owner(owner) => (owner, LimitKey::Owner(owner)),
+            Principal::Resident { resident, owner } => (owner, LimitKey::Resident(resident)),
         };
+        // A ban stops every token of the owner and every key of its
+        // residents.
+        if self.inner.sanctions.is_banned(owner) {
+            Counters::add(&self.inner.counters.banned);
+            return Err(ApiError::banned());
+        }
         self.take_request(key)?;
         Ok(principal)
     }
@@ -83,6 +89,8 @@ impl FromRequestParts<Gateway> for OwnerAuth {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ResidentAuth {
     pub(crate) resident: ResidentId,
+    /// The owner of the resident.
+    pub(crate) owner: OwnerId,
 }
 
 impl FromRequestParts<Gateway> for ResidentAuth {
@@ -90,7 +98,7 @@ impl FromRequestParts<Gateway> for ResidentAuth {
 
     async fn from_request_parts(parts: &mut Parts, gateway: &Gateway) -> Result<Self, ApiError> {
         match gateway.authenticate(&parts.headers).await? {
-            Principal::Resident { resident, .. } => Ok(ResidentAuth { resident }),
+            Principal::Resident { resident, owner } => Ok(ResidentAuth { resident, owner }),
             Principal::Owner(_) => Err(ApiError::forbidden(
                 "wrong_token_kind",
                 "This route needs a resident key. You sent an owner token.",

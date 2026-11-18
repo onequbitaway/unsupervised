@@ -89,3 +89,28 @@ impl<S: Send + Sync> FromRequestParts<S> for PathId {
             .map_err(|_| ApiError::invalid("The id in the path must be a whole number."))
     }
 }
+
+/// A JSON request body that can be absent: a request without a body
+/// reads as the default value.
+#[derive(Debug)]
+pub(crate) struct OptionalBody<T>(pub(crate) T);
+
+impl<T: DeserializeOwned + Default, S: Send + Sync> FromRequest<S> for OptionalBody<T> {
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, ApiError> {
+        let json = is_json(request.headers());
+        let bytes = body_bytes(request, state).await?;
+        if bytes.is_empty() {
+            return Ok(OptionalBody(T::default()));
+        }
+        if !json {
+            return Err(ApiError::new(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_media_type",
+                "Send the body as JSON with the header `Content-Type: application/json`.",
+            ));
+        }
+        parse_json(&bytes).map(OptionalBody)
+    }
+}

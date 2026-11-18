@@ -1,5 +1,6 @@
 //! A store in one SQLite file.
 
+mod sanctions;
 mod schema;
 
 use std::path::Path;
@@ -10,6 +11,7 @@ use unsup_protocol::{OwnerId, ResidentId};
 
 use crate::error::StoreError;
 use crate::model::{NewOwner, NewResident, Owner, Principal, ResidentRecord, StoreCounts, Webhook};
+use crate::sanction::{Sanction, SanctionRecord};
 use crate::store::Store;
 use crate::token::{Secret, TokenHash, TokenKind};
 
@@ -366,6 +368,15 @@ impl Store for SqliteStore {
             .map_err(engine)
     }
 
+    fn resident_ids(&self) -> Result<Vec<ResidentId>, StoreError> {
+        let conn = self.lock();
+        let mut statement = conn
+            .prepare("SELECT resident FROM residents WHERE gone_at IS NULL ORDER BY resident")
+            .map_err(engine)?;
+        let rows = statement.query_map([], |row| uint(row, 0).map(ResidentId)).map_err(engine)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(engine)
+    }
+
     fn rotate_resident_key(
         &self,
         resident: ResidentId,
@@ -405,6 +416,7 @@ impl Store for SqliteStore {
             .map_err(engine)?;
             tx.execute("DELETE FROM tokens WHERE record = ?1", [record]).map_err(engine)?;
             tx.execute("DELETE FROM webhooks WHERE record = ?1", [record]).map_err(engine)?;
+            sanctions::end_for_resident(tx, resident)?;
             Ok(true)
         })
     }
@@ -414,6 +426,7 @@ impl Store for SqliteStore {
             // Keys and webhooks belong to live records only, so all go.
             tx.execute("DELETE FROM tokens WHERE record IS NOT NULL", []).map_err(engine)?;
             tx.execute("DELETE FROM webhooks", []).map_err(engine)?;
+            sanctions::end_for_all_residents(tx)?;
             let changed = tx
                 .execute(
                     "UPDATE residents SET gone_at = ?1, gone_reason = ?2 WHERE gone_at IS NULL",
@@ -422,6 +435,36 @@ impl Store for SqliteStore {
                 .map_err(engine)?;
             Ok(changed as u64)
         })
+    }
+
+    fn impose(&self, sanction: Sanction, reason: &str, now: u64) -> Result<bool, StoreError> {
+        self.transact(|tx| {
+            match sanction {
+                Sanction::Mute(resident) | Sanction::Freeze(resident) => {
+                    live_record(tx, resident)?.ok_or_else(|| no_resident(resident))?;
+                }
+                Sanction::Ban(owner) => {
+                    let exists: Option<i64> = tx
+                        .query_row("SELECT id FROM owners WHERE id = ?1", [int(owner.0)?], |row| {
+                            row.get(0)
+                        })
+                        .optional()
+                        .map_err(engine)?;
+                    if exists.is_none() {
+                        return Err(StoreError::NotFound(format!("owner {owner}")));
+                    }
+                }
+            }
+            sanctions::impose(tx, sanction, reason, now)
+        })
+    }
+
+    fn lift(&self, sanction: Sanction) -> Result<bool, StoreError> {
+        sanctions::lift(&self.lock(), sanction)
+    }
+
+    fn sanctions(&self) -> Result<Vec<SanctionRecord>, StoreError> {
+        sanctions::list(&self.lock())
     }
 
     fn set_webhook(

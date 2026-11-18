@@ -1,12 +1,17 @@
 //! The `unsupervised` command.
 
+mod admin_cli;
+mod replay_cli;
+
 use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use unsup_server::{Overrides, Server, ServerConfig, StoreConfig, StoreKind, WorldShape};
+use unsup_server::{
+    Overrides, Server, ServerConfig, StoreConfig, StoreKind, WorldShape, WorldStoreKind,
+};
 
 /// Unsupervised: a persistent society played by AI agents.
 #[derive(Parser)]
@@ -19,7 +24,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Start the simulation and the server.
-    Run(RunArgs),
+    Run(Box<RunArgs>),
+    /// Check a data directory: replay the input log with all game modules,
+    /// compare the state hashes of the snapshots and audit the money and
+    /// the goods. The server that uses the directory must not run.
+    Replay(replay_cli::ReplayArgs),
+    /// Call an admin route of a running server.
+    Admin(admin_cli::AdminArgs),
     /// Write the protocol schema and the action catalogue to a directory.
     ExportSchema {
         /// Target directory.
@@ -33,6 +44,15 @@ enum Command {
 enum StoreArg {
     /// One SQLite file in the data directory.
     Sqlite,
+    /// Memory only.
+    Memory,
+}
+
+/// Where the world lives between two runs.
+#[derive(Clone, Copy, ValueEnum)]
+enum WorldStoreArg {
+    /// The directory `world` in the data directory.
+    Disk,
     /// Memory only.
     Memory,
 }
@@ -66,12 +86,30 @@ struct RunArgs {
     /// Directory with the built viewer.
     #[arg(long, env = "UNSUPERVISED_WEB_DIR")]
     web_dir: Option<PathBuf>,
-    /// Directory for the data that the server writes.
+    /// Directory for the data that the server writes: the accounts and
+    /// the world.
     #[arg(long, env = "UNSUPERVISED_DATA_DIR")]
     data_dir: Option<PathBuf>,
     /// Where accounts and keys live.
     #[arg(long, env = "UNSUPERVISED_STORE", value_enum)]
     store: Option<StoreArg>,
+    /// Where the world lives between two runs.
+    #[arg(long, env = "UNSUPERVISED_WORLD_STORE", value_enum)]
+    world_store: Option<WorldStoreArg>,
+    /// A file with parameter overrides in TOML, for a new world. Give the
+    /// option once for each file; a later file wins. In the environment
+    /// variable, put a comma between two files.
+    #[arg(
+        long = "params",
+        env = "UNSUPERVISED_PARAMS",
+        value_name = "FILE",
+        value_delimiter = ','
+    )]
+    params: Vec<PathBuf>,
+    /// Only after a start failed because one input of the log makes the
+    /// simulation panic: drop that input and all later ones from the log.
+    #[arg(long, value_name = "SEQUENCE")]
+    drop_from: Option<u64>,
     /// The file that `GET /join.md` serves.
     #[arg(long, env = "UNSUPERVISED_JOIN_FILE")]
     join_file: Option<PathBuf>,
@@ -79,6 +117,14 @@ struct RunArgs {
     /// environment variable: other users of the machine can read a flag.
     #[arg(long, env = "UNSUPERVISED_ADMIN_TOKEN", hide_env_values = true)]
     admin_token: Option<String>,
+    /// The client id of the OAuth application for the GitHub sign-in.
+    #[arg(long, env = "UNSUPERVISED_GITHUB_CLIENT_ID")]
+    github_client_id: Option<String>,
+    /// The client secret of the OAuth application for the GitHub sign-in.
+    /// Prefer the environment variable: other users of the machine can
+    /// read a flag.
+    #[arg(long, env = "UNSUPERVISED_GITHUB_CLIENT_SECRET", hide_env_values = true)]
+    github_client_secret: Option<String>,
 }
 
 impl RunArgs {
@@ -96,8 +142,16 @@ impl RunArgs {
                 StoreArg::Sqlite => StoreKind::Sqlite,
                 StoreArg::Memory => StoreKind::Memory,
             }),
+            world_store: self.world_store.map(|store| match store {
+                WorldStoreArg::Disk => WorldStoreKind::Disk,
+                WorldStoreArg::Memory => WorldStoreKind::Memory,
+            }),
+            params: self.params,
+            drop_from: self.drop_from,
             join_file: self.join_file,
             admin_token: self.admin_token,
+            github_client_id: self.github_client_id,
+            github_client_secret: self.github_client_secret,
         };
         ServerConfig::load(self.config.as_deref(), overrides)
     }
@@ -126,6 +180,8 @@ async fn main() -> anyhow::Result<()> {
             println!("Stopping.");
             server.stop().await
         }
+        Command::Replay(args) => replay_cli::run(&args),
+        Command::Admin(args) => admin_cli::run(args).await,
         Command::ExportSchema { out } => export_schema(&out),
     }
 }

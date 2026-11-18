@@ -8,9 +8,11 @@
 //!
 //! Everything that the server sends goes through one bounded queue. A
 //! client that reads too slowly fills the queue, and the server drops the
-//! connection. The client connects again with `?since=`, the sequence
-//! number after the last notice that it got, and misses nothing that the
-//! inbox still holds. It can get a report a second time.
+//! connection. The client connects again with two cursors: `?since=`, the
+//! sequence number after the last notice that it got, and
+//! `&reports_since=`, the sequence number after the last report that it
+//! got. It then misses nothing that the inbox still holds and gets
+//! nothing a second time.
 
 use std::time::Instant;
 
@@ -25,7 +27,9 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::sync::watch;
 use unsup_protocol::codec::{self, Format};
-use unsup_protocol::{ActionAck, ActionReport, Detail, Notice, Observation, ResidentId, SimError};
+use unsup_protocol::{
+    ActionAck, ActionReport, Detail, Notice, Observation, OwnerId, ResidentId, SimError,
+};
 
 use crate::actions::{observe_opts, run_plan};
 use crate::auth::ResidentAuth;
@@ -66,6 +70,10 @@ pub(crate) struct WsQuery {
     /// this. Without it, only news that comes after the connection.
     #[serde(default)]
     since: Option<u64>,
+    /// Push the reports with a sequence number at or above this. Without
+    /// it, `since` counts for the reports too.
+    #[serde(default)]
+    reports_since: Option<u64>,
 }
 
 /// The options of an `observe` frame: the fields of `ObserveOpts`. A
@@ -129,6 +137,8 @@ enum End {
     Slow,
     /// The server stops.
     Shutdown,
+    /// An administrator banned the owner of the resident.
+    Banned,
 }
 
 /// `GET /v1/ws`: upgrades to a WebSocket.
@@ -166,14 +176,23 @@ pub(crate) async fn upgrade(
             Err(error) => return Err(gateway.resident_error(resident, error).await),
         },
     };
+    let report_cursor = query.reports_since.unwrap_or(cursor);
     let format = match query.codec {
         Some(Codec::Msgpack) => Format::MsgPack,
         Some(Codec::Json) | None => Format::Json,
     };
     let max = config.max_message_bytes;
     let (out, queue) = mpsc::channel(config.queue.max(1));
-    let connection =
-        Connection { gateway: gateway.clone(), resident, format, cursor, kinds: None, out };
+    let connection = Connection {
+        gateway: gateway.clone(),
+        resident,
+        owner: auth.owner,
+        format,
+        cursor,
+        report_cursor,
+        kinds: None,
+        out,
+    };
     Ok(upgrade
         .max_message_size(max)
         .max_frame_size(max)
@@ -190,10 +209,13 @@ async fn stopped(stopping: &mut watch::Receiver<bool>) {
 struct Connection {
     gateway: Gateway,
     resident: ResidentId,
+    owner: OwnerId,
     /// Format of the pushed frames.
     format: Format,
-    /// News at or above this sequence number was not pushed yet.
+    /// Notices at or above this sequence number were not pushed yet.
     cursor: u64,
+    /// Reports at or above this sequence number were not pushed yet.
+    report_cursor: u64,
     /// The kinds that the client wants pushed. `None`: all.
     kinds: Option<Vec<String>>,
     /// The bounded queue to the socket.
@@ -226,6 +248,7 @@ impl Connection {
             config.ping_interval(),
         );
         let mut stopping = self.gateway.inner.stopping.subscribe();
+        let mut rollbacks = self.gateway.inner.rollbacks.subscribe();
         let mut last_seen = Instant::now();
         // News that came between the cursor and now, for `?since=`.
         let mut step = self.push_news().await;
@@ -251,6 +274,8 @@ impl Connection {
                     }
                 }
                 () = stopped(&mut stopping) => Err(End::Shutdown),
+                () = self.gateway.inner.sanctions.banned(self.owner) => Err(End::Banned),
+                Ok(()) = rollbacks.changed() => self.rewind().await,
             };
         };
 
@@ -267,6 +292,11 @@ impl Connection {
             }
             End::Idle => self.queue(close(CLOSE_POLICY, "idle timeout")).is_ok(),
             End::Shutdown => self.queue(close(CLOSE_GOING_AWAY, "the server stops")).is_ok(),
+            End::Banned => {
+                let banned = ApiError::banned();
+                self.error(self.format, banned.code, banned.message).is_ok()
+                    && self.queue(close(CLOSE_POLICY, "the owner is banned")).is_ok()
+            }
             End::Gone => false,
         };
         drop(self.out);
@@ -351,6 +381,11 @@ impl Connection {
                     Ok(request) => request,
                     Err(message) => return invalid(message),
                 };
+                let admitted =
+                    self.gateway.admit(self.resident, std::slice::from_ref(&request)).await;
+                if let Err(refusal) = admitted {
+                    return self.error(format, refusal.code, refusal.message);
+                }
                 match self.gateway.sim().act(self.resident, request).await {
                     Ok(ack) => self.send(format, &ServerFrame::Ack { ack }),
                     Err(error) => self.sim_error(format, error).await,
@@ -362,6 +397,9 @@ impl Connection {
                     Ok(requests) => requests,
                     Err(message) => return invalid(message),
                 };
+                if let Err(refusal) = self.gateway.admit(self.resident, &requests).await {
+                    return self.error(format, refusal.code, refusal.message);
+                }
                 match run_plan(self.gateway.sim(), self.resident, requests).await {
                     Ok(acks) => acks
                         .into_iter()
@@ -411,28 +449,51 @@ impl Connection {
         self.kinds.as_ref().is_none_or(|kinds| kinds.iter().any(|k| k == kind))
     }
 
-    /// Pushes the notices and reports since the cursor.
+    /// Moves the cursors back to the end of the inbox, after a rollback
+    /// of the world: the inbox is shorter then, and its next news gets
+    /// sequence numbers that the cursors already passed.
+    async fn rewind(&mut self) -> Result<(), End> {
+        match cursor_now(self.gateway.sim(), self.resident).await {
+            Ok(end) => {
+                self.cursor = self.cursor.min(end);
+                self.report_cursor = self.report_cursor.min(end);
+                Ok(())
+            }
+            Err(SimError::UnknownResident) => {
+                self.sim_error(self.format, SimError::UnknownResident).await
+            }
+            // The simulation is busy. The next push finds the shorter
+            // inbox and moves the cursors then.
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// Pushes the notices and reports since the cursors.
     async fn push_news(&mut self) -> Result<(), End> {
-        let news = match news_since(self.gateway.sim(), self.resident, self.cursor).await {
+        let since = self.cursor.min(self.report_cursor);
+        let news = match news_since(self.gateway.sim(), self.resident, since).await {
             Ok(news) => news,
             Err(SimError::UnknownResident) => {
                 return self.sim_error(self.format, SimError::UnknownResident).await;
             }
             // The simulation is busy. The next wake reads from the same
-            // cursor, so nothing is lost.
+            // cursors, so nothing is lost.
             Err(_) => return Ok(()),
         };
+        let (notices_from, reports_from) = (self.cursor, self.report_cursor);
+        // Both cursors go to the end of the inbox. After a rollback of the
+        // world that end is behind the cursors: they go back with it.
         self.cursor = news.next;
-        // Reports first, then the notices by sequence number. A report
-        // has no sequence number of its own. In this order, a client
-        // that got a notice also got every report that the server read
-        // with it, so the number after that notice is a safe cursor.
-        for report in news.reports {
+        self.report_cursor = news.next;
+        // Reports first, then the notices. Each of the two comes in the
+        // order of its sequence numbers, so a client that keeps the last
+        // number of each has two safe cursors for its next connection.
+        for report in news.reports.into_iter().filter(|report| report.seq >= reports_from) {
             if self.wants(REPORT_KIND) {
                 self.send(self.format, &ServerFrame::Report { report })?;
             }
         }
-        for notice in news.notices {
+        for notice in news.notices.into_iter().filter(|notice| notice.seq >= notices_from) {
             if self.wants(&notice.kind) {
                 self.send(self.format, &ServerFrame::Notice { notice })?;
             }

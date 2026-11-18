@@ -4,6 +4,7 @@ use unsup_protocol::{OwnerId, ResidentId};
 
 use crate::error::StoreError;
 use crate::model::{NewOwner, NewResident, Owner, Principal, ResidentRecord, StoreCounts, Webhook};
+use crate::sanction::{Sanction, SanctionRecord};
 use crate::token::{Secret, TokenHash};
 
 /// A storage engine for owners, resident records, API keys, webhooks and
@@ -16,8 +17,11 @@ use crate::token::{Secret, TokenHash};
 ///
 /// A resident record is *live* while its resident is in the running world.
 /// [`Store::retire_resident`] ends that. A retired record stays in the
-/// store as history, its key stops working and its webhook is removed. The
-/// methods that read residents see only live records.
+/// store as history, its key stops working, its webhook is removed and its
+/// mute and its freeze end. The methods that read residents see only live
+/// records.
+///
+/// A setting whose key starts with `sanction:` is reserved for the engine.
 pub trait Store: Send + Sync + 'static {
     /// Makes an owner and its first token.
     ///
@@ -81,6 +85,10 @@ pub trait Store: Send + Sync + 'static {
     /// Counts the live records of an owner.
     fn count_residents(&self, owner: OwnerId) -> Result<u64, StoreError>;
 
+    /// Returns the ids of all residents with a live record, in ascending
+    /// order.
+    fn resident_ids(&self) -> Result<Vec<ResidentId>, StoreError>;
+
     /// Replaces the key of a resident. The old key stops working in the
     /// same step.
     ///
@@ -97,8 +105,9 @@ pub trait Store: Send + Sync + 'static {
     ) -> Result<(), StoreError>;
 
     /// Ends the live record of a resident that left the world: the key
-    /// stops working and the webhook is removed. Returns false when the
-    /// resident has no live record.
+    /// stops working, the webhook is removed, and the mute and the freeze
+    /// of the resident end. Returns false when the resident has no live
+    /// record.
     fn retire_resident(
         &self,
         resident: ResidentId,
@@ -108,8 +117,25 @@ pub trait Store: Send + Sync + 'static {
 
     /// Ends every live record. The server calls it when it starts a new
     /// world: the resident ids of the old world mean nothing in the new
-    /// one. Returns the number of records that it ended.
+    /// one. Every mute and every freeze ends too; a ban stays. Returns the
+    /// number of records that it ended.
     fn retire_all_residents(&self, reason: &str, now: u64) -> Result<u64, StoreError>;
+
+    /// Puts a sanction in force. Returns false when it was in force
+    /// already; its first reason and time stay.
+    ///
+    /// # Errors
+    ///
+    /// `NotFound` when the resident of a mute or a freeze has no live
+    /// record, or when the owner of a ban does not exist.
+    fn impose(&self, sanction: Sanction, reason: &str, now: u64) -> Result<bool, StoreError>;
+
+    /// Lifts a sanction. Returns false when it was not in force.
+    fn lift(&self, sanction: Sanction) -> Result<bool, StoreError>;
+
+    /// Returns every sanction that is in force, in the order of
+    /// [`Sanction`].
+    fn sanctions(&self) -> Result<Vec<SanctionRecord>, StoreError>;
 
     /// Sets or replaces the webhook of a resident.
     ///

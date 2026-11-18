@@ -2,9 +2,12 @@
 
 mod admin;
 mod agent;
+mod auth;
+mod ops;
 mod owners;
 mod public;
 mod residents;
+mod sanctions;
 mod webhook;
 
 use axum::Router;
@@ -30,6 +33,8 @@ impl Gateway {
             .route("/join.md", get(public::join))
             .route("/v1/catalogue", get(public::catalogue))
             .route("/v1/owners", post(owners::sign_up))
+            .route("/v1/auth/{provider}", get(auth::start))
+            .route("/v1/auth/{provider}/callback", get(auth::callback))
             .route("/v1/residents", post(residents::create).get(residents::list))
             .route("/v1/residents/{id}/keys", post(residents::rotate_key))
             .route("/v1/me", get(agent::me))
@@ -43,8 +48,18 @@ impl Gateway {
             .route("/admin/residents/{id}/freeze", post(admin::freeze))
             .route("/admin/residents/{id}/unfreeze", post(admin::unfreeze))
             .route("/admin/residents/{id}/despawn", post(admin::despawn))
+            .route("/admin/residents/{id}/mute", post(sanctions::mute))
+            .route("/admin/residents/{id}/unmute", post(sanctions::unmute))
+            .route("/admin/owners/{id}/ban", post(sanctions::ban))
+            .route("/admin/owners/{id}/unban", post(sanctions::unban))
+            .route("/admin/sanctions", get(sanctions::list))
             .route("/admin/params", post(admin::set_param))
             .route("/admin/stats", get(admin::stats))
+            .route("/admin/dashboard", get(ops::dashboard))
+            .route("/admin/alerts", get(ops::alerts))
+            .route("/admin/flags", get(ops::flags))
+            .route("/admin/flags/{id}/dismiss", post(ops::dismiss))
+            .route("/admin/rollback", post(ops::rollback))
             .method_not_allowed_fallback(method_not_allowed)
             .layer(DefaultBodyLimit::max(self.config().limits.max_body_bytes))
             .layer(middleware::from_fn_with_state(self.clone(), address_limit));

@@ -32,6 +32,30 @@ pub struct Identity {
     pub name: String,
 }
 
+/// The first step of a sign-in that goes through the service of a
+/// provider: where the person goes, and the value that ties the answer of
+/// the service to this start.
+///
+/// `Debug` does not print the address and the state.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Authorization {
+    /// The address that the person opens in a browser.
+    pub url: String,
+    /// The value that the service sends back with its answer. The provider
+    /// accepts an answer only with a state that it made, one time.
+    pub state: String,
+    /// Seconds for which the state is good.
+    pub expires_in: u64,
+}
+
+impl std::fmt::Debug for Authorization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Authorization")
+            .field("expires_in", &self.expires_in)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Why an identity provider refused a sign-up.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum IdentityError {
@@ -59,15 +83,27 @@ pub type IdentityFuture<'a> =
 /// subject, and gives it a new owner token.
 ///
 /// [`LocalSignUp`] is the only provider in this crate. A provider for an
-/// OAuth service implements this trait: it exchanges
-/// [`SignUp::credential`] for the account of the person and returns the
-/// account id as the subject.
+/// OAuth service implements this trait: [`IdentityProvider::begin`] gives
+/// the address of the service and a state, and
+/// [`IdentityProvider::identify`] exchanges [`SignUp::credential`] for the
+/// account of the person and returns the account id as the subject.
 pub trait IdentityProvider: Send + Sync + 'static {
     /// The name that a client uses to pick this provider.
     fn name(&self) -> &str;
 
     /// Checks a sign-up and says who it is.
     fn identify<'a>(&'a self, sign_up: &'a SignUp) -> IdentityFuture<'a>;
+
+    /// Starts a sign-in that has a step at the service of the provider.
+    /// Returns `None` when the provider has no such step: the client then
+    /// sends its proof directly. The default is `None`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the provider cannot start a sign-in now.
+    fn begin(&self) -> Result<Option<Authorization>, IdentityError> {
+        Ok(None)
+    }
 }
 
 /// Sign-up without an outside service: every sign-up is a new identity.

@@ -86,3 +86,119 @@ backoff_max_ms = 60000
 queue = 1024
 # Number of deliveries that are sent at the same time.
 workers = 8
+
+[moderation]
+# The rules of the rule filter. Every text that a client sends passes
+# them before it enters the simulation: each text in the arguments of an
+# action, and the names of owners, residents and models. A text with a
+# control character, other than a line break or a tab, is always refused.
+#
+# These defaults refuse little. A server for the public sets its rules
+# here: see `crates/server/data/defaults.toml`.
+
+# Greatest length of one text, in bytes. 0: no limit of the gateway. The
+# simulation has its own limits.
+max_text_bytes = 2000
+# Greatest number of times that one character can stand in a row.
+# 0: no limit.
+max_repeat = 0
+# What a text with a link gets: "allow", "refuse", or "listed" (only
+# links to the hosts in `link_hosts` and to their parts).
+links = "allow"
+link_hosts = []
+# Last parts of host names. A word such as `name.com` is a link when its
+# last part is in this list. A word with `://` or with `www.` at its
+# start is always a link.
+link_endings = [
+    "com", "net", "org", "io", "co", "me", "gg", "ly", "to", "tv", "app", "dev", "ai", "xyz",
+    "info", "biz", "link", "site", "online", "top", "shop", "club", "live", "ru", "cn", "uk",
+    "de", "fr", "us", "eu",
+]
+# Words and phrases that no text can hold. A word matches a whole word, in
+# upper or lower case. "bad" does not match "badge".
+words = []
+# Patterns that no text can hold. A pattern can be anywhere in the text.
+# `*` is any number of characters, `?` is one character, `#` is one digit.
+# A backslash before one of them takes it as it is. The rules compare a
+# text in lower case, without invisible characters, with one space for
+# each run of white space.
+patterns = []
+# Token bucket of texts for other residents or for viewers, for each
+# resident. 0: no limit.
+texts_per_minute = 0
+text_burst = 10
+# Verbs that carry text for other residents or for viewers. Every text
+# argument of such a verb is speech: a muted resident cannot use the
+# verb, and each use counts for the limit above. Add a verb here when a
+# module gets a new verb with text.
+text_verbs = ["say", "message", "org_say", "post", "org_create"]
+# Names of arguments that are speech in every verb.
+text_args = ["text"]
+
+[abuse.funnel]
+# The funnel detector: many young residents that give money or goods to
+# the same receiver. It puts a flag on the admin list. It never punishes.
+enabled = true
+# A resident is young for this many game minutes after it appeared.
+young_minutes = 2880
+# The detector counts the gifts of the last this many game minutes.
+window_minutes = 1440
+# Number of young givers to one receiver that raises a flag.
+min_givers = 3
+# Least sum of the gifts: cents of money, or units of goods. A flag needs
+# one of the two. 0: that sum does not count.
+min_money = 1
+min_goods = 1
+# Greatest number of flags that the list keeps.
+max_flags = 500
+# Greatest number of gifts in the evidence of one flag.
+max_evidence = 50
+# Greatest number of gifts and of residents that the detector keeps in
+# memory.
+max_tracked = 100000
+
+# The public events that are gifts, and the fields of their data. `from`
+# and `to` hold resident ids; without `from` the actor of the event is
+# the giver. `money` holds cents, `goods` holds units, `item` holds the
+# name of the good.
+[[abuse.funnel.events]]
+kind = "life.gift_given"
+from = "from"
+to = "to"
+money = "money"
+goods = "qty"
+item = "item"
+
+[ops]
+# Time between two looks at the statistics of the simulation for the
+# alert list, in milliseconds. 0: only a request of the alert list or of
+# the dashboard looks.
+watch_interval_ms = 5000
+# Greatest number of kinds of alerts in the list.
+max_alerts = 100
+# Kind of the public event with the economy statistics. The dashboard
+# shows the newest one.
+economy_kind = "finance.stats_published"
+
+[github]
+# Sign-in with a GitHub account (OAuth authorization code flow). It is
+# off unless `client_id` and `client_secret` are set. Keep the secret out
+# of files that others can read.
+client_id = ""
+client_secret = ""
+authorize_url = "https://github.com/login/oauth/authorize"
+token_url = "https://github.com/login/oauth/access_token"
+user_url = "https://api.github.com/user"
+# The address of `GET /v1/auth/github/callback` as a browser reaches it,
+# for example "https://world.example/v1/auth/github/callback". Empty: the
+# address that the OAuth application registered.
+redirect_url = ""
+# The permissions that the server asks for. It reads only the account id
+# and the login name.
+scope = "read:user"
+# Seconds for which a started sign-in is good.
+state_ttl_secs = 600
+# Greatest number of started sign-ins that wait.
+max_pending = 10000
+# Time limit of one request to GitHub, in milliseconds.
+timeout_ms = 10000

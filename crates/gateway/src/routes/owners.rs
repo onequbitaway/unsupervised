@@ -7,12 +7,16 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use unsup_store::{IdentityError, NewOwner, Owner, SignUp, StoreError, Token, TokenKind, unix_now};
+use unsup_store::{
+    IdentityError, IdentityProvider, NewOwner, Owner, SignUp, StoreError, Token, TokenKind,
+    unix_now,
+};
 
 use crate::client::ClientAddr;
 use crate::error::ApiError;
 use crate::extract::Body;
 use crate::limit::{limit_address, retry_after_secs};
+use crate::moderation::{Author, TextUse};
 use crate::state::{Counters, Gateway};
 
 /// The body of `POST /v1/owners`.
@@ -32,6 +36,17 @@ pub(crate) struct SignUpBody {
 
 fn owner_json(owner: &Owner) -> Value {
     json!({ "id": owner.id, "name": owner.name, "created_at": owner.created_at })
+}
+
+/// Converts the refusal of an identity provider into an answer.
+pub(crate) fn identity_error(error: IdentityError) -> ApiError {
+    match error {
+        IdentityError::Invalid(message) => ApiError::invalid(message),
+        IdentityError::Denied(message) => ApiError::forbidden("sign_up_denied", message),
+        IdentityError::Unavailable(message) => {
+            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "provider_unavailable", message)
+        }
+    }
 }
 
 /// `POST /v1/owners`: signs up and returns the owner and an owner token.
@@ -57,23 +72,42 @@ pub(crate) async fn sign_up(
         ))
     })?;
 
+    // A name that the client chose passes the text filters.
+    let named = body.name.is_some();
     let request = SignUp { name: body.name, credential: body.credential };
-    let identity = provider.identify(&request).await.map_err(|error| match error {
-        IdentityError::Invalid(message) => ApiError::invalid(message),
-        IdentityError::Denied(message) => ApiError::forbidden("sign_up_denied", message),
-        IdentityError::Unavailable(message) => {
-            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "provider_unavailable", message)
-        }
-    })?;
+    sign_up_with(&gateway, provider.as_ref(), &request, named).await
+}
+
+/// Asks a provider who signs up, finds or makes the owner, and gives it a
+/// new owner token. With `check_name`, the display name passes the text
+/// filters first.
+pub(crate) async fn sign_up_with(
+    gateway: &Gateway,
+    provider: &dyn IdentityProvider,
+    request: &SignUp,
+    check_name: bool,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let identity = provider.identify(request).await.map_err(identity_error)?;
+    if check_name {
+        gateway.admit_name(Author::Visitor, TextUse::OwnerName, "name", &identity.name).await?;
+    }
 
     let token = Token::generate(TokenKind::Owner)?;
     let (hash, hint) = (token.hash(), token.hint());
-    let (owner, created) = gateway
+    let banned = {
+        let gateway = gateway.clone();
+        move |owner: &Owner| gateway.inner.sanctions.is_banned(owner.id)
+    };
+    let signed = gateway
         .store(move |store| {
             let now = unix_now();
             if let Some(owner) = store.owner_by_identity(&identity.provider, &identity.subject)? {
+                // A banned owner gets no new token.
+                if banned(&owner) {
+                    return Ok(None);
+                }
                 store.add_owner_token(owner.id, &hash, &hint, now)?;
-                return Ok((owner, false));
+                return Ok(Some((owner, false)));
             }
             let new = NewOwner {
                 name: identity.name,
@@ -81,19 +115,26 @@ pub(crate) async fn sign_up(
                 subject: identity.subject,
             };
             match store.create_owner(&new, &hash, &hint, now) {
-                Ok(owner) => Ok((owner, true)),
+                Ok(owner) => Ok(Some((owner, true))),
                 // The same identity signed up in another request just now.
                 Err(StoreError::Conflict(_)) => {
                     let owner = store
                         .owner_by_identity(&new.provider, &new.subject)?
                         .ok_or_else(|| StoreError::Engine("an owner disappeared".into()))?;
+                    if banned(&owner) {
+                        return Ok(None);
+                    }
                     store.add_owner_token(owner.id, &hash, &hint, now)?;
-                    Ok((owner, false))
+                    Ok(Some((owner, false)))
                 }
                 Err(error) => Err(error),
             }
         })
         .await?;
+    let Some((owner, created)) = signed else {
+        Counters::add(&gateway.inner.counters.banned);
+        return Err(ApiError::banned());
+    };
 
     tracing::info!(owner = %owner.id, created, "owner signed up");
     let status = if created { StatusCode::CREATED } else { StatusCode::OK };

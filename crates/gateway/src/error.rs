@@ -71,6 +71,33 @@ impl ApiError {
         )
     }
 
+    /// 403: an administrator muted the resident.
+    #[must_use]
+    pub fn muted() -> ApiError {
+        ApiError::forbidden(
+            "muted",
+            "An administrator muted this resident. It cannot send text. Every other action \
+             works.",
+        )
+    }
+
+    /// 403: an administrator banned the owner of the token.
+    #[must_use]
+    pub fn banned() -> ApiError {
+        ApiError::forbidden(
+            "banned",
+            "An administrator banned the owner of this token. No token of the owner and no \
+             key of its residents works.",
+        )
+    }
+
+    /// 422: a filter refused a text of the request. Nothing reached the
+    /// simulation.
+    #[must_use]
+    pub fn text_refused(message: impl Into<String>) -> ApiError {
+        ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "text_refused", message)
+    }
+
     /// 429: too many requests. `wait_secs` goes into `Retry-After`.
     #[must_use]
     pub fn rate_limited(wait_secs: u64) -> ApiError {

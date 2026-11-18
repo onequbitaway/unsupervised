@@ -6,11 +6,23 @@ bind = "127.0.0.1:8080"
 # Real milliseconds for one game minute. 0: the world moves only when a
 # tool steps it.
 tick_ms = 1000
-# Directory for the data that the server writes.
+# Directory for the data that the server writes: the accounts and the
+# world.
 data_dir = "var"
 # Where accounts and keys live: "sqlite" (the file `store.sqlite3` in the
 # data directory) or "memory" (lost when the server stops).
 store = "sqlite"
+# Where the world lives: "disk" (the directory `world` in the data
+# directory) or "memory" (lost when the server stops). With "disk" the
+# server recovers the world at the start, also after a crash. With
+# `store = "memory"` the world is in memory too: after a restart nobody
+# would have a key for its residents.
+world_store = "disk"
+# Files with parameter overrides, in TOML with the format of the data
+# files of the modules (`[params."name"]` tables). The server applies
+# them in this order when it makes a new world. A world that the server
+# recovers keeps its parameters; change those with `POST /admin/params`.
+params = []
 # Directory with the built viewer. It is served at `/` when it exists.
 web_dir = "web/dist"
 # The file that `GET /join.md` serves.
@@ -26,8 +38,27 @@ cities = 2
 # Districts on one side of a city.
 districts = 3
 
-# What `--dev` changes: fast ticks, a store in memory, webhooks to local
-# addresses and a viewer on any origin.
+[durability]
+# How the server keeps the world. The numbers that are not set here are
+# those of the runtime (`crates/runtime/data/runtime.toml`):
+#
+#   sync = "interval"           when the input log is forced to the disk:
+#                               "record", "batch" or "interval"
+#   sync_interval_ms = 50       time between two forced writes
+#   snapshot_every_frames = 600 frames between two snapshots
+#   keep_snapshots = 5          snapshots to keep; a rollback goes to one
+#   segment_bytes = 67108864    size at which a log segment rolls
+#   drop_from = <sequence>      only after a failed recovery: drop this
+#                               input and all later ones from the log
+
+# true: a zone whose tick takes too long skips frames (time dilation).
+dilation = true
+# Frames between two audits of the money and the goods of the whole
+# world. A failed audit is an alert. 0: no audit while the server runs.
+audit_every_frames = 600
+
+# What `--dev` changes: fast ticks, accounts and the world in memory,
+# webhooks to local addresses and a viewer on any origin.
 [dev]
 tick_ms = 100
 store = "memory"
@@ -40,3 +71,15 @@ allow_private = true
 
 # Values for the gateway. See `crates/gateway/data/defaults.toml`.
 [gateway]
+
+# The rules for text on a server that strangers use and that is shown in
+# public. The gateway alone refuses little; these values are the policy.
+# Add `words` and `patterns` for the language of your world.
+[gateway.moderation]
+# Greatest number of times that one character can stand in a row.
+max_repeat = 12
+# A text with a link is refused.
+links = "refuse"
+# Texts of one resident for other residents or for viewers.
+texts_per_minute = 30
+text_burst = 10
