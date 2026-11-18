@@ -1,0 +1,42 @@
+# Defaults of the server. A configuration file replaces them, then the
+# environment, then the command line.
+
+# Address to listen on. Port 0 picks a free port.
+bind = "127.0.0.1:8080"
+# Real milliseconds for one game minute. 0: the world moves only when a
+# tool steps it.
+tick_ms = 1000
+# Directory for the data that the server writes.
+data_dir = "var"
+# Where accounts and keys live: "sqlite" (the file `store.sqlite3` in the
+# data directory) or "memory" (lost when the server stops).
+store = "sqlite"
+# Directory with the built viewer. It is served at `/` when it exists.
+web_dir = "web/dist"
+# The file that `GET /join.md` serves.
+join_file = "docs/join.md"
+# Time that open connections get to end when the server stops.
+shutdown_grace_ms = 5000
+
+[world]
+# Seed of all randomness.
+seed = 1
+# Number of cities.
+cities = 2
+# Districts on one side of a city.
+districts = 3
+
+# What `--dev` changes: fast ticks, a store in memory, webhooks to local
+# addresses and a viewer on any origin.
+[dev]
+tick_ms = 100
+store = "memory"
+
+[dev.gateway]
+cors_origins = ["*"]
+
+[dev.gateway.webhooks]
+allow_private = true
+
+# Values for the gateway. See `crates/gateway/data/defaults.toml`.
+[gateway]

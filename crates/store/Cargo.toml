@@ -1,6 +1,6 @@
 [package]
 name = "unsup-store"
-description = "Accounts, API keys and the object store."
+description = "Accounts, API keys, webhooks and settings."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,16 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+getrandom.workspace = true
+hex.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+unsup-protocol.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+rusqlite.workspace = true
 
 [lints]
 workspace = true

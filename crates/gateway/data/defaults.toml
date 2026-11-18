@@ -1,0 +1,88 @@
+# Defaults of the gateway. The server configuration replaces any value
+# under its `[gateway]` table. A value of 0 turns off a rate limit
+# (`*_per_minute`, `*_per_hour`) and a limit with the words "0: no limit".
+
+# Origins that may call the API from a browser. "*" allows every origin.
+# An empty list allows only pages that the server itself serves. The MCP
+# endpoint refuses a request with an `Origin` header that is not listed.
+cors_origins = []
+
+# Number of trusted reverse proxies in front of the server. 0: the address
+# of the connection is the client address. n: the n-th address from the
+# right of `X-Forwarded-For` is the client address.
+forwarded_hops = 0
+
+[limits]
+# Greatest number of residents of one owner that are in the world.
+# 0: no limit.
+residents_per_owner = 3
+# Token bucket of each owner token and each resident key.
+key_requests_per_minute = 600
+key_burst = 60
+# Token bucket of each client address. An IPv6 address counts as its /64.
+address_requests_per_minute = 1200
+address_burst = 120
+# Token bucket of sign-ups, for each client address.
+signups_per_hour = 20
+signup_burst = 5
+# Greatest size of a request body, in bytes.
+max_body_bytes = 65536
+# Greatest number of requests in one plan.
+max_plan = 16
+# Greatest and default time of one `wait` call, in seconds.
+max_wait_secs = 60
+default_wait_secs = 30
+# Greatest number of `wait` calls of one resident that are open at a time.
+# 0: no limit.
+waits_per_resident = 4
+# Greatest number of names in `sections` and in `kinds`.
+max_names = 16
+
+[ws]
+# Time between two pings of the server, in milliseconds.
+ping_interval_ms = 20000
+# The server closes a connection that sent nothing for this long.
+idle_timeout_ms = 60000
+# Greatest number of frames that wait for a slow client. The server drops
+# a connection whose queue is full.
+queue = 256
+# Greatest size of one frame from a client, in bytes.
+max_message_bytes = 65536
+# Greatest number of connections of one resident at a time. 0: no limit.
+connections_per_resident = 4
+
+[mcp]
+# The server forgets a session that was not used for this long.
+session_idle_secs = 3600
+# Greatest number of sessions. The session that was idle longest goes
+# first.
+max_sessions = 10000
+# Greatest and default time of the tool `wait`, in seconds. Many MCP
+# clients give up on a request after 60 seconds.
+max_wait_secs = 50
+default_wait_secs = 20
+# Greatest length of a line in a tool result before the text wraps into
+# an indented block.
+line_width = 100
+# Time for which a client can keep the tool list, in milliseconds.
+list_ttl_ms = 3600000
+
+[webhooks]
+# true: a webhook can point at a private or loopback address. Only for
+# development.
+allow_private = false
+# Greatest length of a webhook address, in bytes.
+max_url_bytes = 2048
+# Time limit of one delivery attempt, in milliseconds.
+timeout_ms = 5000
+# Number of attempts for one delivery.
+attempts = 5
+# Wait before the second attempt. It doubles with each attempt, up to
+# the maximum. After the last attempt the webhook rests for the maximum.
+backoff_base_ms = 1000
+backoff_max_ms = 60000
+# Greatest number of deliveries that wait for a free worker. A delivery
+# that finds the queue full is tried again with the next news.
+queue = 1024
+# Number of deliveries that are sent at the same time.
+workers = 8
