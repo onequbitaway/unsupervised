@@ -11,7 +11,12 @@ use unsup_protocol::{
 use crate::codec::{self, DecodeError};
 use crate::ids::{ParamId, VerbId};
 use crate::ledger::Holder;
-use crate::realm::{Membership, Transfer};
+use crate::plugin::Message;
+use crate::realm::{BorderNews, Membership, Transfer};
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
 
 /// Where a message goes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
@@ -28,10 +33,12 @@ pub enum Dest {
 
 /// A message in transit between two realms.
 ///
-/// The host of a world sees envelopes only when the world does not host
-/// every realm: `World::take_external` returns the envelopes for realms in
-/// other processes, and `World::deliver_external` takes the envelopes that
-/// other processes sent.
+/// The host of a world sees envelopes in two cases. When the world does not
+/// host every realm, `World::take_external` returns the envelopes for realms
+/// in other processes, and `World::deliver_external` takes the envelopes
+/// that other processes sent. When a service outside the simulation has
+/// something to tell a module, it makes an envelope with
+/// [`Envelope::module`] and gives it to `World::deliver_external`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Envelope {
     /// The realm that sent the message.
@@ -41,9 +48,52 @@ pub struct Envelope {
     /// Where the message goes.
     pub to: Dest,
     pub(crate) body: Body,
+    /// True when the envelope came into this world through
+    /// `Input::Deliver`. A module message of such an envelope that no
+    /// handler can take is dropped and counted. It is not written when it
+    /// is false, so an envelope of this process has the bytes that it
+    /// always had.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) foreign: bool,
 }
 
 impl Envelope {
+    /// Makes an envelope with a module message, for a sender that is not a
+    /// realm of this world: a service outside the simulation, or a tool.
+    ///
+    /// `from` is the realm that the handler sees as the sender. A service
+    /// names the realm where its message enters the world, for example
+    /// `RealmId::Global`. The sequence number is 0. Give the envelope to
+    /// `World::deliver_external` (`Input::Deliver`); it is delivered in the
+    /// next tick of its target.
+    ///
+    /// `Blueprint::handles_message` tells if a handler will take the
+    /// message. A message that no handler takes is dropped and counted in
+    /// `World::dropped_messages`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the `Serialize` implementation of the message fails, as
+    /// `Realm::send` does. That is a bug in the type.
+    #[must_use]
+    pub fn module<M: Message>(from: RealmId, to: Dest, message: &M) -> Envelope {
+        Envelope {
+            from,
+            seq: 0,
+            to,
+            body: Body::Module {
+                kind: Cow::Borrowed(M::KIND),
+                payload: codec::encode(M::KIND, message),
+            },
+            foreign: false,
+        }
+    }
+
+    /// Makes an envelope of this process with a body.
+    pub(crate) fn new(from: RealmId, seq: u64, to: Dest, body: Body) -> Envelope {
+        Envelope { from, seq, to, body, foreign: false }
+    }
+
     /// Returns the kind of the message: `Message::KIND` of a module message,
     /// or a name that starts with `kernel.` for a kernel message.
     #[must_use]
@@ -158,6 +208,9 @@ pub(crate) enum KernelMsg {
         org: OrgId,
         grant: Option<Membership>,
     },
+    /// What changed among the residents of the sending zone that are near
+    /// the border of the target zone.
+    Border(Vec<BorderNews>),
 }
 
 impl KernelMsg {
@@ -174,6 +227,7 @@ impl KernelMsg {
             KernelMsg::Events(_) => "kernel.events",
             KernelMsg::Directory(_) => "kernel.directory",
             KernelMsg::Membership { .. } => "kernel.membership",
+            KernelMsg::Border(_) => "kernel.border",
         }
     }
 }

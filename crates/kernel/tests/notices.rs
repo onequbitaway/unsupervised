@@ -45,21 +45,6 @@ fn a_nearby_audience_reaches_only_residents_within_the_radius() {
 }
 
 #[test]
-fn a_nearby_audience_stops_at_the_zone_border() {
-    let mut w = world();
-    let ada = w.spawn_at("Ada", Pos::new(63, 30));
-    let same_zone = w.spawn_at("Same", Pos::new(60, 30));
-    let across = w.spawn_at("Across", Pos::new(64, 30));
-    assert_ne!(w.zone_of(across), w.zone_of(ada));
-    w.act_ok(ada, "shout", json!({ "text": "hello" }));
-    w.step(2);
-    assert_eq!(w.notices(same_zone).len(), 1);
-    // Zones share nothing: a resident one tile away in another zone does
-    // not hear it. This is a documented limit of `Audience::Nearby`.
-    assert!(w.notices(across).is_empty());
-}
-
-#[test]
 fn a_private_audience_reaches_only_the_listed_residents_in_any_zone() {
     let mut w = world();
     let ada = w.spawn_at("Ada", Pos::new(20, 20));

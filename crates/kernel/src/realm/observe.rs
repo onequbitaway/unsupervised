@@ -16,6 +16,15 @@ use crate::defs::AttrShow;
 use crate::ids::Idx;
 use crate::ledger::Holder;
 
+/// Where a resident in sight is.
+#[derive(Clone, Copy)]
+enum Seen {
+    /// A row of this zone.
+    Here(Idx),
+    /// An entry of the list of residents on the other side of a border.
+    Outside(usize),
+}
+
 impl Realm {
     /// Builds the observation of a resident of this zone: the kernel
     /// sections, the sections of the zone observers, and the notices.
@@ -199,32 +208,52 @@ impl Realm {
     }
 
     /// The section `nearby`: the nearest residents and sites within sight,
-    /// each list bounded by `kernel.nearby_max`.
+    /// each list bounded by `kernel.nearby_max`. The residents on the other
+    /// side of a zone border are in the list too, as this zone last heard
+    /// of them; each has the key `zone`.
     fn section_nearby(&self, idx: Idx) -> Value {
         let kernel = self.bp.kernel_ids();
         let radius = u32::try_from(self.param(kernel.sight_radius)).unwrap_or(0);
         let max = usize::try_from(self.param(kernel.nearby_max)).unwrap_or(0);
         let pos = self.pos(idx);
 
-        let mut seen: Vec<(u32, ResidentId, Idx)> = self
+        let outside = self.nearby_outside(pos, radius);
+        let here = self
             .nearby(pos, radius)
             .into_iter()
             .filter(|&other| other != idx)
-            .map(|other| (self.pos(other).dist(pos), self.id_of(other), other))
-            .collect();
-        seen.sort_unstable();
+            .map(|other| (self.pos(other).dist(pos), self.id_of(other), Seen::Here(other)));
+        let across = outside
+            .iter()
+            .enumerate()
+            .map(|(at, outsider)| (outsider.pos.dist(pos), outsider.id, Seen::Outside(at)));
+        let mut seen: Vec<(u32, ResidentId, Seen)> = here.chain(across).collect();
+        seen.sort_unstable_by_key(|&(distance, id, _)| (distance, id));
         let total_residents = seen.len();
         let identity = self.identity.borrow();
         let residents: Vec<Value> = seen
             .iter()
             .take(max)
-            .map(|&(_, id, other)| {
+            .map(|&(_, id, place)| {
                 let mut entry = Map::new();
                 entry.insert("id".into(), json!(id));
-                entry.insert("name".into(), json!(identity[other.index()].name));
-                entry.insert("pos".into(), json!(self.pos(other)));
-                if let Some(activity) = self.activity(other) {
-                    entry.insert("activity".into(), json!(activity.verb));
+                match place {
+                    Seen::Here(other) => {
+                        entry.insert("name".into(), json!(identity[other.index()].name));
+                        entry.insert("pos".into(), json!(self.pos(other)));
+                        if let Some(activity) = self.activity(other) {
+                            entry.insert("activity".into(), json!(activity.verb));
+                        }
+                    }
+                    Seen::Outside(at) => {
+                        let outsider = &outside[at];
+                        entry.insert("name".into(), json!(outsider.name));
+                        entry.insert("pos".into(), json!(outsider.pos));
+                        if let Some(activity) = outsider.activity {
+                            entry.insert("activity".into(), json!(activity));
+                        }
+                        entry.insert("zone".into(), json!(outsider.zone));
+                    }
                 }
                 Value::Object(entry)
             })

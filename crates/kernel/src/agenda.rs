@@ -18,6 +18,10 @@ pub(crate) const RECENT_MAX: usize = 32;
 /// Greatest length of a request id in bytes.
 pub(crate) const REQUEST_ID_MAX: usize = 64;
 
+/// Number of waiting actions that ended without their answer which the
+/// kernel remembers per resident, so that it can report a late answer.
+pub(crate) const LAPSED_MAX: usize = 8;
+
 /// Greatest number of conditions in one routine, counting nested ones.
 pub(crate) const CONDITION_NODES_MAX: usize = 32;
 
@@ -68,6 +72,10 @@ pub(crate) struct Agenda {
     /// The last tick in which a routine fired.
     #[serde(rename = "rt", default, skip_serializing_if = "is_zero_u64")]
     pub(crate) routine_tick: u64,
+    /// Waiting actions that ended before their answer came, oldest first.
+    /// An answer that comes late finds the verb and the request id here.
+    #[serde(rename = "l", default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) lapsed: Vec<Lapsed>,
 }
 
 impl Agenda {
@@ -104,7 +112,40 @@ impl Agenda {
                 })
                 .sum::<usize>()
             + self.recent.capacity() * (size_of::<(String, ActionAck)>() + 32)
+            + self.lapsed.capacity() * size_of::<Lapsed>()
+            + self
+                .lapsed
+                .iter()
+                .map(|l| l.request_id.as_ref().map_or(0, String::capacity))
+                .sum::<usize>()
     }
+
+    /// Remembers a waiting action that ended without its answer. The oldest
+    /// entry leaves when there are more than [`LAPSED_MAX`].
+    pub(crate) fn remember_lapsed(&mut self, lapsed: Lapsed) {
+        if self.lapsed.len() >= LAPSED_MAX {
+            self.lapsed.remove(0);
+        }
+        self.lapsed.push(lapsed);
+    }
+
+    /// Takes the entry of a waiting action that ended without its answer.
+    pub(crate) fn take_lapsed(&mut self, action_id: u64) -> Option<Lapsed> {
+        let at = self.lapsed.iter().position(|l| l.action_id == action_id)?;
+        Some(self.lapsed.remove(at))
+    }
+}
+
+/// A waiting action that ended (interrupted, cancelled, timed out) before
+/// `Realm::complete_action` gave its answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Lapsed {
+    #[serde(rename = "a")]
+    pub(crate) action_id: u64,
+    #[serde(rename = "v")]
+    pub(crate) verb: VerbId,
+    #[serde(rename = "r", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request_id: Option<String>,
 }
 
 /// Returns an estimate of the heap bytes behind a JSON value: strings, and

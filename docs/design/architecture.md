@@ -148,14 +148,16 @@ in the next tick. State must store `ResidentId`, never `Idx`.
 One tick of a realm runs in this order: deliver the messages in its inbox;
 fire timers (conditions that end, actions that finish or time out, in
 `ResidentId` order); run the systems of stage `Pre`, `Update`, `Post`; check
-the routines of idle residents; remove the residents that leave; audit the
+the routines of idle residents; remove the residents that leave; tell the
+zones around it what changed near their border (section 5.3); audit the
 ledger. After every message, after the timers and after every system the
 realm *settles*: residents whose action ended start their next action, and
 event handlers get the events that were emitted.
 
 A mistake in a plugin (a verb registered twice, a data file that does not
-parse, an unknown name in `param_id`, a payload that is not JSON) is a bug
-and panics, like a double borrow.
+parse, an unknown name in `param_id`, a payload that is not JSON, a message
+that the handler of the same process cannot decode) is a bug and panics,
+like a double borrow.
 
 ### 5.1 Plugins and the builder
 
@@ -224,6 +226,10 @@ pub trait Message: Serialize + DeserializeOwned + 'static { const KIND: &'static
 arrive in the global realm in the same frame. A zone handler gets the events
 of its own zone, later in the same tick.
 
+A message handler gets the decoded message. A payload that does not decode
+into `M` panics when a realm of this process sent it. The kernel drops it
+when it came through `Input::Deliver` (section 5.6).
+
 Definitions (parameters, items, attributes, conditions, faucets, sinks) are
 shared by both scopes. *Ensure* means: the first definition of a name wins
 and a later call returns the same id, so a plugin can declare its data in
@@ -278,6 +284,14 @@ Rules of the action engine (kernel code, not module code):
   `frozen` (administrator) rejects every verb.
 - `Busy` and `Wait` last at least one tick. The acknowledgement of `Wait` is
   `Pending`.
+- `realm.complete_action` ends a `Wait` action. A call that names no action
+  of the resident does nothing. The action can have ended before the answer
+  comes (an interrupt, `cancel`, a timeout). With the parameter
+  `kernel.late_reports` at 1, the kernel then writes the late answer as one
+  more report with the same action id and request id. It does this once for
+  an action, and for the last 8 such actions of a resident. The value of the
+  parameter at the end of the action counts. With the parameter at 0 (the
+  default) the late answer is dropped.
 - When an action ends, the kernel writes an `ActionReport` to the resident's
   inbox, then starts the next queued request. When the queue is empty, the
   kernel evaluates the routines. An action whose result was in the
@@ -306,7 +320,9 @@ tick. A routine whose action failed or finished at once waits
 `kernel.routine_backoff` ticks; the wait doubles with each failure in a row,
 up to 16 times. Routine actions write reports like other actions;
 `kernel.routine_reports = 0` limits that to failures. The routine counts its
-successes (`runs`, in the observation with full detail).
+successes (`runs`, in the observation with full detail). A module sets the
+routines of a resident with `realm.set_routines`, for example in `on_spawn`;
+the rules are those of the verb `set_routines`.
 
 ### 5.3 Realm
 
@@ -316,7 +332,7 @@ impl Realm {
     pub fn id(&self) -> RealmId;                  // Global or Zone(ZoneId)
     pub fn scope(&self) -> Scope;
     pub fn zone_info(&self) -> Option<&ZoneInfo>; // bounds, city, name
-    pub fn layout(&self) -> &Layout;              // cities, zones, bounds, zone_at(pos), neighbours
+    pub fn layout(&self) -> &Layout;              // cities, zones, bounds, zone_at(pos), neighbours, zones_within
     pub fn tick(&self) -> Tick;                   // local tick
     pub fn frame(&self) -> u64;                   // the same in every realm
     pub fn clock(&self) -> Clock;                 // calendar: day, hour, minute, year
@@ -338,6 +354,7 @@ impl Realm {
     pub fn set_pos(&self, idx: Idx, pos: Pos) -> Result<(), PosError>;  // may trigger migration
     pub fn nearby(&self, pos: Pos, radius: u32) -> Vec<Idx>;    // sorted by ResidentId
     pub fn nearby_into(&self, pos: Pos, radius: u32, out: &mut Vec<Idx>);  // reuses the buffer
+    pub fn nearby_outside(&self, pos: Pos, radius: u32) -> Vec<Outsider>;  // residents of other zones, sorted by ResidentId
     pub fn attr(&self, idx: Idx, a: AttrId) -> i64;
     pub fn attr_set(&self, idx: Idx, a: AttrId, v: i64) -> i64; // clamps, returns new value
     pub fn attr_add(&self, idx: Idx, a: AttrId, d: i64) -> i64;
@@ -362,6 +379,7 @@ impl Realm {
     pub fn interrupt(&self, idx: Idx, reason: &str);            // fails the running action
     pub fn clear_queue(&self, idx: Idx) -> usize;               // removes the planned actions
     pub fn complete_action(&self, resident: ResidentId, action_id: u64, r: Result<Value, ActionError>);
+    pub fn set_routines(&self, idx: Idx, routines: &[Routine]) -> Result<(), ActionError>;  // replaces the list
 
     // Singletons and registries.
     pub fn res<T: Resource>(&self) -> Ref<'_, T>;
@@ -386,6 +404,8 @@ impl Realm {
     pub fn wire_money(&self, from: Holder, to: Dest, to_holder: Holder, amount: Money, reason: &str) -> Result<(), LedgerError>;
     pub fn wire_item(&self, from: Holder, to: Dest, to_holder: Holder, item: ItemId, qty: i64, reason: &str) -> Result<(), LedgerError>;
 }
+
+pub struct Outsider { pub id: ResidentId, pub zone: ZoneId, pub pos: Pos, pub name: String, pub activity: Option<&'static str> }
 ```
 
 `notify` works for a resident in any zone. The kernel routes it.
@@ -400,7 +420,34 @@ impl Realm {
 - After `World::apply` every resident is in exactly one zone: a migration
   that an input between frames causes is done before `apply` returns.
 - `nearby` uses `Pos::dist`: a diagonal step counts as one. It finds only
-  residents of this zone, also near a zone border.
+  residents of this zone, also near a zone border: an `Idx` names a row of
+  this zone. `nearby_outside` gives the residents on the other side of a
+  border.
+- Sight across a border. Zones share nothing in a frame. So each zone keeps
+  a copy of the residents of the zones around it that are near its border:
+  id, zone, position, name, activity. At the end of its tick a zone tells
+  each zone around it what changed among its residents that are at most
+  `kernel.sight_radius` tiles from that zone. The zone around it takes the
+  news at the start of its next tick. So the copy is one frame old: it
+  shows the other zone as it was at the end of the last tick of that zone.
+  A change that an input makes between frames is told no later than the end
+  of the next tick. A resident whose action ends and that starts the same
+  verb again at once has not changed. `nearby_outside`, the `nearby` section
+  of the observation and `Audience::Nearby` read the copy.
+- A zone tells the zones that have a tile at most one zone size away. The
+  distance across a border is thus at most the sight radius and at most one
+  zone size. Sites across a border are not in the copy.
+- A resident that moves to another zone stays in the copies. The zone that
+  it leaves tells the zones around it the new zone, and keeps a copy
+  itself. A zone can have a row and an old copy of the same resident for
+  one frame; the row counts.
+- A zone cannot change an `Outsider` and cannot read its attributes or
+  components. It can send a message, a notice or a wire to the id.
+- The copies are simulation state. They are in the snapshot and in the
+  state hash.
+- `set_routines` checks the list as a whole. A list that is refused changes
+  nothing. A list with more routines than `kernel.routines_max` is refused
+  with `invalid_args`.
 - A condition with an end tick ends by itself at that tick. When a condition
   ends, by time or by `clear_condition`, the kernel emits the silent event
   `kernel.condition_ended { resident, condition, expired }`.
@@ -474,7 +521,7 @@ pub struct EventMeta {
 }
 pub enum Audience {
     Public,                 // viewers see it
-    Nearby(u32),            // viewers see it; residents within the radius get a notice
+    Nearby(u32),            // viewers see it; residents within the radius get a notice, also across a zone border
     Private(Vec<ResidentId>), // only these residents get a notice; viewers do not see it
     Silent,                 // only event handlers see it
 }
@@ -485,9 +532,14 @@ notice. Use `protocol::Untrusted::new(from, text)`. It serializes with
 `"untrusted": true`.
 
 - A notice from an audience has the kind, the actor and the payload of the
-  event. `Nearby` reaches the residents of the zone of the event, not the
-  actor, and not a resident across a zone border. The place is `pos`, or the
+  event. `Nearby` does not reach the actor. The place is `pos`, or the
   position of the actor when `pos` is absent.
+- `Nearby` reaches the residents of the zone of the event at once. It also
+  reaches the residents of other zones within the radius that the zone
+  knows of (the copy of section 5.3). Their notice arrives in the next
+  frame and follows a resident that moved. Each resident gets the notice
+  one time. Across a border the reach is at most the sight radius, also for
+  a larger radius, and the positions are one frame old.
 - An event that nobody would receive is not serialized.
 - The inbox of a resident keeps the last `kernel.inbox_max` entries. Notices
   and action reports share one sequence, from 1.
@@ -508,6 +560,7 @@ impl World {
     pub fn frame(&self) -> u64;
     pub fn state_hash(&self) -> [u8; 32];
     pub fn snapshot(&self) -> Vec<u8>;
+    pub fn snapshot_with_hash(&self) -> (Vec<u8>, [u8; 32]);   // both, with one pass over the state
     pub fn restore(plugins: &[&dyn Plugin], bytes: &[u8]) -> Result<World, SnapshotError>;
     pub fn audit(&self) -> Result<WorldTotals, AuditError>;
     pub fn realm(&self, id: RealmId) -> Option<&Realm>;  // tests and admin tools
@@ -519,7 +572,7 @@ impl World {
     pub fn residents(&self) -> usize;
     pub fn take_external(&mut self) -> Vec<Envelope>;    // messages for realms in other processes
     pub fn is_complete(&self) -> bool;                   // true when this world hosts every realm
-    pub fn dropped_messages(&self) -> u64;               // messages without a target; a statistic
+    pub fn dropped_messages(&self) -> u64;               // messages that nobody could take; a statistic
     pub fn set_clock(&mut self, clock: Option<TickClock>);   // lets the runtime measure zone ticks
     pub fn timings(&self) -> &[ZoneTiming];
     pub fn memory_estimate(&self) -> MemoryEstimate;
@@ -533,6 +586,17 @@ pub enum Input {
     Deliver { messages: Vec<Envelope> },              // from other processes -> Output::Delivered
 }
 // An input that is refused gives Output::Error(SimError). `Input` is serializable, for the input log.
+
+impl Envelope {
+    pub fn module<M: Message>(from: RealmId, to: Dest, message: &M) -> Envelope;   // from outside the simulation
+    pub fn kind(&self) -> &str;                          // `Message::KIND`, or `kernel.*`
+    pub fn to_bytes(&self) -> Vec<u8>;
+    pub fn from_bytes(bytes: &[u8]) -> Result<Envelope, DecodeError>;
+}
+impl Blueprint {
+    pub fn handles_message(&self, kind: &str, scope: Scope) -> bool;      // a handler of `on_message`
+    pub fn handles_resident_message(&self, kind: &str) -> bool;           // a handler of `on_resident_message`
+}
 
 pub struct WorldConfig {
     pub seed: u64,
@@ -552,12 +616,35 @@ A `World` can host a subset of the realms. Messages for realms that it does
 not host go to an external outbox, and `deliver_external` injects messages
 from other processes. One process hosts all realms by default.
 
+A service outside the simulation sends a module message with
+`Envelope::module` and `Input::Deliver`. The target takes it in its next
+tick. `from` is the sender that the handler sees.
+
+- `Input::Deliver` does not stop the world for a module message that nobody
+  can take. Such a message is dropped and counted in `dropped_messages`:
+  a message for a resident or a zone that does not exist, a message whose
+  kind has no handler in its target realm, and a message whose payload does
+  not decode into the type of the handler. The handler does not run.
+- The sender asks `handles_message` (or `handles_resident_message` for
+  `Dest::Resident`) before it sends.
+- For a message that a realm of this process sent, a kind without a
+  handler is ignored and not counted, and a payload that does not decode
+  panics.
+- Kernel messages (a resident that migrates, a wire, an answer) come only
+  from a process of the same world with the same build. The kernel trusts
+  them.
+
 - One tick is one game minute: 1,440 ticks per day. Zones are numbered city
   by city, row by row. A city is a square of `districts * districts` zones.
 - A new resident appears at the centre of a site with the tag `spawn` in the
   requested city (residents are spread over all such sites by id), else at
   the centre of the first zone of the city. Without a city, the city with
   the fewest residents is used.
+- The spawn sites of a city are those of its hosted zones, in zone order,
+  then in site id order. Resident `id` gets site number `id % count`. The
+  kernel keeps this list. It reads the sites of a zone again only after
+  `sites_mut` was called there, so a spawn does not scan the sites of the
+  city.
 - The frame: zones tick in parallel (rayon); the result does not depend on
   the thread schedule. Then the global realm gets the messages of the zones
   and ticks. Then residents that left a zone arrive in their new zone, and
@@ -566,6 +653,8 @@ from other processes. One process hosts all realms by default.
   frames makes are routed when `apply` returns.
 - The state hash is blake3 over the canonical serialized state. Snapshots
   and realm messages are MessagePack with field names.
+  `snapshot_with_hash` gives the bytes of `snapshot` and the hash of
+  `state_hash`, and writes the state of each realm one time.
 - A snapshot holds the configuration and the names behind all numeric ids.
   `restore` gives every parameter, item, attribute, condition, faucet, sink
   and verb its old id, so a snapshot restores with a newer set of plugins.
@@ -636,6 +725,13 @@ The runtime:
   `next_notice` of the last observation, so no news is lost between calls. A
   call returns an observation with the news since the cursor, or with none
   after the timeout.
+
+The kernel has calls for the work of the runtime, so that the runtime does
+not copy kernel formats: `World::snapshot_with_hash` for a snapshot that is
+named after its hash, `Envelope::module` for a message from a service
+outside the simulation, and `Blueprint::handles_message` to refuse such a
+message before it is in the input log when no module takes it
+(section 5.6).
 
 Status. The mailbox loop, real-time and manual stepping, `wait`, the frame
 broadcast and the statistics are implemented. The input log, snapshots,
