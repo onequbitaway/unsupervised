@@ -16,6 +16,8 @@ members = [
     "crates/spectator",
     "crates/server",
     "crates/loadtest",
+    "crates/scenarios",
+    "crates/e2e",
 ]
 
 [workspace.package]

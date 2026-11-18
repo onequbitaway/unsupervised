@@ -1,0 +1,17 @@
+[package]
+name = "unsup-e2e"
+description = "End-to-end tests through the public API of a running server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+unsup-protocol.workspace = true
+unsup-server.workspace = true
+
+[lints]
+workspace = true

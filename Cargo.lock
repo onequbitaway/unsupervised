@@ -2316,6 +2316,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "unsup-e2e"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "unsup-protocol",
+ "unsup-server",
+]
+
+[[package]]
 name = "unsup-economy"
 version = "0.1.0"
 dependencies = [
@@ -2437,6 +2446,16 @@ dependencies = [
  "tracing",
  "unsup-kernel",
  "unsup-protocol",
+]
+
+[[package]]
+name = "unsup-scenarios"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "unsup-kernel",
+ "unsup-protocol",
+ "unsup-server",
 ]
 
 [[package]]

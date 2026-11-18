@@ -1,0 +1,18 @@
+[package]
+name = "unsup-scenarios"
+description = "Scenario tests of the full game in one process."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+unsup-kernel.workspace = true
+unsup-protocol.workspace = true
+unsup-server.workspace = true
+
+[lints]
+workspace = true
