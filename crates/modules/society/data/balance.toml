@@ -1,1 +1,401 @@
 # Balance numbers of the society module. See docs/design/architecture.md, section 7.
+# docs/design/modules/society.md says how the module uses each number.
+
+# Speech
+
+[params."society.say_radius"]
+value = 8
+min = 1
+max = 64
+policy = false
+summary = "Distance in tiles at which residents hear `say`."
+
+[params."society.say_text_max"]
+value = 280
+min = 1
+max = 4000
+policy = false
+summary = "Greatest length of the text of `say`, in bytes."
+
+[params."society.says_per_hour"]
+value = 30
+min = 0
+max = 100000
+policy = false
+summary = "Greatest number of `say` actions of one resident in one game hour."
+
+[params."society.message_text_max"]
+value = 500
+min = 1
+max = 4000
+policy = false
+summary = "Greatest length of the text of `message` and `org_say`, in bytes."
+
+[params."society.messages_per_hour"]
+value = 30
+min = 0
+max = 100000
+policy = false
+summary = "Greatest number of `message` actions of one resident in one game hour."
+
+[params."society.org_says_per_hour"]
+value = 10
+min = 0
+max = 100000
+policy = false
+summary = "Greatest number of `org_say` actions of one resident in one game hour."
+
+[params."society.org_broadcasts_per_hour"]
+value = 60
+min = 0
+max = 100000
+policy = false
+summary = "Greatest number of `org_say` texts that one organization sends to its members in one game hour."
+
+[params."society.post_text_max"]
+value = 500
+min = 1
+max = 4000
+policy = false
+summary = "Greatest length of the text of `post`, in bytes."
+
+[params."society.post_ticks"]
+value = 5
+min = 1
+max = 1440
+policy = false
+summary = "Ticks that one `post` action takes."
+
+[params."society.posts_per_day"]
+value = 6
+min = 0
+max = 100000
+policy = false
+summary = "Greatest number of `post` actions of one resident in one game day."
+
+# Organizations
+
+[params."society.org_create_fee"]
+value = 1000
+min = 0
+max = 100000000
+policy = true
+summary = "Cents that `org_create` costs. The money goes to the treasury of the city of the founder."
+
+[params."society.org_name_max"]
+value = 40
+min = 1
+max = 200
+policy = false
+summary = "Greatest length of the name of an organization, in bytes."
+
+[params."society.role_name_max"]
+value = 24
+min = 1
+max = 64
+policy = false
+summary = "Greatest length of the name of a role, in bytes."
+
+[params."society.org_roles_max"]
+value = 12
+min = 2
+max = 64
+policy = false
+summary = "Greatest number of roles in one organization."
+
+[params."society.org_members_max"]
+value = 5000
+min = 1
+max = 10000000
+policy = false
+summary = "Greatest number of members of one organization that residents made."
+
+[params."society.org_invites_max"]
+value = 50
+min = 0
+max = 10000
+policy = false
+summary = "Greatest number of open invitations of one organization."
+
+[params."society.org_invite_ttl"]
+value = 10080
+min = 1
+max = 2419200
+policy = false
+summary = "Game minutes that an invitation to an organization stays open."
+
+[params."society.memberships_max"]
+value = 8
+min = 1
+max = 64
+policy = false
+summary = "Greatest number of organizations that one resident can join or make."
+
+# Contracts
+
+[params."society.contract_clauses_max"]
+value = 8
+min = 1
+max = 32
+policy = false
+summary = "Greatest number of clauses in one contract."
+
+[params."society.contracts_open_max"]
+value = 12
+min = 1
+max = 1000
+policy = false
+summary = "Greatest number of contracts that one resident has open as the offerer or as the signer."
+
+[params."society.contract_due_max"]
+value = 40320
+min = 1
+max = 2419200
+policy = false
+summary = "Greatest time from the signing to the deadline of a clause, in game minutes."
+
+[params."society.contract_offer_ttl"]
+value = 1440
+min = 1
+max = 2419200
+policy = false
+summary = "Game minutes that a contract offer stays open when the offer does not say."
+
+[params."society.contract_offer_ttl_max"]
+value = 10080
+min = 1
+max = 2419200
+policy = false
+summary = "Greatest number of game minutes that a contract offer can stay open."
+
+[params."society.contract_match_max"]
+value = 4
+min = 0
+max = 16
+policy = false
+summary = "Greatest number of data fields that one event clause can compare."
+
+[params."society.contract_event_kind_max"]
+value = 64
+min = 3
+max = 200
+policy = false
+summary = "Greatest length of the event kind in an event clause, in bytes."
+
+[params."society.contract_field_name_max"]
+value = 32
+min = 1
+max = 200
+policy = false
+summary = "Greatest length of the name of a data field in an event clause, in bytes."
+
+[params."society.contract_field_text_max"]
+value = 64
+min = 0
+max = 200
+policy = false
+summary = "Greatest length of a text value that an event clause compares, in bytes."
+
+[params."society.contract_handover_radius"]
+value = 2
+min = 0
+max = 64
+policy = false
+summary = "Distance in tiles at which a resident can hand goods to the other party of a contract."
+
+# Relations
+
+[params."society.relations_max"]
+value = 32
+min = 0
+max = 1000
+policy = false
+summary = "Greatest number of private labels that one resident keeps with `relate`."
+
+[params."society.proposal_ttl"]
+value = 1440
+min = 1
+max = 2419200
+policy = false
+summary = "Game minutes that a marriage proposal or a household invitation stays open."
+
+[params."society.proposals_max"]
+value = 8
+min = 1
+max = 64
+policy = false
+summary = "Greatest number of open proposals and invitations that the `relations` section of one resident shows."
+
+[params."society.household_members_max"]
+value = 8
+min = 2
+max = 1000
+policy = false
+summary = "Greatest number of members of one household, with the host."
+
+# Reputation
+
+[params."society.rep_contract_fulfilled"]
+value = 10
+min = 0
+max = 1000
+policy = false
+summary = "Points of `rep.standing` that each party gets when a contract is fulfilled."
+
+[params."society.rep_contract_breached"]
+value = 50
+min = 0
+max = 1000
+policy = false
+summary = "Points of `rep.standing` that a party loses when it breaches a contract."
+
+[params."society.rep_contract_rewards_per_day"]
+value = 2
+min = 0
+max = 1000
+policy = false
+summary = "Greatest number of fulfilled contracts that raise the `rep.standing` of one resident in one game day."
+
+[params."society.opinion_weight"]
+value = 5
+min = 0
+max = 1000
+policy = false
+summary = "Points of `rep.standing` that one `opine` action gives or takes."
+
+[params."society.opinions_per_day"]
+value = 3
+min = 0
+max = 1000
+policy = false
+summary = "Greatest number of `opine` actions of one resident in one game day."
+
+[params."society.opinion_min_age"]
+value = 1440
+min = 0
+max = 2419200
+policy = false
+summary = "Game minutes that a resident must have lived before it can use `opine`."
+
+# Observation
+
+[params."society.brief_list_max"]
+value = 3
+min = 1
+max = 100
+policy = false
+summary = "Greatest number of entries in each list of the `orgs` and `contracts` sections with brief detail."
+
+# Drama scores of the events, 0 to 100. The director uses them.
+
+[params."society.drama_said"]
+value = 1
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.said`."
+
+[params."society.drama_posted"]
+value = 5
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.posted`."
+
+[params."society.drama_org_created"]
+value = 20
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.org_created`."
+
+[params."society.drama_org_joined"]
+value = 5
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.org_joined`."
+
+[params."society.drama_org_left"]
+value = 8
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.org_left`."
+
+[params."society.drama_org_dissolved"]
+value = 15
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.org_dissolved`."
+
+[params."society.drama_org_granted"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.org_granted` and `society.org_grant_revoked`."
+
+[params."society.drama_treasury"]
+value = 8
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.org_deposited` and `society.org_paid`."
+
+[params."society.drama_contract_signed"]
+value = 15
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.contract_signed`."
+
+[params."society.drama_contract_fulfilled"]
+value = 10
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.contract_fulfilled`."
+
+[params."society.drama_contract_breached"]
+value = 45
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.contract_breached`."
+
+[params."society.drama_contract_expired"]
+value = 5
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.contract_expired`."
+
+[params."society.drama_married"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.married`."
+
+[params."society.drama_divorced"]
+value = 30
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.divorced`."
+
+[params."society.drama_household"]
+value = 10
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.household_joined`, `society.household_left` and `society.household_dissolved`."
+
+[params."society.drama_opinion"]
+value = 5
+min = 0
+max = 100
+policy = false
+summary = "Drama score of `society.opinion_given`."
