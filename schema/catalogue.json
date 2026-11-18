@@ -39,7 +39,7 @@
       "default": 0,
       "min": 0,
       "name": "rep.notoriety",
-      "summary": "Criminal fame, 0 and up."
+      "summary": "Criminal fame, 0 and up. Each conviction raises it."
     },
     {
       "default": 0,
@@ -135,6 +135,11 @@
     },
     {
       "blocking": true,
+      "name": "detained",
+      "summary": "The resident is under arrest and waits for a decision."
+    },
+    {
+      "blocking": true,
       "name": "frozen",
       "summary": "An administrator stopped the resident. It cannot act."
     },
@@ -142,6 +147,16 @@
       "blocking": true,
       "name": "hospitalized",
       "summary": "The resident is in hospital until it is healed."
+    },
+    {
+      "blocking": true,
+      "name": "jailed",
+      "summary": "The resident serves a sentence in jail. Only a few verbs work."
+    },
+    {
+      "blocking": false,
+      "name": "wanted",
+      "summary": "A warrant names the resident. Police can arrest it on sight."
     }
   ],
   "items": [
@@ -344,6 +359,1518 @@
     }
   ],
   "params": [
+    {
+      "max": 8,
+      "min": 0,
+      "name": "crime.arrest_range",
+      "policy": false,
+      "summary": "Greatest distance in tiles between an officer and the resident that it arrests or releases.",
+      "value": 1
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "crime.arrest_ticks",
+      "policy": false,
+      "summary": "Ticks that `arrest` and `release` take.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.arrest_xp",
+      "policy": false,
+      "summary": "Experience in law for one `arrest`.",
+      "value": 8
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.assault.drama",
+      "policy": false,
+      "summary": "Drama score of an assault.",
+      "value": 60
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.assault.fine",
+      "policy": true,
+      "summary": "Fine for an assault that the engine gives.",
+      "value": 6000
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.assault.fine_max",
+      "policy": true,
+      "summary": "Greatest fine for an assault.",
+      "value": 25000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.assault.jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for an assault.",
+      "value": 4320
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.assault.jail_ticks",
+      "policy": true,
+      "summary": "Jail time for an assault that the engine gives.",
+      "value": 720
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.assault.notoriety",
+      "policy": false,
+      "summary": "Notoriety of a conviction for assault.",
+      "value": 50
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.assault_base_bp",
+      "policy": false,
+      "summary": "Chance that `assault` works when both residents have the same combat level.",
+      "value": 6000
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.assault_damage",
+      "policy": false,
+      "summary": "Health that the victim of an assault loses, before the combat level of the attacker.",
+      "value": 150
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.assault_fail_injury",
+      "policy": false,
+      "summary": "Health that an attacker loses when the assault fails. It never kills.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.assault_level_damage",
+      "policy": false,
+      "summary": "Health that each combat level of the attacker adds to an assault.",
+      "value": 25
+    },
+    {
+      "max": 8,
+      "min": 0,
+      "name": "crime.assault_range",
+      "policy": false,
+      "summary": "Greatest distance in tiles between an attacker and its victim.",
+      "value": 1
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "crime.assault_ticks",
+      "policy": false,
+      "summary": "Ticks that `assault` takes.",
+      "value": 3
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.bounties_open_max",
+      "policy": false,
+      "summary": "Greatest number of open bounties of one resident.",
+      "value": 3
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "crime.bounty_max_ticks",
+      "policy": false,
+      "summary": "Greatest number of ticks that a bounty stays open.",
+      "value": 20160
+    },
+    {
+      "max": 100000000,
+      "min": 1,
+      "name": "crime.bounty_min",
+      "policy": false,
+      "summary": "Least amount of a bounty in cents.",
+      "value": 500
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "crime.bounty_ticks",
+      "policy": false,
+      "summary": "Ticks that a bounty stays open without the argument `ticks`.",
+      "value": 4320
+    },
+    {
+      "max": 2000,
+      "min": 0,
+      "name": "crime.bribe_note_max",
+      "policy": false,
+      "summary": "Greatest length of the note of a bribe in bytes.",
+      "value": 200
+    },
+    {
+      "max": 8,
+      "min": 0,
+      "name": "crime.bribe_range",
+      "policy": false,
+      "summary": "Greatest distance in tiles between the two residents of a bribe.",
+      "value": 1
+    },
+    {
+      "max": 60,
+      "min": 1,
+      "name": "crime.bribe_ticks",
+      "policy": false,
+      "summary": "Ticks that `bribe` takes.",
+      "value": 1
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.bribery.drama",
+      "policy": false,
+      "summary": "Drama score of a bribe. A bribe has no event of its own; the number is here for the same shape as the other kinds.",
+      "value": 50
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.bribery.fine",
+      "policy": true,
+      "summary": "Fine for a bribe that the engine gives.",
+      "value": 5000
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.bribery.fine_max",
+      "policy": true,
+      "summary": "Greatest fine for a bribe.",
+      "value": 50000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.bribery.jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for a bribe.",
+      "value": 2880
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.bribery.jail_ticks",
+      "policy": true,
+      "summary": "Jail time for a bribe that the engine gives.",
+      "value": 480
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.bribery.notoriety",
+      "policy": false,
+      "summary": "Notoriety of a conviction for bribery.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.burglary.drama",
+      "policy": false,
+      "summary": "Drama score of a burglary.",
+      "value": 55
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.burglary.fine",
+      "policy": true,
+      "summary": "Fine for a burglary that the engine gives.",
+      "value": 8000
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.burglary.fine_max",
+      "policy": true,
+      "summary": "Greatest fine for a burglary.",
+      "value": 30000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.burglary.jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for a burglary.",
+      "value": 4320
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.burglary.jail_ticks",
+      "policy": true,
+      "summary": "Jail time for a burglary that the engine gives.",
+      "value": 720
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.burglary.notoriety",
+      "policy": false,
+      "summary": "Notoriety of a conviction for burglary.",
+      "value": 40
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.burgle_base_bp",
+      "policy": false,
+      "summary": "Chance that `burgle` works before skills, night, occupants and tools.",
+      "value": 3500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.burgle_empty_bonus_bp",
+      "policy": false,
+      "summary": "Chance that a burglar gets when nobody else in the site is awake.",
+      "value": 2000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.burgle_occupant_malus_bp",
+      "policy": false,
+      "summary": "Chance that each other resident in the site that is awake takes from a burglar.",
+      "value": 1500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.burgle_public_malus_bp",
+      "policy": false,
+      "summary": "Chance that a public building takes from a burglar.",
+      "value": 2000
+    },
+    {
+      "max": 480,
+      "min": 1,
+      "name": "crime.burgle_ticks",
+      "policy": false,
+      "summary": "Ticks that `burgle` takes.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.burgle_till_pct",
+      "policy": false,
+      "summary": "Percent of the till that a burglar takes.",
+      "value": 50
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.burgle_tool_bonus_bp",
+      "policy": false,
+      "summary": "Chance that a burglar gets when it carries an item with the tag `tool`.",
+      "value": 1500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.burgle_units_max",
+      "policy": false,
+      "summary": "Greatest number of units of goods that one `burgle` takes.",
+      "value": 10
+    },
+    {
+      "max": 10000000,
+      "min": 1,
+      "name": "crime.case_keep_ticks",
+      "policy": false,
+      "summary": "Ticks that a closed case stays in the registry.",
+      "value": 2880
+    },
+    {
+      "max": 100,
+      "min": 1,
+      "name": "crime.case_list_max",
+      "policy": false,
+      "summary": "Greatest number of cases in the answer of `case_list`.",
+      "value": 10
+    },
+    {
+      "max": 10000000,
+      "min": 1,
+      "name": "crime.case_ttl_ticks",
+      "policy": true,
+      "summary": "Ticks after which a case without a charge goes cold and its warrant ends.",
+      "value": 20160
+    },
+    {
+      "max": 100000,
+      "min": 1,
+      "name": "crime.caught_ticks",
+      "policy": false,
+      "summary": "Ticks during which an officer that saw a crime, or found its loot, can arrest without a warrant.",
+      "value": 120
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.chance_max_bp",
+      "policy": false,
+      "summary": "Greatest chance that a crime or an investigation works.",
+      "value": 9500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.chance_min_bp",
+      "policy": false,
+      "summary": "Least chance that a crime or an investigation works.",
+      "value": 500
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "crime.charge_evidence",
+      "policy": true,
+      "summary": "Evidence points that an officer needs to charge a suspect in custody.",
+      "value": 20
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.combat_level_bp",
+      "policy": false,
+      "summary": "Chance that each combat level above the victim gives to an attacker.",
+      "value": 800
+    },
+    {
+      "max": 1,
+      "min": 0,
+      "name": "crime.contraband_illegal",
+      "policy": true,
+      "summary": "1: it is a crime to carry goods with the tag `contraband`. 0: it is legal.",
+      "value": 1
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "crime.convict_evidence",
+      "policy": true,
+      "summary": "Evidence points at which the engine convicts at the deadline of a trial.",
+      "value": 60
+    },
+    {
+      "max": 2000,
+      "min": 0,
+      "name": "crime.conviction_standing",
+      "policy": false,
+      "summary": "Standing that a conviction takes.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.court_xp",
+      "policy": false,
+      "summary": "Experience in law for a charge, a ruling or a vote in a jury.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.arrest_made",
+      "policy": false,
+      "summary": "Drama score of `crime.arrest_made`.",
+      "value": 55
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.attempt",
+      "policy": false,
+      "summary": "Drama score of a crime that failed.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.bounty_expired",
+      "policy": false,
+      "summary": "Drama score of `crime.bounty_expired`.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.bounty_paid",
+      "policy": false,
+      "summary": "Drama score of `crime.bounty_paid`.",
+      "value": 50
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.bounty_posted",
+      "policy": false,
+      "summary": "Drama score of `crime.bounty_posted`.",
+      "value": 40
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.fine_defaulted",
+      "policy": false,
+      "summary": "Drama score of `crime.fine_defaulted`.",
+      "value": 40
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.fine_paid",
+      "policy": false,
+      "summary": "Drama score of `crime.fine_paid`.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.goods_fenced",
+      "policy": false,
+      "summary": "Drama score of `crime.goods_fenced`.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.heist",
+      "policy": false,
+      "summary": "Drama score of a crime with a loss of `crime.heist_value` or more.",
+      "value": 75
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.jury_summoned",
+      "policy": false,
+      "summary": "Drama score of `crime.jury_summoned`.",
+      "value": 35
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.search_made",
+      "policy": false,
+      "summary": "Drama score of `crime.search_made`.",
+      "value": 20
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.sentence_served",
+      "policy": false,
+      "summary": "Drama score of `crime.sentence_served`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.site_repaired",
+      "policy": false,
+      "summary": "Drama score of `crime.site_repaired`.",
+      "value": 10
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.suspect_charged",
+      "policy": false,
+      "summary": "Drama score of `crime.suspect_charged`.",
+      "value": 45
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.suspect_released",
+      "policy": false,
+      "summary": "Drama score of `crime.suspect_released`.",
+      "value": 30
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.verdict_given",
+      "policy": false,
+      "summary": "Drama score of `crime.verdict_given`.",
+      "value": 65
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.drama.warrant_issued",
+      "policy": false,
+      "summary": "Drama score of `crime.warrant_issued`.",
+      "value": 40
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.evidence_caught",
+      "policy": false,
+      "summary": "Evidence points when an officer saw the crime.",
+      "value": 100
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.evidence_investigate",
+      "policy": false,
+      "summary": "Evidence points that `investigate` finds in a new trace. An old trace gives less.",
+      "value": 30
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.evidence_investigate_max",
+      "policy": false,
+      "summary": "Greatest evidence points that investigations give in one case.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.evidence_search",
+      "policy": false,
+      "summary": "Evidence points when a search finds the loot of a case.",
+      "value": 50
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.evidence_victim",
+      "policy": false,
+      "summary": "Evidence points for the report of a victim, or of the receiver of a bribe, that recognized the perpetrator.",
+      "value": 40
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.evidence_watch",
+      "policy": true,
+      "summary": "Evidence points when the city watch saw the crime.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.evidence_witness",
+      "policy": false,
+      "summary": "Evidence points for the report of a witness that recognized the perpetrator.",
+      "value": 25
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.fence_base_bp",
+      "policy": false,
+      "summary": "For a good that the depot does not trade: the share of its normal price that stands in for the depot price. 0: no fence buys such a good.",
+      "value": 0
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.fence_bp",
+      "policy": false,
+      "summary": "Share of the depot price that a fence pays for one stolen unit. Keep it at or below 10000.",
+      "value": 6000
+    },
+    {
+      "max": 480,
+      "min": 1,
+      "name": "crime.fence_ticks",
+      "policy": false,
+      "summary": "Ticks that `fence` takes.",
+      "value": 10
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "crime.fine_cents_per_jail_tick",
+      "policy": true,
+      "summary": "Cents of a debt that one tick in jail replaces when the debt is not paid in time.",
+      "value": 10
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "crime.fine_due_ticks",
+      "policy": true,
+      "summary": "Ticks that a convict has to pay a fine and a restitution.",
+      "value": 1440
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.fine_jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for one debt that is not paid in time.",
+      "value": 2880
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.force_asleep_bonus_bp",
+      "policy": false,
+      "summary": "Chance that an attacker gets against a victim that sleeps.",
+      "value": 2000
+    },
+    {
+      "max": 100000000000,
+      "min": 0,
+      "name": "crime.heist_value",
+      "policy": false,
+      "summary": "A crime with a loss of this many cents or more is a heist for viewers.",
+      "value": 50000
+    },
+    {
+      "max": 100000,
+      "min": 1,
+      "name": "crime.hold_ticks",
+      "policy": true,
+      "summary": "Ticks that an officer can hold a suspect without a charge. Then the engine charges or frees the suspect.",
+      "value": 720
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.homicide.drama",
+      "policy": false,
+      "summary": "Drama score of an assault that killed.",
+      "value": 85
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.homicide.fine",
+      "policy": true,
+      "summary": "Fine for a homicide that the engine gives.",
+      "value": 50000
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.homicide.fine_max",
+      "policy": true,
+      "summary": "Greatest fine for a homicide.",
+      "value": 200000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.homicide.jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for a homicide.",
+      "value": 40320
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.homicide.jail_ticks",
+      "policy": true,
+      "summary": "Jail time for a homicide that the engine gives.",
+      "value": 14400
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.homicide.notoriety",
+      "policy": false,
+      "summary": "Notoriety of a conviction for homicide.",
+      "value": 200
+    },
+    {
+      "max": 256,
+      "min": 1,
+      "name": "crime.hot_lots_max",
+      "policy": false,
+      "summary": "Greatest number of lots of hot value in the record of one resident.",
+      "value": 16
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "crime.hot_ticks",
+      "policy": false,
+      "summary": "Ticks after which stolen value that a resident still holds is no longer hot.",
+      "value": 4320
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.identify_asleep_malus_bp",
+      "policy": false,
+      "summary": "Chance that sleep takes from a victim.",
+      "value": 4000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.identify_base_bp",
+      "policy": false,
+      "summary": "Chance that a witness recognizes the perpetrator, before the corrections.",
+      "value": 6000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.identify_distance_bp",
+      "policy": false,
+      "summary": "Chance that each tile of distance takes from a witness.",
+      "value": 300
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.identify_fail_bonus_bp",
+      "policy": false,
+      "summary": "Chance that a witness gets when the crime failed.",
+      "value": 2500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.identify_force_bonus_bp",
+      "policy": false,
+      "summary": "Chance that the victim of a robbery or an assault gets to recognize the attacker.",
+      "value": 3000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.identify_night_malus_bp",
+      "policy": false,
+      "summary": "Chance that the night takes from a witness.",
+      "value": 2000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.identify_stealth_bp",
+      "policy": false,
+      "summary": "Chance that each stealth level of the perpetrator takes from a witness.",
+      "value": 700
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.investigate_base_bp",
+      "policy": false,
+      "summary": "Chance that `investigate` reads a trace, before the skills.",
+      "value": 5000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.investigate_level_bp",
+      "policy": false,
+      "summary": "Chance that each investigation level gives to the officer.",
+      "value": 700
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "crime.investigate_radius",
+      "policy": false,
+      "summary": "Distance in tiles at which an officer can read a trace.",
+      "value": 6
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.investigate_stealth_bp",
+      "policy": false,
+      "summary": "Chance that each stealth level of the perpetrator takes from the officer.",
+      "value": 500
+    },
+    {
+      "max": 480,
+      "min": 1,
+      "name": "crime.investigate_ticks",
+      "policy": false,
+      "summary": "Ticks that `investigate` takes.",
+      "value": 30
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.investigate_xp",
+      "policy": false,
+      "summary": "Experience in investigation for a trace that was read. Half of it for a try that failed.",
+      "value": 10
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.jail_meal_below",
+      "policy": false,
+      "summary": "An inmate with less food than this gets a meal in the hourly round of the jail.",
+      "value": 500
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.jail_meal_food",
+      "policy": false,
+      "summary": "Food points of a jail meal.",
+      "value": 300
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.jail_rest_below",
+      "policy": false,
+      "summary": "An inmate with less energy than this gets rest in the hourly round of the jail.",
+      "value": 250
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.jail_rest_energy",
+      "policy": false,
+      "summary": "Energy points of the rest in jail.",
+      "value": 150
+    },
+    {
+      "max": 4096,
+      "min": 1,
+      "name": "crime.jury_draws",
+      "policy": false,
+      "summary": "Greatest number of draws when the engine looks for jurors.",
+      "value": 64
+    },
+    {
+      "max": 15,
+      "min": 1,
+      "name": "crime.jury_quorum",
+      "policy": true,
+      "summary": "Number of votes that a jury needs to decide. With fewer votes at the deadline, the evidence decides.",
+      "value": 3
+    },
+    {
+      "max": 15,
+      "min": 0,
+      "name": "crime.jury_size",
+      "policy": true,
+      "summary": "Number of jurors of a trial.",
+      "value": 5
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "crime.known_max",
+      "policy": false,
+      "summary": "Greatest number of cases that one resident remembers as a victim or a witness.",
+      "value": 8
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.night_bonus_bp",
+      "policy": false,
+      "summary": "Chance that a pickpocket, a burglar or a vandal gets at night.",
+      "value": 1500
+    },
+    {
+      "max": 23,
+      "min": 0,
+      "name": "crime.night_from_hour",
+      "policy": false,
+      "summary": "First hour of the night.",
+      "value": 22
+    },
+    {
+      "max": 23,
+      "min": 0,
+      "name": "crime.night_to_hour",
+      "policy": false,
+      "summary": "First hour of the day.",
+      "value": 6
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "crime.observe_list_max",
+      "policy": false,
+      "summary": "Greatest number of entries in each list of the `law` section with brief detail.",
+      "value": 3
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.patrol_detect_bp",
+      "policy": false,
+      "summary": "Chance that an officer on patrol recognizes the perpetrator of a crime near it.",
+      "value": 8500
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "crime.patrol_list_max",
+      "policy": false,
+      "summary": "Greatest number of wanted residents in the result of a patrol.",
+      "value": 5
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "crime.patrol_max_ticks",
+      "policy": false,
+      "summary": "Greatest length of one patrol.",
+      "value": 240
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "crime.patrol_radius",
+      "policy": false,
+      "summary": "Distance in tiles at which an officer on patrol sees a crime and a wanted resident.",
+      "value": 10
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.patrol_stealth_bp",
+      "policy": false,
+      "summary": "Chance that each stealth level of the perpetrator takes from an officer on patrol.",
+      "value": 400
+    },
+    {
+      "max": 1440,
+      "min": 1,
+      "name": "crime.patrol_ticks",
+      "policy": false,
+      "summary": "Length of a patrol without the argument `ticks`.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.patrol_xp_per_hour",
+      "policy": false,
+      "summary": "Experience in investigation for each hour of patrol.",
+      "value": 6
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.pickpocket_alert_bp",
+      "policy": false,
+      "summary": "Chance that each investigation level of the victim takes from a pickpocket.",
+      "value": 400
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.pickpocket_asleep_bonus_bp",
+      "policy": false,
+      "summary": "Chance that a pickpocket gets when the victim sleeps.",
+      "value": 2500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.pickpocket_base_bp",
+      "policy": false,
+      "summary": "Chance that `pickpocket` works before skills, night and sleep.",
+      "value": 4500
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.pickpocket_max",
+      "policy": false,
+      "summary": "Greatest cash in cents that one `pickpocket` takes.",
+      "value": 5000
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.pickpocket_pct",
+      "policy": false,
+      "summary": "Percent of the cash of the victim that a pickpocket takes.",
+      "value": 25
+    },
+    {
+      "max": 8,
+      "min": 0,
+      "name": "crime.pickpocket_range",
+      "policy": false,
+      "summary": "Greatest distance in tiles between a pickpocket and its victim.",
+      "value": 1
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "crime.pickpocket_ticks",
+      "policy": false,
+      "summary": "Ticks that `pickpocket` takes.",
+      "value": 3
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "crime.repair_cost_bp",
+      "policy": false,
+      "summary": "Cost of a repair as a share of the value that it gives back.",
+      "value": 10000
+    },
+    {
+      "max": 480,
+      "min": 1,
+      "name": "crime.repair_ticks",
+      "policy": false,
+      "summary": "Ticks that `repair` takes.",
+      "value": 30
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.repair_xp",
+      "policy": false,
+      "summary": "Experience in labor for one `repair`.",
+      "value": 6
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.rob_base_bp",
+      "policy": false,
+      "summary": "Chance that `rob` works when both residents have the same combat level.",
+      "value": 5000
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.rob_cash_pct",
+      "policy": false,
+      "summary": "Percent of the cash of the victim that a robber takes.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.rob_fail_injury",
+      "policy": false,
+      "summary": "Health that a robber loses when the robbery fails. It never kills.",
+      "value": 60
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.rob_injury",
+      "policy": false,
+      "summary": "Health that the victim of a robbery loses.",
+      "value": 100
+    },
+    {
+      "max": 8,
+      "min": 0,
+      "name": "crime.rob_range",
+      "policy": false,
+      "summary": "Greatest distance in tiles between a robber and its victim.",
+      "value": 1
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "crime.rob_ticks",
+      "policy": false,
+      "summary": "Ticks that `rob` takes.",
+      "value": 5
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.rob_units_max",
+      "policy": false,
+      "summary": "Greatest number of units of goods that one `rob` takes.",
+      "value": 5
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.robbery.drama",
+      "policy": false,
+      "summary": "Drama score of a robbery.",
+      "value": 60
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.robbery.fine",
+      "policy": true,
+      "summary": "Fine for a robbery that the engine gives.",
+      "value": 10000
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.robbery.fine_max",
+      "policy": true,
+      "summary": "Greatest fine for a robbery.",
+      "value": 40000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.robbery.jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for a robbery.",
+      "value": 7200
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.robbery.jail_ticks",
+      "policy": true,
+      "summary": "Jail time for a robbery that the engine gives.",
+      "value": 1440
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.robbery.notoriety",
+      "policy": false,
+      "summary": "Notoriety of a conviction for robbery.",
+      "value": 60
+    },
+    {
+      "max": 8,
+      "min": 0,
+      "name": "crime.search_range",
+      "policy": false,
+      "summary": "Greatest distance in tiles between an officer and the resident that it searches.",
+      "value": 1
+    },
+    {
+      "max": 240,
+      "min": 1,
+      "name": "crime.search_ticks",
+      "policy": false,
+      "summary": "Ticks that `search` takes.",
+      "value": 5
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.search_xp",
+      "policy": false,
+      "summary": "Experience in investigation for one `search`.",
+      "value": 4
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.smuggling.drama",
+      "policy": false,
+      "summary": "Drama score of a seizure of contraband.",
+      "value": 45
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.smuggling.fine",
+      "policy": true,
+      "summary": "Fine for carried contraband that the engine gives.",
+      "value": 4000
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.smuggling.fine_max",
+      "policy": true,
+      "summary": "Greatest fine for carried contraband.",
+      "value": 20000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.smuggling.jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for carried contraband.",
+      "value": 1440
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.smuggling.jail_ticks",
+      "policy": true,
+      "summary": "Jail time for carried contraband that the engine gives.",
+      "value": 240
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.smuggling.notoriety",
+      "policy": false,
+      "summary": "Notoriety of a conviction for smuggling.",
+      "value": 15
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.stealth_level_bp",
+      "policy": false,
+      "summary": "Chance that each stealth level gives to a pickpocket, a burglar or a vandal.",
+      "value": 600
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.theft.drama",
+      "policy": false,
+      "summary": "Drama score of a theft.",
+      "value": 45
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.theft.fine",
+      "policy": true,
+      "summary": "Fine for a theft that the engine gives.",
+      "value": 3000
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.theft.fine_max",
+      "policy": true,
+      "summary": "Greatest fine for a theft.",
+      "value": 12000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.theft.jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for a theft.",
+      "value": 1440
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.theft.jail_ticks",
+      "policy": true,
+      "summary": "Jail time for a theft that the engine gives.",
+      "value": 240
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.theft.notoriety",
+      "policy": false,
+      "summary": "Notoriety of a conviction for theft.",
+      "value": 20
+    },
+    {
+      "max": 1000000,
+      "min": 1,
+      "name": "crime.trace_ticks",
+      "policy": false,
+      "summary": "Ticks after which the trace of a crime is gone. It gets weaker in a straight line.",
+      "value": 2880
+    },
+    {
+      "max": 100000,
+      "min": 1,
+      "name": "crime.traces_max",
+      "policy": false,
+      "summary": "Greatest number of traces that one zone keeps.",
+      "value": 256
+    },
+    {
+      "max": 100000,
+      "min": 0,
+      "name": "crime.trial_bench_ticks",
+      "policy": true,
+      "summary": "Ticks that the engine waits for a judge of the government before it calls a jury.",
+      "value": 240
+    },
+    {
+      "max": 100000,
+      "min": 1,
+      "name": "crime.trial_ticks",
+      "policy": true,
+      "summary": "Ticks from a charge to the deadline at which the engine decides the trial.",
+      "value": 720
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.vandalism.drama",
+      "policy": false,
+      "summary": "Drama score of an act of vandalism.",
+      "value": 42
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.vandalism.fine",
+      "policy": true,
+      "summary": "Fine for vandalism that the engine gives.",
+      "value": 4000
+    },
+    {
+      "max": 100000000,
+      "min": 0,
+      "name": "crime.vandalism.fine_max",
+      "policy": true,
+      "summary": "Greatest fine for vandalism.",
+      "value": 16000
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.vandalism.jail_max_ticks",
+      "policy": true,
+      "summary": "Greatest jail time for vandalism.",
+      "value": 1440
+    },
+    {
+      "max": 1000000,
+      "min": 0,
+      "name": "crime.vandalism.jail_ticks",
+      "policy": true,
+      "summary": "Jail time for vandalism that the engine gives.",
+      "value": 240
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.vandalism.notoriety",
+      "policy": false,
+      "summary": "Notoriety of a conviction for vandalism.",
+      "value": 15
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.vandalize_base_bp",
+      "policy": false,
+      "summary": "Chance that `vandalize` works before skills and night.",
+      "value": 6000
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.vandalize_damage_max_bp",
+      "policy": false,
+      "summary": "Greatest share of the value of a site without damage that vandalism can take in total.",
+      "value": 1000
+    },
+    {
+      "max": 100,
+      "min": 0,
+      "name": "crime.vandalize_stock_pct",
+      "policy": false,
+      "summary": "Percent of each good in the stock that one `vandalize` destroys, rounded up.",
+      "value": 25
+    },
+    {
+      "max": 480,
+      "min": 1,
+      "name": "crime.vandalize_ticks",
+      "policy": false,
+      "summary": "Ticks that `vandalize` takes.",
+      "value": 10
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.vandalize_value_bp",
+      "policy": false,
+      "summary": "Share of the value of a site without damage that one `vandalize` takes.",
+      "value": 50
+    },
+    {
+      "max": 1000,
+      "min": 1,
+      "name": "crime.warrant_evidence",
+      "policy": true,
+      "summary": "Evidence points at which a case gets a warrant, and at which the engine charges a suspect in custody.",
+      "value": 40
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.watch_arrest_bp",
+      "policy": true,
+      "summary": "Chance in each game hour that the city watch arrests a wanted resident that is in a public building.",
+      "value": 2500
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.watch_contraband_bp",
+      "policy": true,
+      "summary": "Chance in each game hour that the city watch finds the contraband of a resident that is in a public building.",
+      "value": 200
+    },
+    {
+      "max": 10000,
+      "min": 0,
+      "name": "crime.watch_detect_bp",
+      "policy": true,
+      "summary": "Chance that the city watch sees a crime that no officer saw.",
+      "value": 1000
+    },
+    {
+      "max": 64,
+      "min": 1,
+      "name": "crime.witness_max",
+      "policy": false,
+      "summary": "Greatest number of residents that notice one crime.",
+      "value": 8
+    },
+    {
+      "max": 64,
+      "min": 0,
+      "name": "crime.witness_radius",
+      "policy": false,
+      "summary": "Distance in tiles at which a resident that is awake notices a crime.",
+      "value": 8
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.xp_fail",
+      "policy": false,
+      "summary": "Experience for a crime that failed.",
+      "value": 4
+    },
+    {
+      "max": 1000,
+      "min": 0,
+      "name": "crime.xp_success",
+      "policy": false,
+      "summary": "Experience for a crime that worked.",
+      "value": 12
+    },
     {
       "max": 1440,
       "min": 1,
@@ -3910,6 +5437,622 @@
     }
   ],
   "verbs": [
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `arrest`.",
+        "properties": {
+          "target": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident to arrest. It must stand on your tile or on a tile\nnext to it."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "ArrestArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Police: arrest a resident next to you. You need grounds: a warrant names it, or you caught it in the act. The suspect goes to the jail of the city.",
+      "verb": "arrest"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `assault`.",
+        "properties": {
+          "target": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident to attack. It must stand on your tile or on a tile\nnext to it."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "AssaultArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Attack a resident next to you. Combat decides. The victim loses health and can die; when you fail, you are hurt. It is a crime.",
+      "verb": "assault"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `bribe`.",
+        "properties": {
+          "amount": {
+            "description": "Cents of cash to pay.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "note": {
+            "description": "A short text for the receiver, for example what you ask for. The\nengine does not enforce it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident that gets the money. It must stand on your tile or on\na tile next to it."
+          }
+        },
+        "required": [
+          "to",
+          "amount"
+        ],
+        "title": "BribeArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Pay cash in secret to a resident next to you. Nobody else sees it. It is a crime that the receiver can report and an investigation can find.",
+      "verb": "bribe"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `burgle`.",
+        "properties": {
+          "item": {
+            "description": "Name of the only good to take from the stock. Without it, you take\nthe goods with the highest price.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "BurgleArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Steal from the till and the stock of the site where you stand. It is easier at night, in an empty site and with a tool. It is a crime.",
+      "verb": "burgle"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `case_list`.",
+        "properties": {
+          "status": {
+            "description": "Only cases with this status: `open`, `wanted`, `held`, `trial`,\n`convicted`, `acquitted`, `cold` or `moot`. Without it, the cases\nthat are not closed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "CaseListArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "crime",
+      "scope": "global",
+      "summary": "Read the docket of the city where you are: the cases that are not closed, with their place, evidence and status. A suspect is named only after a warrant.",
+      "verb": "case_list"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `case_view`.",
+        "properties": {
+          "case": {
+            "description": "The case to read.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "case"
+        ],
+        "title": "CaseViewArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "crime",
+      "scope": "global",
+      "summary": "Read one case: its evidence by source, its trial and its sentence.",
+      "verb": "case_view"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `charge`.",
+        "properties": {
+          "case": {
+            "description": "The case to charge the suspect with.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The suspect. It must be under arrest in the city where you are."
+          }
+        },
+        "required": [
+          "target",
+          "case"
+        ],
+        "title": "ChargeArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Police: charge a suspect that is under arrest in this city with a case. A trial starts. The case needs evidence against the suspect.",
+      "verb": "charge"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `fence`.",
+        "properties": {
+          "item": {
+            "description": "Name of the stolen good to sell.",
+            "type": "string"
+          },
+          "qty": {
+            "description": "Units to sell. Without it, you sell every stolen unit of the good\nthat you still hold.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "FenceArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Sell stolen goods that you hold for clean cash, below the price of the depot. Not in a public building.",
+      "verb": "fence"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `investigate`.",
+        "properties": {
+          "case": {
+            "description": "The case to look for. Without it, you read the newest trace near\nyou that you did not read yet.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "InvestigateArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Police: read the traces of a crime near you. A fresh trace gives more evidence than an old one. Your investigation skill helps and the stealth of the perpetrator hinders.",
+      "verb": "investigate"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `jury_vote`.",
+        "properties": {
+          "case": {
+            "description": "The case of the trial. The notice `crime.jury_duty` has the number.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "guilty": {
+            "description": "True to vote for guilty, false for not guilty.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "case",
+          "guilty"
+        ],
+        "title": "JuryVoteArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "global",
+      "summary": "Juror: vote in a trial that you were called for. The trial ends when every juror voted.",
+      "verb": "jury_vote"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `patrol`.",
+        "properties": {
+          "ticks": {
+            "description": "Length of the patrol in ticks. One tick is one game minute. Without\nit, the patrol has the default length.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "PatrolArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Police: watch the place around you for some time. You see most crimes near you while you patrol, and at the end you learn which wanted residents are near.",
+      "verb": "patrol"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `pay_fine`.",
+        "properties": {
+          "amount": {
+            "description": "Cents to pay. Without it, you pay all that you owe, or all the cash\nthat you have.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "PayFineArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Pay fines and restitutions that a court gave you, from your cash. What you do not pay in time becomes jail time.",
+      "verb": "pay_fine"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `pickpocket`.",
+        "properties": {
+          "target": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident to steal from. It must stand on your tile or on a tile\nnext to it."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "PickpocketArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Steal cash from a resident next to you. Stealth helps. It is a crime: the victim learns of it and witnesses can recognize you.",
+      "verb": "pickpocket"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `post_bounty`.",
+        "properties": {
+          "amount": {
+            "description": "Cents of your cash to lock. The officer that arrests the target\ngets them.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "target": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident whose arrest earns the money."
+          },
+          "ticks": {
+            "description": "Ticks until the money comes back to you when nobody makes the\narrest. One tick is one game minute. Without it, the default.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "target",
+          "amount"
+        ],
+        "title": "PostBountyArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Lock cash for the officer that arrests a resident. An arrest needs grounds, so a bounty pays only for a suspect that the police can lawfully take. The money comes back when the time is over.",
+      "verb": "post_bounty"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `release`.",
+        "properties": {
+          "target": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident to let go. It must stand on your tile or on a tile\nnext to it."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "ReleaseArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Police: let a resident next to you out of custody. `law.arrest` frees a suspect that is not charged. `law.jail` ends the sentence of an inmate.",
+      "verb": "release"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `repair`.",
+        "properties": {
+          "amount": {
+            "description": "Cents of site value to give back. Without it, you repair all the\ndamage.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "RepairArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Repair the damage of the site where you stand. You pay for the materials. The value of the site comes back.",
+      "verb": "repair"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `report_crime`.",
+        "properties": {
+          "case": {
+            "description": "The case to report. The notice `crime.witnessed` or\n`crime.bribe_received` has the number.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "case"
+        ],
+        "title": "ReportCrimeArgs",
+        "type": "object"
+      },
+      "free": true,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Tell the police what you saw of a case that you know as a victim or a witness. It adds evidence when you recognized the perpetrator.",
+      "verb": "report_crime"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `rob`.",
+        "properties": {
+          "target": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident to rob. It must stand on your tile or on a tile next\nto it."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "RobArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Take cash and goods from a resident next to you by force. Combat decides. The victim is hurt; when you fail, you are hurt. It is a crime.",
+      "verb": "rob"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `rule_case`.",
+        "properties": {
+          "case": {
+            "description": "The case on trial.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fine": {
+            "description": "Cents of fine for the city treasury. Without it, the fine of the\nkind of crime. At most `crime.<kind>.fine_max`.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "guilty": {
+            "description": "True to convict, false to acquit.",
+            "type": "boolean"
+          },
+          "jail_ticks": {
+            "description": "Ticks in jail. Without it, the jail time of the kind of crime. At\nmost `crime.<kind>.jail_max_ticks`.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "restitution": {
+            "description": "Cents for the victim. Without it, the loss of the victim. At most\nthat loss.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "case",
+          "guilty"
+        ],
+        "title": "RuleCaseArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Judge: end a trial of your city. Convict with a fine, jail time and restitution inside the limits of the kind of crime, or acquit.",
+      "verb": "rule_case"
+    },
+    {
+      "args_schema": {
+        "$defs": {
+          "ResidentId": {
+            "description": "Stable id of a resident. It never changes and is never reused.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments of `search`.",
+        "properties": {
+          "target": {
+            "$ref": "#/$defs/ResidentId",
+            "description": "The resident to search. It must stand on your tile or on a tile\nnext to it."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "SearchArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Police: search a resident next to you. Stolen cash, stolen goods and contraband that it holds go to the police station, and the find is evidence.",
+      "verb": "search"
+    },
+    {
+      "args_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The arguments of a verb that takes none.",
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "free": false,
+      "module": "crime",
+      "scope": "zone",
+      "summary": "Damage the site where you stand: a part of its stock is destroyed and its value falls until somebody repairs it. It is a crime.",
+      "verb": "vandalize"
+    },
     {
       "args_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
