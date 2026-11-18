@@ -1,0 +1,121 @@
+# Daily life: residents walk, talk, eat, rest, work and trade.
+#
+# Most of these verbs do not exist yet. The tool reads the catalogue of the
+# world at the start, skips each verb that the world does not have, and
+# prints one warning for each. The other actions keep their weights.
+#
+# The arguments of the verbs that do not exist yet follow the verb table in
+# docs/design/game-design.md. When a verb arrives with other argument names,
+# the tool prints a warning that names the argument. Change this file then.
+
+name = "daily_life"
+summary = "Residents walk, talk, eat, rest, work and trade when the world has these verbs."
+
+observe_share = 0.5
+wait_share = 0.7
+
+[think]
+kind = "exponential"
+mean = 6.0
+max = 60
+
+# --- Kernel and movement (these verbs exist today) --------------------------
+
+[[action]]
+verb = "move_to"
+weight = 20
+args = { gen = "near_tile", radius = 16 }
+
+# Walk to a site that is in sight. It is not possible when no site is near.
+[[action]]
+verb = "move_to"
+weight = 10
+args = { gen = "site_tile", radius = 24 }
+
+[[action]]
+verb = "wait"
+weight = 4
+args = { ticks = { gen = "int", min = 1, max = 10 } }
+
+# --- Life -------------------------------------------------------------------
+
+[[action]]
+verb = "eat"
+weight = 6
+args = { item = { gen = "item", tag = "food" } }
+
+[[action]]
+verb = "rest"
+weight = 3
+
+[[action]]
+verb = "sleep"
+weight = 2
+
+[[action]]
+verb = "inspect"
+weight = 1
+args = { target = { gen = "nearby_resident", radius = 8 } }
+
+# --- Society ----------------------------------------------------------------
+
+[[action]]
+verb = "say"
+weight = 10
+args = { text = { gen = "text", words = 6 } }
+
+[[action]]
+verb = "message"
+weight = 4
+args = { to = { gen = "nearby_resident", radius = 12 }, text = { gen = "text", words = 8 } }
+
+# --- Economy ----------------------------------------------------------------
+
+[[action]]
+verb = "list_jobs"
+weight = 2
+
+[[action]]
+verb = "work"
+weight = 12
+
+[[action]]
+verb = "gather"
+weight = 4
+
+[[action]]
+verb = "buy"
+weight = 6
+args = { item = { gen = "item", tag = "food" }, qty = { gen = "int", min = 1, max = 3 } }
+
+[[action]]
+verb = "sell"
+weight = 3
+args = { item = { gen = "item" }, qty = { gen = "int", min = 1, max = 2 } }
+
+[[action]]
+verb = "market_book"
+weight = 2
+args = { item = { gen = "item" } }
+
+# --- Finance ----------------------------------------------------------------
+
+[[action]]
+verb = "deposit"
+weight = 1
+args = { amount = { gen = "int", min = 100, max = 2000 } }
+
+[[action]]
+verb = "withdraw"
+weight = 1
+args = { amount = { gen = "int", min = 100, max = 2000 } }
+
+# --- Missions ---------------------------------------------------------------
+
+[[action]]
+verb = "mission_list"
+weight = 1
+
+[[action]]
+verb = "leaderboard"
+weight = 1

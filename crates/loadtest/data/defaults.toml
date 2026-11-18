@@ -1,0 +1,103 @@
+# Default numbers of the load tools. An option on the command line replaces
+# its default. `docs/performance.md` explains each command.
+
+[world]
+# Seed of the world and of the behaviour of the residents.
+seed = 1
+# Residents for each zone when the tool chooses the number of zones.
+residents_per_zone = 2000
+# Greatest number of districts on one side of a city that the tool chooses.
+max_districts = 8
+# The tool takes the largest city size whose number of zones is within this
+# many percent of the number that it wants.
+shape_tolerance_percent = 20
+# Tile kinds on which a resident cannot stand (wall, water, rock in
+# docs/design/game-design.md). The scatter placement does not use them.
+blocked_tiles = [4, 5, 8]
+# Tries to find a free tile for one resident of the scatter placement.
+scatter_attempts = 8
+# Residents of one owner in a world that a tool fills.
+residents_per_owner = 4
+
+[driver]
+# How many times a resident tries to find an action whose arguments can be
+# made (for example one that needs a resident nearby) before it does nothing.
+pick_attempts = 4
+# Ticks after which the driver looks again at a resident whose action waits
+# for the global realm.
+pending_recheck_ticks = 2
+
+[bench]
+residents = 100000
+# Frames that are measured.
+frames = 300
+# Frames that run before the measurement starts.
+warmup_frames = 60
+# Milliseconds between two samples of the resident set size.
+memory_sample_ms = 250
+# The footprint (the resident set with compressed and swapped pages) costs
+# more to read. It is read at every n-th sample.
+footprint_sample_every = 20
+# The run stops when the process holds more than the smaller of these two
+# limits: this many percent of the installed memory, and this many percent
+# of the memory that was free when the run started. "Holds" is the larger
+# of the resident set size and the footprint. A run that swaps gives wrong
+# times and slows the whole machine. `--max-memory-gib` sets one limit.
+max_memory_percent_of_installed = 80
+max_memory_percent_of_available = 90
+# Residents that are asked how full their inbox is, after the last frame.
+inbox_sample = 256
+# The run counts as "under memory pressure" when the system compressed or
+# swapped more than this many percent of its memory. Its times are then too
+# high, and the summary says so.
+pressure_percent = 5
+# Seconds between two progress lines of a long run.
+progress_secs = 10
+
+[soak]
+residents = 2000
+ticks = 2000
+# Ticks between two audits of the whole world.
+audit_every = 1
+# Ticks between two comparisons of the state hash with `--verify-determinism`.
+hash_every = 50
+
+[swarm]
+agents = 100
+# Seconds over which the agents start, one after the other.
+ramp_up_secs = 10.0
+# Seconds of the measurement after the ramp-up.
+duration_secs = 60.0
+# Think time of an agent between two requests: constant, exponential or
+# lognormal, with this mean in seconds. `think_sigma` is the shape of the
+# log-normal distribution.
+think = "lognormal"
+think_mean_secs = 5.0
+think_sigma = 1.0
+# Share of the agents that use the WebSocket. The others use HTTP requests.
+ws_share = 0.5
+# Seconds after which a request counts as failed.
+request_timeout_secs = 30.0
+# Seconds that an agent waits after a failed request before it tries again.
+retry_secs = 1.0
+# Failed requests in a row after which an agent gives up.
+max_failures_in_row = 5
+# Greatest number of seconds of one long poll for the end of an action.
+wait_timeout_secs = 30.0
+# Milliseconds between two observations when the server has no long poll.
+poll_interval_ms = 1000
+# Real milliseconds for one game minute of a server that the tool starts.
+tick_ms = 1000
+# The run is "sustained" when the 99th percentile of the acknowledgement
+# latency is at or below this many milliseconds ...
+p99_target_ms = 250.0
+# ... and at most this share of the requests failed.
+max_error_share = 0.001
+# Open files that the process needs beside its connections.
+fd_slack = 256
+# Greatest latency that the histogram can hold, in seconds, and its number
+# of significant digits.
+histogram_max_secs = 300
+histogram_sigfig = 3
+# Path of the route with the statistics of the server.
+stats_path = "/v1/stats"

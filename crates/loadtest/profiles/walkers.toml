@@ -1,0 +1,30 @@
+# Walkers: the load that the world of today can run. Every resident walks to
+# a random tile near it, thinks, and walks again. Sometimes it stands still.
+#
+# One cycle is about 13 ticks (8 ticks of walking, 5 ticks of thinking), so
+# one million residents send about 75,000 actions in each frame.
+
+name = "walkers"
+summary = "Residents walk to random tiles near them and sometimes stand still."
+
+# Chance that a resident observes after an action.
+observe_share = 0.25
+# Swarm only: chance that an agent waits for the end of its action before it
+# acts again. An agent that does not wait fills the queue of its resident.
+wait_share = 0.5
+
+# Ticks between the end of one action and the next action (bench and soak).
+[think]
+kind = "uniform"
+min = 0
+max = 10
+
+[[action]]
+verb = "move_to"
+weight = 9
+args = { gen = "near_tile", radius = 12 }
+
+[[action]]
+verb = "wait"
+weight = 1
+args = { ticks = { gen = "int", min = 1, max = 5 } }
