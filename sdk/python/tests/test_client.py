@@ -7,6 +7,9 @@ import _path  # noqa: F401
 from support import ServerCase
 
 from unsupervised import (
+    PLAN_MAX,
+    WEBHOOK_SIGNATURE_HEADER,
+    WEBHOOK_TIMESTAMP_HEADER,
     ActionRejectedError,
     ApiError,
     Client,
@@ -17,7 +20,9 @@ from unsupervised import (
     reports_of,
     self_of,
     sign_webhook,
+    untrusted_of,
     verify_webhook,
+    verify_webhook_request,
 )
 from unsupervised.testing import FakeServer
 
@@ -31,25 +36,54 @@ class SignUpTest(unittest.TestCase):
 
     def test_a_new_agent_signs_up_creates_a_resident_and_checks_its_key(self) -> None:
         client = self.server.client()
-        self.assertEqual(client.sign_up("Grace"), {"owner": 1, "token": "owner-token-1"})
-        self.assertEqual(client.owner_token, "owner-token-1")
+        signup = client.sign_up("Grace")
+        self.assertEqual(signup["owner"], {"id": 1, "name": "Grace", "created_at": 1800000000})
+        self.assertRegex(signup["token"], r"^unsup_own_[0-9a-f]{64}$")
+        self.assertEqual(client.owner_token, signup["token"])
 
         created = client.create_resident("Ada", model="scripted")
-        self.assertEqual(created["resident"], 1)
+        record = {
+            "id": 1,
+            "name": "Ada",
+            "model": "scripted",
+            "created_at": 1800000000,
+            "key_hint": created["key"][:16] + "...",
+        }
+        self.assertEqual(created["resident"], record)
+        self.assertRegex(created["key"], r"^unsup_res_[0-9a-f]{64}$")
         self.assertEqual(client.resident_key, created["key"])
-        self.assertEqual(client.me(), {"resident": 1, "name": "Ada"})
-        self.assertEqual(client.list_residents(), [{"id": 1, "name": "Ada", "model": "scripted"}])
+        self.assertEqual(client.resident, 1)
+        self.assertEqual(client.me(), {"resident": 1, "name": "Ada", "model": "scripted", "owner": 1})
+        self.assertEqual(client.list_residents(), {"residents": [record], "limit": 3})
 
         # The server has the name and the model that the client sent.
         self.assertEqual(self.server.world.residents[1].model, "scripted")
         sent = self.server.gateway.requests_to("/v1/residents")[0]
         self.assertEqual(sent.body, {"name": "Ada", "model": "scripted"})
-        self.assertEqual(sent.token, "owner-token-1")
+        self.assertEqual(sent.token, signup["token"])
+
+        # An owner has a limit of residents in the world.
+        client.create_resident("Bo")
+        client.create_resident("Cy")
+        with self.assertRaises(ApiError) as raised:
+            client.create_resident("Di")
+        error = raised.exception
+        self.assertEqual((error.code, error.status, error.ends_credential), ("resident_limit", 403, False))
+        self.assertEqual(len(self.server.world.residents), 3)
+        # A name that the text filters refuse makes no resident.
+        self.server.world.limits["residents_per_owner"] = 0
+        with self.assertRaises(ApiError) as raised:
+            client.create_resident("visit www.example.com")
+        error = raised.exception
+        self.assertEqual((error.code, error.status, error.is_text_refusal), ("text_refused", 422, True))
+        self.assertEqual(len(self.server.world.residents), 3)
 
     def test_join_does_the_whole_sign_up_in_one_call(self) -> None:
         options = {"opener": self.server.opener}
         joined = Client.join(self.server.url, "Ada", owner_name="Grace", **options)
-        self.assertEqual((joined.owner, joined.owner_token, joined.resident), (1, "owner-token-1", 1))
+        self.assertEqual((joined.owner, joined.resident), (1, 1))
+        self.assertRegex(joined.owner_token, r"^unsup_own_")
+        self.assertEqual(self.server.gateway.requests[0].body, {"name": "Grace"})
         self.assertEqual(joined.resident_key, self.server.world.residents[1].key)
         self.assertEqual(joined.client.me()["name"], "Ada")
 
@@ -79,12 +113,20 @@ class ClientTest(ServerCase):
         self.client.me()
         rotated = self.client.rotate_key(self.resident.id)
         self.assertNotEqual(rotated["key"], old_key)
+        expected = {"resident": self.resident.id, "key": self.resident.key, "key_hint": self.resident.key[:16] + "..."}
+        self.assertEqual(rotated, expected)
         self.assertEqual(self.client.resident_key, rotated["key"])
         self.assertEqual(self.client.me()["resident"], self.resident.id)
 
         with self.assertRaises(ApiError) as raised:
             self.server.client(old_key).me()
-        self.assertEqual((raised.exception.code, raised.exception.status), ("unauthorized", 401))
+        error = raised.exception
+        self.assertEqual((error.code, error.status, error.ends_credential), ("invalid_token", 401, True))
+        # The resident of another owner looks the same as no resident.
+        stranger = Client.join(self.server.url, "Eve", opener=self.server.opener)
+        with self.assertRaises(ApiError) as raised:
+            stranger.client.rotate_key(self.resident.id)
+        self.assertEqual((raised.exception.code, raised.exception.status), ("not_found", 404))
 
     def test_the_public_routes_need_no_token(self) -> None:
         self.gateway.join_document = "# How to join\n"
@@ -142,32 +184,53 @@ class ClientTest(ServerCase):
         self.assertIsNone(rejection(accepted.ack))
         self.assertIs(assert_accepted(accepted.ack), accepted.ack)
 
-    def test_plan_queues_the_steps_in_order_and_gives_one_acknowledgement_for_each(self) -> None:
-        acks, observation = self.client.plan(
+    def test_plan_queues_the_steps_in_order_and_the_server_stops_at_the_first_refusal(self) -> None:
+        acks, observation, not_sent = self.client.plan(
             [
                 {"verb": "move_to", "args": {"x": 33, "y": 32}},
-                {"verb": "fly"},
                 {"verb": "wait", "args": {"ticks": 4}},
             ]
         )
-        self.assertEqual([ack["status"]["state"] for ack in acks], ["started", "rejected", "queued"])
+        self.assertEqual([ack["status"]["state"] for ack in acks], ["started", "queued"])
+        self.assertEqual(not_sent, 0)
         self.assertEqual(self_of(observation)["queue"], 1)
         plan = self.last_request().body["plan"]
-        self.assertEqual([step["verb"] for step in plan], ["move_to", "fly", "wait"])
-        self.assertEqual(len({step["id"] for step in plan}), 3)
+        self.assertEqual([step["verb"] for step in plan], ["move_to", "wait"])
+        self.assertEqual(len({step["id"] for step in plan}), 2)
 
         # The plan runs: one tick to move, then four ticks of the wait.
         self.world.step(5)
         self.assertEqual(self.resident.pos, {"x": 33, "y": 32})
         reports = reports_of(self.client.observe())
         self.assertEqual(
-            [(report["verb"], report["ok"], report["tick"]) for report in reports],
-            [("move_to", True, 1), ("wait", True, 5)],
+            [(report["verb"], report["ok"], report["tick"], report["seq"]) for report in reports],
+            [("move_to", True, 1, 1), ("wait", True, 5, 2)],
         )
+
+        # The server stops after the first step that the simulation rejects.
+        # The steps after it were not sent: they have no acknowledgement.
+        stopped = self.client.plan(
+            [
+                {"verb": "wait", "args": {"ticks": 2}},
+                {"verb": "fly"},
+                {"verb": "wait", "args": {"ticks": 4}},
+                {"verb": "wait", "args": {"ticks": 5}},
+            ]
+        )
+        self.assertEqual([ack["status"]["state"] for ack in stopped.acks], ["started", "rejected"])
+        self.assertEqual(stopped.not_sent, 2)
+        self.assertEqual(rejection(stopped.acks[1])["code"], "unknown_verb")
+        self.assertEqual(self_of(stopped.observation)["queue"], 0)
+
+        # A plan has at most 16 steps. The server refuses a longer one as a whole.
+        with self.assertRaises(ApiError) as raised:
+            self.client.plan([{"verb": "wait", "args": {"ticks": 1}}] * (PLAN_MAX + 1))
+        self.assertEqual((raised.exception.code, raised.exception.status), ("invalid_request", 400))
 
         # An empty plan only observes.
         before = len(self.gateway.requests)
-        self.assertEqual(self.client.plan([]).acks, [])
+        empty = self.client.plan([])
+        self.assertEqual((empty.acks, empty.not_sent), ([], 0))
         self.assertEqual(len(self.gateway.requests), before + 1)
         self.assertEqual(self.last_request().path, "/v1/observe")
 
@@ -178,7 +241,7 @@ class ClientTest(ServerCase):
         first = self.client.observe()
         self.assertEqual(
             [(notice["seq"], notice["kind"]) for notice in first["notices"]],
-            [(1, "society.speech"), (2, "economy.wage_paid")],
+            [(1, "society.said"), (2, "economy.wage_paid")],
         )
         self.assertEqual(self.client.cursor, 3)
         self.assertNotIn("since", self.last_request().query)
@@ -241,8 +304,9 @@ class ClientTest(ServerCase):
             observation = waiting.result(RESULT_TIMEOUT_SECONDS)
         self.assertEqual(
             [notice["data"] for notice in observation["notices"]],
-            [{"untrusted": True, "from": 7, "text": "wake up"}],
+            [{"text": {"untrusted": True, "from": 7, "text": "wake up"}}],
         )
+        self.assertEqual(untrusted_of(observation), [{"untrusted": True, "from": 7, "text": "wake up"}])
         self.assertEqual(self.client.cursor, 2)
 
     def test_wait_returns_the_report_of_an_action_that_ended(self) -> None:
@@ -264,7 +328,7 @@ class ClientTest(ServerCase):
             self.world.notify(self.resident.id, "economy.rent_due")
             observation = waiting.result(RESULT_TIMEOUT_SECONDS)
         # The observation holds everything since the cursor, also the notice that did not wake the call.
-        self.assertEqual([notice["kind"] for notice in observation["notices"]], ["society.speech", "economy.rent_due"])
+        self.assertEqual([notice["kind"] for notice in observation["notices"]], ["society.said", "economy.rent_due"])
 
     def test_a_wait_that_runs_out_returns_an_observation_without_news(self) -> None:
         with ThreadPoolExecutor(1) as pool:
@@ -281,20 +345,38 @@ class ClientTest(ServerCase):
         self.assertEqual(info["secret"], self.resident.webhook["secret"])
 
         secret = info["secret"]
-        body = '{"seq":1,"tick":5,"kind":"economy.wage_paid"}'
-        signature = sign_webhook(secret, body)
-        self.assertRegex(signature, r"^[0-9a-f]{64}$")
-        # A fixed answer, checked with `openssl dgst -sha256 -hmac`. The TypeScript SDK has the same test.
-        self.assertEqual(
-            sign_webhook("webhook-secret-1-2", body),
-            "99f547faf5157681638e12e4b1c66d90a08e6237a6c7136b2f56f4d059e08d0b",
-        )
-        self.assertEqual(sign_webhook("webhook-secret-1-2", body.encode("utf-8")), sign_webhook("webhook-secret-1-2", body))
-        self.assertTrue(verify_webhook(secret, body, signature))
-        self.assertTrue(verify_webhook(secret, body, "sha256=" + signature))
-        self.assertFalse(verify_webhook(secret, body + " ", signature))
-        self.assertFalse(verify_webhook("another-secret", body, signature))
-        self.assertFalse(verify_webhook(secret, body, "00"))
+        self.assertRegex(secret, r"^unsup_whs_[0-9a-f]{64}$")
+        body = '{"resident":7,"notices":[],"reports":[],"next_notice":3}'
+        timestamp = "1800000000"
+        signature = sign_webhook(secret, timestamp, body)
+        self.assertRegex(signature, r"^v1=[0-9a-f]{64}$")
+        # A fixed answer, checked with `openssl dgst -sha256 -hmac` over
+        # `v1:1800000000:<body>`. The TypeScript SDK has the same test.
+        fixed = "v1=01a9e07c2db22745c9c76477a6830e5ad54b65815ab99955b16ec7651a0d6089"
+        self.assertEqual(sign_webhook("unsup_whs_0123456789abcdef", timestamp, body), fixed)
+        self.assertEqual(sign_webhook("unsup_whs_0123456789abcdef", 1800000000, body.encode("utf-8")), fixed)
+        now = 1800000010
+        self.assertTrue(verify_webhook(secret, timestamp, body, signature, now=now))
+        self.assertTrue(verify_webhook(secret, timestamp, body.encode("utf-8"), signature, now=now))
+        # A changed body, another secret, another time and a wrong form do not pass.
+        self.assertFalse(verify_webhook(secret, timestamp, body + " ", signature, now=now))
+        self.assertFalse(verify_webhook("another-secret", timestamp, body, signature, now=now))
+        self.assertFalse(verify_webhook(secret, "1800000001", body, signature, now=now))
+        self.assertFalse(verify_webhook(secret, timestamp, body, signature[3:], now=now))
+        self.assertFalse(verify_webhook(secret, timestamp, body, "v1=00", now=now))
+        self.assertFalse(verify_webhook(secret, None, body, signature, now=now))
+        self.assertFalse(verify_webhook(secret, timestamp, body, None, now=now))
+        # An old delivery is refused, so that nobody can send it again.
+        self.assertFalse(verify_webhook(secret, timestamp, body, signature, now=1800000301))
+        self.assertTrue(verify_webhook(secret, timestamp, body, signature, now=1800000300))
+        self.assertTrue(verify_webhook(secret, timestamp, body, signature, now=1900000000, tolerance=None))
+        # The headers of a delivery, with names in any case.
+        headers = {WEBHOOK_TIMESTAMP_HEADER: timestamp, WEBHOOK_SIGNATURE_HEADER.lower(): signature}
+        self.assertTrue(verify_webhook_request(secret, headers, body, now=now))
+        self.assertFalse(verify_webhook_request(secret, {}, body, now=now))
+
+        # Each call makes a new secret.
+        self.assertNotEqual(self.client.set_webhook("https://agent.example/hook")["secret"], secret)
 
         self.assertEqual(self.client.set_webhook(None), {"url": None})
         self.assertIsNone(self.resident.webhook)
@@ -303,8 +385,9 @@ class ClientTest(ServerCase):
         with self.assertRaises(ApiError) as raised:
             self.server.client(self.owner["token"]).observe()
         error = raised.exception
-        self.assertEqual((error.code, error.status), ("forbidden", 403))
-        self.assertEqual(str(error), "forbidden: This route needs a resident key, not an owner token.")
+        self.assertEqual((error.code, error.status), ("wrong_token_kind", 403))
+        self.assertEqual(str(error), "wrong_token_kind: This route needs a resident key. You sent an owner token.")
+        self.assertIs(error.ends_credential, True)
 
         # An answer without the documented body keeps its status.
         self.gateway.fail_next(400, body="Failed to parse the request body")
@@ -344,7 +427,7 @@ class LongWaitTest(ServerCase):
         self.assertEqual(self.waits(), ["60", "60"])
         self.assertFalse(has_news(filtered, ["report"]))
         # The answer still holds the notice that came during the wait.
-        self.assertEqual([notice["kind"] for notice in filtered["notices"]], ["society.speech"])
+        self.assertEqual([notice["kind"] for notice in filtered["notices"]], ["society.said"])
         self.assertEqual(self.client.observe()["notices"], [])
 
         # A timeout of zero only observes.

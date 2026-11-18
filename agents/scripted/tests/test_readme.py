@@ -13,11 +13,16 @@ from town import FOOD, HEALTH, Town
 
 from scripted_agent import Agent, State
 from scripted_agent.cli import parse_args
-from unsupervised.testing import DirectOpener, FakeGateway
+from unsupervised.testing import DirectOpener, FakeGateway, direct_client
 
 README = _path.PACKAGE_ROOT / "README.md"
 #: The address that the example uses for the server.
 EXAMPLE_URL = "https://unsupervised.example"
+
+
+def timing_of(town: Town) -> dict:
+    """Returns the clock of an agent that lives in the time of a town: it does not sleep."""
+    return {"sleep": lambda seconds: None, "clock": lambda: float(town.world.tick)}
 
 
 def python_blocks() -> List[str]:
@@ -54,27 +59,33 @@ class ReadmeTest(unittest.TestCase):
         self.assertEqual(printed[0], "store this key: %s" % resident.key)
         state, _, routines = printed[1].partition(" ")
         self.assertIn(state, {one.value for one in State})
-        self.assertEqual(
-            routines,
-            str(["eat bread when hungry", "eat apple when hungry", "sleep when tired", "work in the day"]),
-        )
+        expected = ["eat meal when hungry", "eat bread when hungry", "eat vegetables when hungry", "sleep when exhausted"]
+        self.assertEqual(routines, str(expected))
         self.assertEqual(len(printed), 2)
-        # Fifty decisions are some days of game time. The resident found the job, ate and stayed healthy.
+        # Fifty decisions are some days of game time. The resident worked, ate and stayed healthy.
         self.assertGreater(town.world.tick, 1440)
-        self.assertEqual(resident.sections["job"]["id"], 1)
+        self.assertGreaterEqual(town.shifts[resident.id], 2)
         self.assertGreaterEqual(town.meals[resident.id], 1)
-        self.assertGreater(town.lowest[resident.id][FOOD], 200)
+        self.assertGreater(town.lowest[resident.id][FOOD], 300)
         self.assertEqual(town.lowest[resident.id][HEALTH], 1000)
-        # The configuration of the example reached the agent: it eats below 600.
-        eat = [routine for routine in resident.routines if routine["name"] == "eat bread when hungry"]
-        self.assertEqual(eat[0]["when"]["of"][0], {"type": "attr_below", "attr": FOOD, "value": 600})
+        # The configuration of the example reached the agent: it eats below 700.
+        # An agent with the default (600) lets the food fall lower in the same town.
+        other = Town()
+        default = Agent(direct_client(FakeGateway(other.world), other.spawn().key), **timing_of(other))
+        default.run(decisions=50)
+        self.assertGreater(town.lowest[resident.id][FOOD], other.lowest[1][FOOD])
         self.assertEqual([delay for delay in sleeps if delay > 2.0], [])
 
     def test_the_command_of_the_readme_is_a_valid_command_line(self) -> None:
-        commands = re.findall(r"^python3 -m scripted_agent (.*)$", README.read_text(encoding="utf-8"), flags=re.MULTILINE)
-        self.assertEqual(len(commands), 1)
+        text = README.read_text(encoding="utf-8").replace("\\\n", " ")
+        commands = re.findall(r"python3 -m scripted_agent\s+(--.*)$", text, flags=re.MULTILINE)
+        self.assertEqual(len(commands), 2)
         args = parse_args(commands[0].split())
         self.assertEqual((args.url, args.residents, args.verbose), ("http://127.0.0.1:8080", 5, True))
+        # The command of the house residents.
+        house = parse_args(commands[1].split())
+        self.assertEqual((house.url, house.residents, house.model), ("http://127.0.0.1:8080", 60, "house"))
+        self.assertEqual(house.start_spread, 240)
 
     def test_the_option_table_names_every_option_of_the_command(self) -> None:
         text = README.read_text(encoding="utf-8")

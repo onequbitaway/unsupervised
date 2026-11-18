@@ -22,7 +22,7 @@ class DirectTest(unittest.TestCase):
     def test_a_client_joins_acts_and_waits_without_a_socket(self) -> None:
         joined = Client.join(DIRECT_URL, "Ada", model="scripted", opener=DirectOpener(self.gateway))
         client = joined.client
-        self.assertEqual(client.me(), {"resident": joined.resident, "name": "Ada"})
+        self.assertEqual(client.me(), {"resident": joined.resident, "name": "Ada", "model": "scripted", "owner": 1})
         ack, observation = client.act("move_to", {"x": 34, "y": 32})
         self.assertEqual(ack["status"], {"state": "started", "ends_at": 2, "ticks": 2})
         self.assertEqual(observation["resident"], joined.resident)
@@ -38,10 +38,10 @@ class DirectTest(unittest.TestCase):
         client = direct_client(self.gateway, "wrong-key")
         with self.assertRaises(ApiError) as raised:
             client.me()
-        self.assertEqual((raised.exception.code, raised.exception.status), ("unauthorized", 401))
+        self.assertEqual((raised.exception.code, raised.exception.status), ("invalid_token", 401))
 
         # A refusal for load goes out again after the time of `Retry-After`, as over a network.
-        resident = self.world.spawn(self.world.sign_up()["owner"], "Ada")
+        resident = self.world.spawn(self.world.sign_up()["owner"]["id"], "Ada")
         sleeps = []
         client = direct_client(self.gateway, resident.key, sleep=sleeps.append)
         self.gateway.fail_next(429, "rate_limited", headers={"Retry-After": "7"})

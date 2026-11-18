@@ -86,16 +86,16 @@ test("a sign-up without an answer is not sent again, because it has no idempoten
     },
   });
   server.loseResponses(1);
-  await assert.rejects(client.signUp(), TransportError);
+  await assert.rejects(client.signUp({ name: "Grace" }), TransportError);
   assert.equal(gateway.requests.filter((request) => request.path === "/v1/owners").length, 1);
   assert.deepEqual(sleeps, []);
 
   // A refusal for load is safe to repeat: the server did nothing.
   gateway.failNext({ status: 503, code: "overloaded" });
-  const signup = await client.signUp();
+  const signup = await client.signUp({ name: "Grace" });
   assert.equal(gateway.requests.filter((request) => request.path === "/v1/owners").length, 3);
   // The lost sign-up made owner 2 on the server; this one is owner 3.
-  assert.equal(signup.owner, 3);
+  assert.equal(signup.owner.id, 3);
   assert.equal(world.ownerOf(signup.token), 3);
 });
 

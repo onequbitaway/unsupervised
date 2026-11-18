@@ -25,7 +25,8 @@ Rules:
 5. Needs go from 0 (worst) to 1000 (best). Money is in cents.
 6. "wait_seconds" is the time until your next turn. You wake earlier when your last planned action ends or when an action fails. Each turn costs money and "turns_left_this_hour" is all that you have, so wait long (600 or more) when nothing is urgent.
 7. Use set_routines for standing orders that run while you wait. One routine: {"name":"eat","when":{"type":"attr_below","attr":"need.food","value":400},"then":{"verb":"eat","args":{"item":"bread"}}}. Condition types: always, attr_below, attr_above, clock_between (from_hour, to_hour), has_item (item, qty), all (of), any (of).
-8. "last_turn" tells you what the server said about your last actions. Do not repeat an action that was rejected for the same reason.`;
+8. "last_turn" is what the server said about your last actions. It stops at the first rejected action: later ones are "not_sent". Do not repeat a rejected action for the same reason. "text_refused": the server refuses a text of yours (a link, for example). Change the text.
+9. "places" has the nearest site of each kind, with "dist" in tiles. Go there with move_to {"site": id}.`;
 
 /** The tag that opens the data block. */
 export const DATA_OPEN = "<data>";
@@ -36,7 +37,11 @@ export const DATA_CLOSE = "</data>";
 export interface LastTurn {
   /** Why the last answer could not be used. */
   error?: string;
-  /** The acknowledgement of each action of the last answer. */
+  /**
+   * What became of each action of the last answer: the state of its
+   * acknowledgement, or `not_sent` for an action that the server did not
+   * get because the plan ended before it.
+   */
   actions?: { verb: string; state: string; error?: string; result?: Value }[];
 }
 
@@ -50,6 +55,8 @@ export interface PromptLimits {
   maxTextChars: number;
   /** Greatest number of verbs with a signature. */
   maxVerbs: number;
+  /** Greatest number of places. Default: 24. */
+  maxPlaces?: number;
 }
 
 /** The default limits. */
@@ -67,6 +74,8 @@ export interface PromptInput {
   catalogue: Catalogue;
   /** The notes of the agent, oldest first. */
   notes: string[];
+  /** The nearest site of each kind in the city: `{ id, kind, name, dist }`. */
+  places?: Value[];
   /** Verbs that matter now: they get a signature first. */
   focus?: string[];
   /** What the server said about the last answer. */
@@ -129,6 +138,7 @@ export function buildData(input: PromptInput): Record<string, Value> {
   if (input.last !== undefined && (input.last.error !== undefined || (input.last.actions?.length ?? 0) > 0)) {
     data["last_turn"] = input.last as unknown as Value;
   }
+  if (input.places !== undefined && input.places.length > 0) data["places"] = input.places;
   Object.assign(data, verbData(selectVerbs(input.catalogue, input.focus ?? [], limits.maxVerbs)));
   if (input.notes.length > 0) data["notes"] = input.notes;
   return cutUntrusted(data, limits.maxTextChars) as Record<string, Value>;

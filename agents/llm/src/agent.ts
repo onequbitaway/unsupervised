@@ -7,6 +7,7 @@
 import {
   ApiError,
   MissingCredentialError,
+  PLAN_MAX,
   REPORT_KIND,
   UnsupervisedError,
   hasNews,
@@ -25,6 +26,7 @@ import {
 import { DecisionBudget } from "./budget.js";
 import { DecisionError, parseDecision, type Decision, type DecisionLimits } from "./decision.js";
 import type { NotesStore } from "./notes.js";
+import { nearestPlaces, readPlaces, type MapSource, type Place } from "./places.js";
 import { buildMessages, DEFAULT_PROMPT_LIMITS, type LastTurn, type PromptLimits } from "./prompt.js";
 import { ProviderError, type ChatProvider } from "./provider.js";
 
@@ -38,6 +40,13 @@ export interface AgentWorld {
   plan(steps: PlanStep[]): Promise<PlanResult>;
   /** Blocks until the resident has news or the timeout ends. */
   wait(options: WaitOptions): Promise<Observation>;
+  /**
+   * Returns the layout of the world. With `world` and `zone`, the prompt
+   * shows the nearest site of each kind in the city of the resident.
+   */
+  world?: MapSource["world"];
+  /** Returns the public view of one zone. */
+  zone?: MapSource["zone"];
 }
 
 /** Options of the agent. `world`, `provider` and `notes` are necessary. */
@@ -58,7 +67,10 @@ export interface AgentOptions {
   maxWaitSeconds?: number;
   /** The wait when the model gives none or gives no usable answer, in seconds. Default: 300. */
   defaultWaitSeconds?: number;
-  /** Greatest number of actions in one turn. Default: 8, the default queue length of the server. */
+  /**
+   * Greatest number of actions in one turn. Default: 8, the default queue
+   * length of the server. At most 16: the server takes no longer plan.
+   */
   maxActions?: number;
   /**
    * Notice kinds that end a wait early. An action report has the kind
@@ -87,7 +99,11 @@ export interface TurnResult {
   decided: boolean;
   /** The decision of the model, when the turn asked it and the answer was usable. */
   decision: Decision | undefined;
-  /** The acknowledgements of the planned actions. */
+  /**
+   * The acknowledgements of the planned actions. The server stops a plan
+   * after the first action that it rejects, so the list can be shorter
+   * than the actions of the decision.
+   */
   acks: ActionAck[];
   /** Greatest number of seconds that the turn waited for news at its end. News can end the wait earlier. */
   waitedSeconds: number;
@@ -103,8 +119,8 @@ const DEFAULTS = {
   catalogueEvery: 50,
   errorSeconds: 30,
 };
-/** HTTP statuses that mean: the key does not work. `run` stops. */
-const FATAL_STATUSES = [401, 403];
+/** The form of a verb name. The server refuses a whole plan for one name of another form. */
+const VERB_NAME = /^[a-z0-9_]{1,64}$/;
 /** How many verbs of recent reports and answers stay in focus. */
 const FOCUS_MAX = 10;
 /** Greatest number of notices and of reports that wait for the next decision. */
@@ -120,6 +136,9 @@ export class LlmAgent {
   readonly #now: () => number;
   #catalogue: Catalogue | undefined;
   #catalogueAt = 0;
+  /** The sites of the city `#placesOf`. */
+  #places: Place[] = [];
+  #placesOf: number | undefined;
   #observation: Observation | undefined;
   #notices: Notice[] = [];
   #reports: ActionReport[] = [];
@@ -136,7 +155,7 @@ export class LlmAgent {
       minWaitSeconds: options.minWaitSeconds ?? DEFAULTS.minWaitSeconds,
       maxWaitSeconds: options.maxWaitSeconds ?? DEFAULTS.maxWaitSeconds,
       defaultWaitSeconds: options.defaultWaitSeconds ?? DEFAULTS.defaultWaitSeconds,
-      maxActions: options.maxActions ?? DEFAULTS.maxActions,
+      maxActions: Math.min(PLAN_MAX, options.maxActions ?? DEFAULTS.maxActions),
     };
   }
 
@@ -149,8 +168,10 @@ export class LlmAgent {
    * Runs turns until `turns` are done or `signal` is aborted.
    *
    * An error of the network or the server does not stop the run: the agent
-   * waits `errorSeconds` and makes the next turn. A key that the server
-   * refuses (HTTP 401 or 403) stops the run: the error is thrown.
+   * waits `errorSeconds` and makes the next turn. An error that ends the
+   * key stops the run and is thrown: the server does not know the key, the
+   * resident left the world (`resident_gone`), or an administrator banned
+   * the owner (`banned`).
    */
   async run(options: { turns?: number; signal?: AbortSignal } = {}): Promise<void> {
     const { signal } = options;
@@ -184,6 +205,7 @@ export class LlmAgent {
       this.#catalogueAt = this.decisions;
     }
     if (this.#observation === undefined) this.#take(await world.observe());
+    await this.#readMap();
 
     let decision: Decision | undefined;
     let acks: ActionAck[] = [];
@@ -192,12 +214,7 @@ export class LlmAgent {
     const decided = early <= 0 && this.#budget.take();
     if (decided) {
       decision = await this.#think(this.#catalogue);
-      if (decision !== undefined && decision.actions.length > 0) {
-        const result = await world.plan(decision.actions);
-        acks = result.acks;
-        this.#last = { actions: acks.map(summary) };
-        this.#take(result.observation);
-      }
+      if (decision !== undefined && decision.actions.length > 0) acks = await this.#act(decision.actions);
       waitSeconds = decision?.waitSeconds ?? this.#limits.defaultWaitSeconds;
       this.#nextDecisionAt = this.#now() + (this.#options.minDecisionSeconds ?? DEFAULTS.minDecisionSeconds) * 1000;
     } else {
@@ -215,6 +232,52 @@ export class LlmAgent {
 
     await this.#wait(waitSeconds, decided, signal);
     return { decided, decision, acks, waitedSeconds: waitSeconds };
+  }
+
+  /**
+   * Sends the actions of a decision as one plan, and writes down for the
+   * next prompt what the server said about each of them.
+   *
+   * The server stops a plan after the first action that it rejects. The
+   * actions after it did not run: the next prompt shows them as `not_sent`.
+   * The server refuses a whole plan for one text that a filter does not
+   * let through (`text_refused`), for speech of a muted resident (`muted`)
+   * and for a request of a wrong form (`invalid_request`). Then nothing
+   * ran, and the next prompt says why. These are answers to what the model
+   * wrote, so they do not end the turn.
+   */
+  async #act(actions: PlanStep[]): Promise<ActionAck[]> {
+    // A name that is not a verb name never reaches the server: it would
+    // refuse the whole plan. The plan ends before it, as it ends at a
+    // refusal of the server.
+    const bad = actions.findIndex((action) => !VERB_NAME.test(action.verb));
+    const sendable = bad < 0 ? actions : actions.slice(0, bad);
+    const told: NonNullable<LastTurn["actions"]> = [];
+    let acks: ActionAck[] = [];
+    if (sendable.length > 0) {
+      try {
+        const result = await this.#options.world.plan(sendable);
+        acks = result.acks;
+        this.#take(result.observation);
+      } catch (error) {
+        if (!(error instanceof ApiError) || !answersTheModel(error)) throw error;
+        this.#last = {
+          error: `${error.message} No action of your last answer ran.`,
+          actions: actions.map((action) => ({ verb: action.verb, state: NOT_SENT })),
+        };
+        return [];
+      }
+    }
+    told.push(...acks.map(summary));
+    const stopped = acks.length < sendable.length;
+    if (bad >= 0 && !stopped) {
+      const error = "unknown_verb: This is not the name of a verb. A name has lowercase letters, digits and `_`.";
+      told.push({ verb: (actions[bad] as PlanStep).verb, state: "rejected", error });
+    }
+    // Every action after the one that ended the plan.
+    for (const action of actions.slice(told.length)) told.push({ verb: action.verb, state: NOT_SENT });
+    this.#last = { actions: told };
+    return acks;
   }
 
   /**
@@ -243,11 +306,33 @@ export class LlmAgent {
     }
   }
 
+  /**
+   * Reads the map of the city of the resident, one time for each city. A
+   * map that cannot be read is no reason to stop: the prompt then has no
+   * `places`, and the next turn tries again.
+   */
+  async #readMap(): Promise<void> {
+    const { world } = this.#options;
+    const me = selfOf(this.#observation as Observation);
+    if (me === undefined || me.city === this.#placesOf || !hasMap(world)) return;
+    try {
+      this.#places = await readPlaces(world, me.city);
+      this.#placesOf = me.city;
+    } catch (error) {
+      if (!(error instanceof UnsupervisedError)) throw error;
+      this.#places = [];
+      this.#options.log?.(`the map of city ${me.city} cannot be read: ${error.message}`);
+    }
+  }
+
   /** Asks the model once. Returns `undefined` when the answer is not usable. */
   async #think(catalogue: Catalogue): Promise<Decision | undefined> {
     const observation = this.#observation as Observation;
+    const me = selfOf(observation);
+    const limits = this.#options.promptLimits ?? DEFAULT_PROMPT_LIMITS;
     const messages = buildMessages({
       observation,
+      places: me === undefined ? [] : nearestPlaces(this.#places, me.pos, limits.maxPlaces),
       notices: this.#notices,
       reports: this.#reports,
       catalogue,
@@ -255,7 +340,7 @@ export class LlmAgent {
       focus: this.#focus,
       turnsLeft: this.#budget.left,
       ...(this.#last === undefined ? {} : { last: this.#last }),
-      limits: this.#options.promptLimits ?? DEFAULT_PROMPT_LIMITS,
+      limits,
     });
     this.decisions += 1;
     // The model saw the news. The next prompt shows only what comes later.
@@ -316,10 +401,32 @@ function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
-/** Returns true for an error that a later turn can get past: the network failed or the server had a problem. */
+/** Returns true when the client of the agent can read the public map. */
+function hasMap(world: AgentWorld): world is AgentWorld & MapSource {
+  return world.world !== undefined && world.zone !== undefined;
+}
+
+/** The state of an action that the server did not get, because the plan ended before it. */
+const NOT_SENT = "not_sent";
+
+/**
+ * Returns true for an error that a later turn can get past: the network
+ * failed or the server had a problem. An error that ends the key is not
+ * such an error: the same key gets the same answer again.
+ */
 function canRecover(error: unknown): error is UnsupervisedError {
   if (!(error instanceof UnsupervisedError) || error instanceof MissingCredentialError) return false;
-  return !(error instanceof ApiError && error.status !== undefined && FATAL_STATUSES.includes(error.status));
+  return !(error instanceof ApiError && error.endsCredential);
+}
+
+/**
+ * Returns true when the server refused a plan for what the model wrote: a
+ * text that a filter does not let through, speech of a muted resident, or
+ * a request of a wrong form. The same plan gets the same answer again, so
+ * the model must learn of it.
+ */
+function answersTheModel(error: ApiError): boolean {
+  return error.isTextRefusal || error.code === "invalid_request";
 }
 
 /** Waits for a number of milliseconds. Ends early, without an error, when the signal is aborted. */

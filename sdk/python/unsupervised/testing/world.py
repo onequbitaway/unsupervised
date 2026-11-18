@@ -1,18 +1,21 @@
 """A small model of the server, for tests without the real server.
 
-`FakeWorld` follows `docs/design/protocol.md`: accounts and keys, the action
-engine (idempotency keys, the queue, free verbs, reports), routines, the
-inbox with one sequence for notices and reports, observations and the long
-poll. It is not the game: it has four verbs (`wait`, `cancel`,
-`set_routines`, `move_to`). A test adds the verbs that it needs with
-`add_verb` and the rules that it needs with `on_tick`.
+`FakeWorld` follows `docs/design/protocol.md` and the real server: accounts
+and keys, the action engine (idempotency keys, the queue, free verbs,
+reports), routines, the inbox with one sequence for notices and reports,
+observations and the long poll. The end-to-end tests in `crates/e2e`
+compare its answers with those of the real server. It is not the game: it
+has four verbs (`wait`, `cancel`, `set_routines`, `move_to`). A test adds
+the verbs that it needs with `add_verb` and the rules that it needs with
+`on_tick`.
 
 Every method takes the lock of the world, so the HTTP server threads and
 the test thread can use one world.
 """
 
+import math
 import threading
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
 DEFAULT_LIMITS: Dict[str, int] = {
     # The defaults of the kernel parameters that the fake world uses.
@@ -24,7 +27,21 @@ DEFAULT_LIMITS: Dict[str, int] = {
     "nearby_max": 12,
     "wait_max": 1440,
     "routine_backoff": 30,
+    # A limit of the gateway, not a kernel parameter: the greatest number of
+    # residents of one owner. 0: no limit.
+    "residents_per_owner": 3,
 }
+
+#: The limits that are not kernel parameters. The catalogue does not list them.
+GATEWAY_LIMITS = ("residents_per_owner",)
+
+#: The time of every sign-up in the fake world, in seconds since 1970.
+CREATED_AT = 1800000000
+
+
+def make_token(prefix: str, *numbers: int) -> str:
+    """Returns a token of the form that the server makes: a prefix and 64 hexadecimal characters."""
+    return prefix + "".join("%08x" % number for number in numbers).ljust(64, "0")
 
 #: Verbs that work in every condition except `frozen`.
 KERNEL_VERBS = ("wait", "cancel", "set_routines")
@@ -77,7 +94,12 @@ class Busy(NamedTuple):
 
 
 class Pending(NamedTuple):
-    """The action waits for another party for a number of ticks. The acknowledgement is `pending`."""
+    """The action waits for another party for a number of ticks.
+
+    The acknowledgement is `pending`, and a report follows. A free verb of
+    the global realm does this, for example `list_jobs`: it does not occupy
+    the resident.
+    """
 
     ticks: int
     finish: Optional[Callable[[], Json]] = None
@@ -173,6 +195,8 @@ class FakeResident:
         #: Extra observation sections, as a game module writes them.
         self.sections: Dict[str, Json] = {}
         self.current: Optional[_Running] = None
+        #: Free actions that wait for an answer. They do not occupy the resident.
+        self.background: List[_Running] = []
         self.queue: List[_Queued] = []
         self.slots: List[_Slot] = []
         #: Inbox entries: `{"seq", "notice"}` or `{"seq", "report"}`.
@@ -181,6 +205,8 @@ class FakeResident:
         #: The last accepted request ids with their acknowledgements.
         self.recent: List[Tuple[str, Dict[str, Json]]] = []
         self.key = ""
+        #: Time of the creation, in seconds since 1970.
+        self.created_at = CREATED_AT
         self.webhook: Optional[Dict[str, str]] = None
         self.free_tick = -1
         self.free_used = 0
@@ -257,8 +283,12 @@ def check_args(info: Dict[str, Json], args: Json) -> Dict[str, Json]:
             raise FakeActionError("invalid_args", "`%s` needs the argument `%s`." % (name, key))
     for key, value in given.items():
         kind = (schema.get("properties", {}).get(key) or {}).get("type")
-        fits = _JSON_TYPES.get(kind)
-        if fits is not None and not fits(value):
+        # A schema names one type, or a list of types such as `["integer", "null"]`.
+        kinds = kind if isinstance(kind, list) else [kind]
+        checks = [_JSON_TYPES[one] for one in kinds if one in _JSON_TYPES]
+        if value is None and "null" in kinds:
+            continue
+        if checks and not any(fits(value) for fits in checks):
             raise FakeActionError("invalid_args", "The argument `%s` of `%s` must be of type %s." % (key, name, kind))
     return given
 
@@ -310,6 +340,8 @@ class FakeWorld:
         self._owners: Dict[str, int] = {}
         self._keys: Dict[str, int] = {}
         self._waiters: List[_Waiter] = []
+        #: Ids of the residents that left the world.
+        self._gone: Set[int] = set()
         self._spawn = spawn or {"x": ZONE_SIZE // 2, "y": ZONE_SIZE // 2}
         self._ids = 0
         self._owner = 0
@@ -337,6 +369,7 @@ class FakeWorld:
             params = [
                 {"name": "kernel." + name, "value": value, "policy": False, "summary": "The kernel parameter %s." % name}
                 for name, value in sorted(self.limits.items())
+                if name not in GATEWAY_LIMITS
             ]
             return {
                 "verbs": verbs,
@@ -348,13 +381,26 @@ class FakeWorld:
 
     # ---- Accounts ---------------------------------------------------------
 
-    def sign_up(self) -> Dict[str, Json]:
-        """Signs up an owner. Returns `{"owner", "token"}`."""
+    def sign_up(self, name: str = "Owner") -> Dict[str, Json]:
+        """Signs up an owner. Returns the owner and its token, as `POST /v1/owners` does."""
         with self.lock:
             self._owner += 1
-            token = "owner-token-%d" % self._owner
+            token = make_token("unsup_own_", self._owner)
             self._owners[token] = self._owner
-            return {"owner": self._owner, "token": token}
+            return {"owner": {"id": self._owner, "name": name, "created_at": CREATED_AT}, "token": token}
+
+    def residents_of(self, owner: int) -> List[FakeResident]:
+        """Returns the residents of an owner that are in the world, in the order of their ids."""
+        with self.lock:
+            return sorted((one for one in self.residents.values() if one.owner == owner), key=lambda one: one.id)
+
+    def despawn(self, resident: FakeResident) -> None:
+        """Removes a resident from the world, as a death does. Its key ends."""
+        with self.lock:
+            self.residents.pop(resident.id, None)
+            self._keys.pop(resident.key, None)
+            self._gone.add(resident.id)
+            self._changed.notify_all()
 
     def owner_of(self, token: Optional[str]) -> Optional[int]:
         """Returns the owner of a token, if the token is known."""
@@ -380,7 +426,7 @@ class FakeWorld:
         with self.lock:
             self._keys.pop(resident.key, None)
             self._secrets += 1
-            resident.key = "resident-key-%d-%d" % (resident.id, self._secrets)
+            resident.key = make_token("unsup_res_", resident.id, self._secrets)
             self._keys[resident.key] = resident.id
             return resident.key
 
@@ -391,7 +437,7 @@ class FakeWorld:
                 resident.webhook = None
                 return None
             self._secrets += 1
-            resident.webhook = {"url": url, "secret": "webhook-secret-%d-%d" % (resident.id, self._secrets)}
+            resident.webhook = {"url": url, "secret": make_token("unsup_whs_", resident.id, self._secrets)}
             return resident.webhook["secret"]
 
     # ---- Actions ----------------------------------------------------------
@@ -439,9 +485,17 @@ class FakeWorld:
                     raise FakeActionError("rate_limited", "At most %d free actions in one tick." % limit)
                 resident.free_used += 1
                 outcome = verb.begin(resident, checked, self)
-                if not isinstance(outcome, Done):
-                    raise FakeActionError("internal", "The free verb `%s` did not finish at once." % name)
-                return _done(outcome.result)
+                if isinstance(outcome, Done):
+                    return _done(outcome.result)
+                if not isinstance(outcome, Pending):
+                    raise FakeActionError("internal", "The free verb `%s` cannot occupy the resident." % name)
+                # A free verb of the global realm: the answer comes later,
+                # in a report, and the resident stays free.
+                ends = self.tick + max(1, outcome.ticks)
+                resident.background.append(
+                    _Running(action_id, name, request_id, self.tick, ends, True, outcome.finish, None)
+                )
+                return {"state": "pending"}
             if not resident.idle:
                 limit = self.limits["queue_max"]
                 if len(resident.queue) >= limit:
@@ -584,6 +638,9 @@ class FakeWorld:
                     self._advance(resident)
 
     def _advance(self, resident: FakeResident) -> None:
+        for waiting in [action for action in resident.background if action.ends <= self.tick]:
+            resident.background.remove(waiting)
+            self._finish(resident, waiting)
         running = resident.current
         if running is not None and running.ends <= self.tick:
             resident.current = None
@@ -685,13 +742,21 @@ class FakeWorld:
                 notice["data"] = data
             return self._push(resident, {"notice": notice})
 
-    def tell(self, to: int, sender: int, text: str, kind: str = "society.speech") -> int:
-        """Writes a notice with text of another resident. The text is marked `untrusted`."""
-        return self.notify(to, kind, {"untrusted": True, "from": sender, "text": text}, sender)
+    def tell(self, to: int, sender: int, text: str, kind: str = "society.said") -> int:
+        """Writes a notice with text of another resident.
+
+        The verbs `say` (`society.said`) and `message` (`society.message`)
+        do this. The text is in the field `text` of the data, in an object
+        with `untrusted: true`.
+        """
+        return self.notify(to, kind, {"text": {"untrusted": True, "from": sender, "text": text}}, sender)
 
     def _push(self, resident: FakeResident, entry: Dict[str, Json]) -> int:
         seq = resident.next_seq
         entry["seq"] = seq
+        if "report" in entry:
+            # A report has its place in the sequence that it shares with the notices.
+            entry["report"]["seq"] = seq
         resident.next_seq += 1
         resident.inbox.append(entry)
         del resident.inbox[: max(0, len(resident.inbox) - max(1, self.limits["inbox_max"]))]
@@ -836,7 +901,7 @@ class FakeWorld:
     def wait(
         self,
         resident: FakeResident,
-        timeout: int,
+        timeout: float,
         since: Optional[int] = None,
         kinds: Optional[Sequence[str]] = None,
     ) -> Dict[str, Json]:
@@ -848,9 +913,10 @@ class FakeWorld:
         """
         with self.lock:
             start = resident.next_seq if since is None else since
-            if not self.has_news(resident, start, kinds):
+            # A wait of zero seconds answers at once, without news.
+            if timeout > 0 and not self.has_news(resident, start, kinds):
                 if self.time == "auto":
-                    for _ in range(timeout):
+                    for _ in range(int(math.ceil(timeout))):
                         self.step(1)
                         if self.has_news(resident, start, kinds):
                             break
@@ -858,7 +924,12 @@ class FakeWorld:
                     waiter = _Waiter(resident, start, kinds)
                     self._waiters.append(waiter)
                     self._changed.notify_all()
-                    while not (self.has_news(resident, start, kinds) or waiter.expired or self._closed):
+                    while not (
+                        self.has_news(resident, start, kinds)
+                        or waiter.expired
+                        or self._closed
+                        or resident.id in self._gone
+                    ):
                         self._changed.wait()
                     self._waiters.remove(waiter)
             return self.observe(resident, {"since_notice": start})

@@ -16,11 +16,15 @@ REPORT_KIND = "report"
 
 
 def report_key(report: ActionReport) -> str:
-    """Returns a key that tells two reports apart: the action, the tick of its end and its outcome.
+    """Returns a key that tells two reports apart.
 
-    A report has no sequence number, so a client that must drop repeated
-    reports compares these keys.
+    The key is the sequence number that the report shares with the notices
+    of the resident. A report of an old server has no `seq`; then the key is
+    the action, the tick of its end and its outcome.
     """
+    seq = report.get("seq")
+    if isinstance(seq, int) and seq > 0:
+        return "seq:%d" % seq
     return "%s:%s:%s" % (report["action_id"], report["tick"], report["ok"])
 
 

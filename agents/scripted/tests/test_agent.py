@@ -8,12 +8,12 @@ days is hundreds of requests, and a socket for each of them is not needed.
 import threading
 import unittest
 from typing import Any, List
-from unittest import mock
 
 import _path  # noqa: F401
-from town import ENERGY, FOOD, HEALTH, SHELTER, TICKS_PER_DAY, WORKS, Town, kernel_verbs
+from town import BANK, ENERGY, FOOD, HEALTH, SHELTER, TICKS_PER_DAY, Town, kernel_verbs
 
-from scripted_agent import Agent, AgentConfig, Brain, State
+from scripted_agent import Agent, AgentConfig, State
+from scripted_agent.brain import PHRASES
 from unsupervised.testing import FakeGateway, FakeWorld, direct_client
 
 DAYS = 4
@@ -22,13 +22,15 @@ DAYS = 4
 class AgentCase(unittest.TestCase):
     """A town (or another world), its gateway, one resident and an agent for it."""
 
-    def start(self, world: FakeWorld, config: AgentConfig = AgentConfig()) -> None:
-        self.world = world
-        self.gateway = FakeGateway(world)
-        self.resident = world.spawn(world.sign_up()["owner"], "Ada")
+    def start(self, town_or_world: Any, config: AgentConfig = AgentConfig()) -> None:
+        town = town_or_world if isinstance(town_or_world, Town) else None
+        self.world: FakeWorld = town.world if town else town_or_world
+        self.gateway = FakeGateway(self.world)
+        self.resident = town.spawn() if town else self.world.spawn(self.world.sign_up()["owner"]["id"], "Ada")
         self.client = direct_client(self.gateway, self.resident.key)
         self.sleeps: List[float] = []
         # One tick is one second: the clock of the agent is the tick of the world.
+        world = self.world
         self.agent = Agent(self.client, config, sleep=self.sleeps.append, clock=lambda: float(world.tick))
 
     def run_days(self, days: int) -> None:
@@ -43,70 +45,58 @@ class AgentCase(unittest.TestCase):
             verbs += [step["verb"] for step in steps]
         return verbs
 
-    def rejected(self) -> List[Any]:
-        """Returns the refused actions of the agent: what `POST /v1/act` rejected."""
-        return [report for report in self.reports() if not report["ok"]]
-
     def reports(self) -> List[Any]:
         return [entry["report"] for entry in self.resident.inbox if "report" in entry]
 
 
 class TownTest(AgentCase):
-    def test_the_agent_keeps_a_resident_alive_fed_and_at_work_for_days(self) -> None:
+    def test_the_agent_keeps_a_resident_alive_fed_at_work_and_saving_for_days(self) -> None:
         town = Town()
-        self.start(town.world)
+        self.start(town, AgentConfig(save_above=4000, keep_cash=2000))
         self.run_days(DAYS)
 
         lowest = town.lowest[self.resident.id]
-        self.assertGreater(lowest[FOOD], 200, "the resident never came near starving")
+        self.assertGreater(lowest[FOOD], 300, "the resident never came near starving")
         self.assertGreater(lowest[ENERGY], 100, "the resident never came near exhaustion")
         self.assertEqual(lowest[HEALTH], 1000)
-        # It found the better job, worked most of the working hours and bought its own food.
-        self.assertEqual(self.resident.sections["job"]["id"], 1)
-        self.assertGreaterEqual(town.shifts[self.resident.id], 12)
-        self.assertGreaterEqual(town.meals[self.resident.id], 3)
-        self.assertGreater(self.resident.cash, 0)
-        # Every verb that it sent is in the catalogue.
+        # It worked starter shifts, bought its own food at the depot, ate it and saved.
+        # Two starter shifts each day: the rest of the budget of the city is for others.
+        self.assertGreaterEqual(town.shifts[self.resident.id], 2 * DAYS - 1)
+        self.assertLessEqual(town.shifts[self.resident.id], 2 * DAYS)
+        # The needs lose 336 food points in one day. That is more than one meal for each day.
+        self.assertGreaterEqual(town.meals[self.resident.id], DAYS + 2)
+        self.assertGreater(town.deposits[self.resident.id], 0)
+        verbs = self.sent_verbs()
+        for verb in ("list_jobs", "move_to", "work", "buy", "eat", "sleep", "open_account", "deposit"):
+            self.assertIn(verb, verbs)
+        # Every verb that it sent is in the catalogue, and the server refused no plan.
         known = {verb["verb"] for verb in self.world.catalogue()["verbs"]}
-        self.assertLessEqual(set(self.sent_verbs()), known)
+        self.assertLessEqual(set(verbs), known)
+        self.assertEqual([report for report in self.reports() if not report["ok"]], [])
         self.assertEqual(
-            self.agent.routines and [routine["name"] for routine in self.agent.routines],
-            ["eat bread when hungry", "eat apple when hungry", "sleep when tired", "work in the day"],
+            [routine["name"] for routine in self.agent.routines],
+            ["eat meal when hungry", "eat bread when hungry", "eat vegetables when hungry", "sleep when exhausted"],
         )
-
-    def test_a_server_that_repeats_the_inbox_with_each_action_does_not_confuse_the_agent(self) -> None:
-        # The protocol document gives `POST /v1/act` no cursor. A server can answer with all old reports.
-        town = Town()
-        self.start(town.world)
-        self.gateway.act_ignores_since = True
-        # The resident is hungry and has too little cash for any food, so its purchases fail.
-        self.resident.cash = 100
-        self.resident.attrs[FOOD] = 400
-        with mock.patch.object(Brain, "_failed", autospec=True, side_effect=Brain._failed) as failed:
-            for _ in range(8):
-                self.agent.step()
-        read = [call.args[1] for call in failed.call_args_list]
-        real = [report["verb"] for report in self.reports() if not report["ok"]]
-        self.assertGreaterEqual(real.count("buy"), 1)
-        # The agent read each failure one time, though the server sent it with every later action.
-        self.assertEqual(read.count("buy"), real.count("buy"))
-        self.assertGreater(len(self.gateway.requests_to("/v1/act")), real.count("buy") + 1)
+        # It sleeps each night, and always at home: the sleep of the shelter is fair.
+        slept = town.sleeps[self.resident.id]
+        self.assertGreaterEqual(len(slept), DAYS - 1)
+        self.assertEqual(set(slept), {"fair"})
 
     def test_the_agent_is_cheap_a_few_requests_for_each_game_hour(self) -> None:
         town = Town()
-        self.start(town.world)
+        self.start(town)
         self.run_days(DAYS)
         requests = len(self.gateway.requests)
         hours = DAYS * 24
-        # A long poll of 60 seconds is one request for each game hour at the least.
-        self.assertGreaterEqual(requests, hours)
-        self.assertLess(requests, 2.5 * hours, "%d requests in %d game hours" % (requests, hours))
-        self.assertLess(self.agent.decisions, hours)
+        self.assertLess(requests, 3 * hours, "%d requests in %d game hours" % (requests, hours))
+        self.assertLess(self.agent.decisions, 1.5 * hours)
         # The agent never slept to wait for the server: the long poll did the waiting.
         self.assertEqual([delay for delay in self.sleeps if delay > 2.0], [])
+        # It read the map of the city one time.
+        self.assertEqual(len(self.gateway.requests_to("/v1/world")), 1)
 
     def test_without_the_agent_the_resident_starves(self) -> None:
-        # The control for the test above: the town is hard enough to kill a resident that does nothing.
+        # The control for the tests above: the town is hard enough to hurt a resident that does nothing.
         town = Town()
         resident = town.spawn()
         town.world.step(DAYS * TICKS_PER_DAY)
@@ -114,27 +104,63 @@ class TownTest(AgentCase):
         self.assertEqual(town.lowest[resident.id][ENERGY], 0)
         self.assertLess(resident.attrs[HEALTH], 1000)
 
-    def test_routines_alone_keep_a_placed_resident_going_between_decisions(self) -> None:
-        # The agent decides once and installs the routines. Then nobody decides for three days.
+    def test_without_budget_for_starter_shifts_the_agent_lives_from_the_farm(self) -> None:
         town = Town()
-        self.start(town.world)
-        self.resident.items["bread"] = 8
-        self.resident.sections["job"] = {"id": 1, "site": WORKS["id"], "wage": 600}
+        town.budget_open = False
+        self.start(town)
+        self.run_days(DAYS)
+        self.assertNotIn(self.resident.id, town.shifts)
+        self.assertGreater(town.lowest[self.resident.id][FOOD], 300)
+        self.assertEqual(town.lowest[self.resident.id][HEALTH], 1000)
+        verbs = self.sent_verbs()
+        self.assertIn("gather", verbs)
+        # It sold what it did not need at the depot.
+        self.assertIn("sell", verbs)
+        self.assertGreater(self.resident.cash, 0)
+
+    def test_the_agent_takes_a_job_that_pays_more_than_the_city(self) -> None:
+        town = Town()
+        town.jobs.append({"job": 7, "site": BANK["id"], "wage": 2600, "min_level": 0, "free_slots": 1})
+        self.start(town)
+        self.run_days(2)
+        self.assertEqual(self.resident.sections["job"]["job"], 7)
+        paid = [report["result"]["wage"] for report in self.reports() if report["verb"] == "work"]
+        self.assertEqual(set(paid), {2600})
+
+    def test_routines_alone_keep_a_placed_resident_fed_and_rested_without_the_agent(self) -> None:
+        # The agent installs the routines. Then nobody decides for four days.
+        town = Town()
+        self.start(town)
+        self.resident.items["bread"] = 6
         self.agent.setup()
         self.assertEqual(len(self.resident.routines), 4)
         before = len(self.gateway.requests)
-        self.world.step(3 * TICKS_PER_DAY)
+        self.world.step(4 * TICKS_PER_DAY)
         self.assertEqual(len(self.gateway.requests), before)
-        # The eat routine works anywhere, so the resident does not starve.
-        self.assertGreater(town.lowest[self.resident.id][FOOD], 200)
-        self.assertGreaterEqual(town.meals[self.resident.id], 3)
-        # It stands in the shelter, so the sleep routine works too.
+        # The first meal comes when the food is below 300, after about 50 hours.
+        self.assertGreaterEqual(town.meals[self.resident.id], 2)
+        self.assertGreater(town.lowest[self.resident.id][FOOD], 250)
+        # It stands in the shelter, so the sleep routine gives a fair sleep.
         self.assertEqual(self.world.site_at(self.resident.pos)["id"], SHELTER["id"])
         self.assertGreater(town.lowest[self.resident.id][ENERGY], 100)
-        # The work routine fails there (`not_here`) and waits longer each time: a few reports, not hundreds.
-        failures = [report for report in self.reports() if not report["ok"]]
-        self.assertEqual({(report["verb"], report["error"]["code"]) for report in failures}, {("work", "not_here")})
-        self.assertLessEqual(len(failures), 8)
+        self.assertEqual(town.lowest[self.resident.id][HEALTH], 1000)
+
+    def test_two_residents_that_meet_talk_and_refused_words_make_one_silent(self) -> None:
+        town = Town()
+        self.start(town, AgentConfig(talk_every_ticks=60))
+        town.spawn("Bo")
+        self.run_days(1)
+        self.assertGreaterEqual(len(town.said), 1)
+        self.assertIn("say", self.sent_verbs())
+
+        # A server that refuses the words: the agent goes on and says nothing more.
+        self.gateway.text_rule = lambda text: "word" if text in PHRASES else None
+        said = len(town.said)
+        with self.assertLogs("scripted_agent", "WARNING") as logs:
+            self.run_days(2)
+        self.assertEqual(len(town.said), said)
+        self.assertTrue(any("refused the words" in line for line in logs.output))
+        self.assertIsNone(self.agent.fatal)
 
 
 class MissingVerbsTest(AgentCase):
@@ -146,77 +172,60 @@ class MissingVerbsTest(AgentCase):
         self.assertEqual(self.agent.routines, [])
         self.assertEqual(self.resident.routines, [])
         paths = [request.path for request in self.gateway.requests]
-        self.assertEqual(paths[:4], ["/v1/catalogue", "/v1/routines", "/v1/observe", "/v1/world/zones/0"])
-        self.assertEqual(set(paths[4:]), {"/v1/wait"})
-        # Five decisions, each with five minutes of long poll.
-        self.assertEqual(self.world.tick, 5 * 300)
+        self.assertEqual(paths[:5], ["/v1/catalogue", "/v1/routines", "/v1/observe", "/v1/world", "/v1/world/zones/0"])
+        self.assertEqual(set(paths[5:]), {"/v1/wait"})
+        # Five decisions, each with a long poll to the next full hour.
+        self.assertEqual(self.world.tick, 5 * 60)
 
     def test_with_some_verbs_the_agent_uses_what_exists(self) -> None:
         town = Town(verbs=["eat", "sleep"])
-        self.start(town.world)
+        self.start(town)
         self.resident.items["bread"] = 6
         self.run_days(2)
-        self.assertEqual(self.rejected(), [])
+        self.assertEqual([report for report in self.reports() if not report["ok"]], [])
         self.assertLessEqual(set(self.sent_verbs()), {"eat", "sleep", "move_to"})
-        self.assertEqual([routine["name"] for routine in self.agent.routines], ["eat bread when hungry", "eat apple when hungry", "sleep when tired"])
-        self.assertGreater(town.lowest[self.resident.id][FOOD], 200)
+        self.assertGreater(town.lowest[self.resident.id][FOOD], 300)
         self.assertGreater(town.lowest[self.resident.id][ENERGY], 100)
-        self.assertEqual(town.lowest[self.resident.id][HEALTH], 1000)
-
-    def test_a_verb_whose_arguments_the_agent_cannot_fill_is_never_sent(self) -> None:
-        town = Town()
-        # In this world `eat` needs an argument that the agent does not know.
-        eat = next(verb for verb in town.world.catalogue()["verbs"] if verb["verb"] == "eat")
-        eat["args_schema"] = {"type": "object", "properties": {"ritual": {"type": "string"}}, "required": ["ritual"]}
-        self.start(town.world)
-        self.resident.items["bread"] = 6
-        self.resident.attrs[FOOD] = 300
-        self.run_days(1)
-        self.assertNotIn("eat", self.sent_verbs())
-        self.assertNotIn("eat bread when hungry", [routine["name"] for routine in self.agent.routines])
-        self.assertIn("sleep when tired", [routine["name"] for routine in self.agent.routines])
-        # The other rules still ran.
-        self.assertIn("apply_job", self.sent_verbs())
 
     def test_a_new_verb_is_used_after_the_agent_reads_the_catalogue_again(self) -> None:
         town = Town(verbs=["sleep"])
-        self.start(town.world, AgentConfig(catalogue_every=3))
+        self.start(town, AgentConfig(catalogue_every=3))
         self.resident.items["bread"] = 6
         self.resident.attrs[FOOD] = 300
         for _ in range(3):
             self.agent.step()
         self.assertNotIn("eat", self.sent_verbs())
-        self.assertEqual([routine["name"] for routine in self.agent.routines], ["sleep when tired"])
+        self.assertEqual([routine["name"] for routine in self.agent.routines], ["sleep when exhausted"])
         # The server is upgraded: `eat` appears. The agent reads the catalogue again after three decisions.
         town.world.add_verb(town.verb("eat"))
         for _ in range(3):
             self.agent.step()
-        self.assertEqual([routine["name"] for routine in self.agent.routines][:2], ["eat bread when hungry", "eat apple when hungry"])
+        self.assertEqual(self.agent.routines[0]["name"], "eat meal when hungry")
         self.assertGreaterEqual(town.meals[self.resident.id], 1)
 
 
 class RoutineFallbackTest(AgentCase):
     def test_when_the_server_refuses_one_routine_the_agent_keeps_the_others(self) -> None:
         town = Town()
-        self.start(town.world)
+        self.start(town)
 
-        def has_work(request: Any) -> bool:
+        def has_sleep(request: Any) -> bool:
             routines = (request.body or {}).get("routines", [])
-            return request.path == "/v1/routines" and any(routine["then"]["verb"] == "work" for routine in routines)
+            return request.path == "/v1/routines" and any(routine["then"]["verb"] == "sleep" for routine in routines)
 
-        self.gateway.fail_next(400, "invalid_args", "`work` needs the argument `contract`.", times=100, when=has_work)
+        self.gateway.fail_next(400, "invalid_args", "`sleep` needs the argument `bed`.", times=100, when=has_sleep)
         with self.assertLogs("scripted_agent", "WARNING") as logs:
             self.agent.setup()
-        kept = ["eat bread when hungry", "eat apple when hungry", "sleep when tired"]
+        kept = ["eat meal when hungry", "eat bread when hungry", "eat vegetables when hungry"]
         self.assertEqual([routine["name"] for routine in self.agent.routines], kept)
         self.assertEqual([routine["name"] for routine in self.resident.routines], kept)
-        self.assertTrue(any("the routine `work in the day` is left out" in line for line in logs.output))
+        self.assertTrue(any("the routine `sleep when exhausted` is left out" in line for line in logs.output))
 
 
 class ErrorTest(AgentCase):
     def test_an_error_of_the_server_does_not_stop_the_agent(self) -> None:
         town = Town()
-        self.start(town.world, AgentConfig(error_seconds=30.0))
+        self.start(town, AgentConfig(error_seconds=30.0))
         self.agent.step()
         self.gateway.fail_next(500, "internal", "The server failed.", when=lambda request: request.path == "/v1/wait")
         with self.assertLogs("scripted_agent", "WARNING") as logs:
@@ -225,15 +234,32 @@ class ErrorTest(AgentCase):
         self.assertIn(30.0, self.sleeps)
         self.assertTrue(any("internal: The server failed." in line for line in logs.output))
 
-    def test_a_key_that_stops_to_work_stops_the_agent(self) -> None:
+    def test_a_key_that_ends_stops_the_agent(self) -> None:
+        cases = [
+            ("invalid_token", lambda: self.world.rotate_key(self.resident)),
+            ("invalid_token", lambda: self.world.despawn(self.resident)),
+            ("banned", lambda: self.gateway.banned.add(self.resident.owner)),
+        ]
+        for code, end in cases:
+            with self.subTest(code=code):
+                self.start(Town())
+                self.agent.step()
+                end()
+                with self.assertLogs("scripted_agent", "ERROR"):
+                    made = self.agent.run(decisions=50)
+                self.assertLess(made, 50)
+                self.assertEqual(self.agent.fatal.code, code)
+
+    def test_a_mute_does_not_stop_the_agent(self) -> None:
         town = Town()
-        self.start(town.world)
-        self.agent.step()
-        self.world.rotate_key(self.resident)
-        with self.assertLogs("scripted_agent", "ERROR"):
-            made = self.agent.run(decisions=50)
-        self.assertLess(made, 50)
-        self.assertEqual(self.agent.fatal.code, "unauthorized")
+        self.start(town, AgentConfig(talk_every_ticks=60))
+        town.spawn("Bo")
+        self.gateway.muted.add(self.resident.id)
+        with self.assertLogs("scripted_agent", "WARNING"):
+            self.run_days(1)
+        self.assertIsNone(self.agent.fatal)
+        self.assertEqual(town.said, [])
+        self.assertGreaterEqual(town.shifts[self.resident.id], 2)
 
     def test_run_stops_when_the_stop_event_is_set(self) -> None:
         self.start(FakeWorld(verbs=kernel_verbs(), time="auto"))

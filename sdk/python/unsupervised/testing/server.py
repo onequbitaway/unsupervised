@@ -16,7 +16,7 @@ class FakeServer:
 
         with FakeServer() as server:
             client = server.client()
-            client.sign_up()
+            client.sign_up("Grace")
 
     The server runs in its own thread. `close` stops it; the `with` form
     calls `close`.

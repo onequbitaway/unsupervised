@@ -46,7 +46,7 @@ function observation(sections: Record<string, Value> = {}): Observation {
 }
 
 function speech(seq: number, text: string): Notice {
-  return { seq, tick: seq, kind: "society.speech", from: 2, data: { untrusted: true, from: 2, text } };
+  return { seq, tick: seq, kind: "society.said", from: 2, data: { text: { untrusted: true, from: 2, text } } };
 }
 
 test("the two messages are the fixed instructions and one data block", () => {
@@ -108,10 +108,10 @@ test("a quiet turn is a small prompt", () => {
 test("old news is dropped, the newest stays, and the model is told how much is missing", () => {
   const notices = Array.from({ length: 15 }, (_unused, index) => speech(index + 1, `message ${index + 1}`));
   const data = buildData({ observation: observation(), notices, reports: [], catalogue: largeCatalogue(), notes: [] });
-  const news = data["news"] as { data: { text: string } }[];
+  const news = data["news"] as { data: { text: { text: string } } }[];
   assert.equal(news.length, 12);
-  assert.equal(news[0]?.data.text, "message 4");
-  assert.equal(news[11]?.data.text, "message 15");
+  assert.equal(news[0]?.data.text.text, "message 4");
+  assert.equal(news[11]?.data.text.text, "message 15");
   assert.equal(data["older_news_dropped"], 3);
 
   const few = buildData({ observation: observation(), notices: notices.slice(0, 2), reports: [], catalogue: largeCatalogue(), notes: [] });
@@ -157,10 +157,10 @@ test("a long untrusted text is cut and marked, at any depth; other text is not",
 
   const data = buildData({ observation: observation(), notices: [speech(1, long)], reports: [], catalogue: largeCatalogue(), notes: [] });
   assert.deepEqual((data["news"] as Value[])[0], {
-    kind: "society.speech",
+    kind: "society.said",
     tick: 1,
     from: 2,
-    data: { untrusted: true, from: 2, text: "x".repeat(300), cut: true },
+    data: { text: { untrusted: true, from: 2, text: "x".repeat(300), cut: true } },
   });
 });
 

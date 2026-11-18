@@ -22,13 +22,28 @@ def _set_routines(resident: FakeResident, args: Dict[str, Any], world: FakeWorld
 
 
 def _move_to(resident: FakeResident, args: Dict[str, Any], world: FakeWorld) -> Outcome:
-    target = {"x": args["x"], "y": args["y"]}
+    """Walks to a tile (`x` and `y`) or into a site (`site`), as the verb of the life module does."""
+    x, y, site = args.get("x"), args.get("y"), args.get("site")
+    if (site is None) == (x is None and y is None) or (x is None) != (y is None):
+        raise FakeActionError("invalid_args", "Give `x` and `y`, or `site`.")
+    if site is not None:
+        found = next((one for one in world.sites if one["id"] == site), None)
+        if found is None:
+            raise FakeActionError("not_found", "No site of your city has this id.")
+        rect = found["rect"]
+        target = {"x": (rect["x0"] + rect["x1"]) // 2, "y": (rect["y0"] + rect["y1"]) // 2}
+    else:
+        target = {"x": x, "y": y}
+    steps = distance(resident.pos, target)
 
     def arrive() -> Dict[str, int]:
         resident.pos = dict(target)
-        return dict(target)
+        result = dict(target, steps=steps, ticks=max(1, steps))
+        if site is not None:
+            result["site"] = site
+        return result
 
-    return Busy(max(1, distance(resident.pos, target)), arrive)
+    return Busy(max(1, steps), arrive)
 
 
 def default_verbs() -> List[FakeVerb]:
@@ -63,12 +78,12 @@ def default_verbs() -> List[FakeVerb]:
             verb_info(
                 "move_to",
                 "life",
-                "Walk to a tile. One tile takes one game minute.",
+                "Walk to a tile or a site. One tile takes one game minute.",
                 properties={
-                    "x": {"type": "integer", "description": "Column of the target tile."},
-                    "y": {"type": "integer", "description": "Row of the target tile."},
+                    "x": {"type": ["integer", "null"], "description": "Column of the target tile."},
+                    "y": {"type": ["integer", "null"], "description": "Row of the target tile."},
+                    "site": {"type": ["integer", "null"], "description": "Id of a site. The walk ends inside the site."},
                 },
-                required=["x", "y"],
             ),
             _move_to,
         ),

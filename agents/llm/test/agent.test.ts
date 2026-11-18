@@ -36,7 +36,15 @@ test("one turn observes, asks the model once, plans its actions and waits for th
     [["move_to", { state: "started", ends_at: 3, ticks: 3 }]],
   );
   assert.equal(result.waitedSeconds, 120);
-  assert.deepEqual(paths(), ["GET /v1/catalogue", "GET /v1/observe", "POST /v1/act", "GET /v1/wait"]);
+  // The agent reads the public map of the city one time, before the first decision.
+  assert.deepEqual(paths(), [
+    "GET /v1/catalogue",
+    "GET /v1/observe",
+    "GET /v1/world",
+    "GET /v1/world/zones/0",
+    "POST /v1/act",
+    "GET /v1/wait",
+  ]);
   const plan = requestsTo("/v1/act")[0]?.body as { plan: { verb: string; args: unknown }[] };
   assert.deepEqual(
     plan.plan.map((step) => [step.verb, step.args]),
@@ -194,7 +202,7 @@ test("the next prompt shows the report of the action, what the server said, and 
   const second = provider.data(2);
   assert.equal(second["time"], "year 1 day 1 00:30, tick 30");
   assert.deepEqual(second["observation"].self.pos, { x: 35, y: 32 });
-  assert.deepEqual(second["reports"], [{ verb: "move_to", ok: true, tick: 3, result: { x: 35, y: 32 } }]);
+  assert.deepEqual(second["reports"], [{ verb: "move_to", ok: true, tick: 3, result: { x: 35, y: 32, steps: 3, ticks: 3 } }]);
   assert.deepEqual(second["last_turn"], { actions: [{ verb: "move_to", state: "started" }] });
   assert.equal(second["turns_left_this_hour"], 10);
   // The section `reports` of the observation is not shown a second time.
@@ -291,7 +299,7 @@ test("news is shown to the model once", async () => {
   await agent.turn();
 
   assert.deepEqual(provider.data(1)["news"], [
-    { kind: "society.speech", tick: 0, from: 2, data: { untrusted: true, from: 2, text: "The shop sells bread." } },
+    { kind: "society.said", tick: 0, from: 2, data: { text: { untrusted: true, from: 2, text: "The shop sells bread." } } },
     { kind: "economy.wage_paid", tick: 0, data: { amount: 600 } },
   ]);
   assert.equal("news" in provider.data(2), false);
@@ -340,26 +348,94 @@ test("an error that is not from the model or the server is thrown", async () => 
   await assert.rejects(agent.turn(), TypeError);
 });
 
-test("a refused action is in the next prompt with its error code, and a result that came at once too", async () => {
-  const { agent, provider } = scene({
+test("a refused action is in the next prompt with its error code, and the actions after it as not sent", async () => {
+  const { agent, provider, sentVerbs, resident } = scene({
     answers: [
-      answer({ actions: [{ verb: "fly" }, { verb: "wait", args: { ticks: 0 } }, { verb: "cancel" }], wait_seconds: 60 }),
+      answer({ actions: [{ verb: "cancel" }, { verb: "fly" }, { verb: "wait", args: { ticks: 5 } }, { verb: "cancel" }], wait_seconds: 60 }),
       answer({ wait_seconds: 60 }),
     ],
   });
   const first = await agent.turn();
+  // The server stops the plan after the first action that it rejects.
   assert.deepEqual(
     first.acks.map((ack) => ack.status.state),
-    ["rejected", "rejected", "done"],
+    ["done", "rejected"],
   );
+  assert.deepEqual(sentVerbs(), ["cancel", "fly", "wait", "cancel"]);
+  assert.equal(resident.current, undefined);
   await agent.turn();
   assert.deepEqual(provider.data(2)["last_turn"], {
     actions: [
-      { verb: "fly", state: "rejected", error: "unknown_verb: No verb is named `fly`." },
-      { verb: "wait", state: "rejected", error: "invalid_args: `ticks` must be from 1 to 1440." },
+      // A result that came at once is there too.
       { verb: "cancel", state: "done", result: { cancelled: null, cleared: 0 } },
+      { verb: "fly", state: "rejected", error: "unknown_verb: No verb is named `fly`." },
+      { verb: "wait", state: "not_sent" },
+      { verb: "cancel", state: "not_sent" },
     ],
   });
+});
+
+test("a name that is not a verb name ends the plan before it reaches the server", async () => {
+  const { agent, provider, sentVerbs, resident } = scene({
+    answers: [
+      answer({ actions: [{ verb: "wait", args: { ticks: 2 } }, { verb: "Wait Longer!" }, { verb: "wait", args: { ticks: 9 } }], wait_seconds: 60 }),
+      answer({ actions: [{ verb: "Do It" }], wait_seconds: 60 }),
+      answer({ wait_seconds: 60 }),
+    ],
+    agent: { minDecisionSeconds: 0 },
+  });
+  const first = await agent.turn();
+  // The server would refuse the whole plan for the bad name. The agent sends the part before it.
+  assert.deepEqual(sentVerbs(), ["wait"]);
+  assert.deepEqual(first.acks.map((ack) => ack.status.state), ["started"]);
+  assert.equal(resident.queue.length, 0);
+  await agent.turn();
+  const error = "unknown_verb: This is not the name of a verb. A name has lowercase letters, digits and `_`.";
+  assert.deepEqual(provider.data(2)["last_turn"], {
+    actions: [
+      { verb: "wait", state: "started" },
+      { verb: "Wait Longer!", state: "rejected", error },
+      { verb: "wait", state: "not_sent" },
+    ],
+  });
+  // A plan with only such a name sends nothing.
+  await agent.turn();
+  assert.deepEqual(sentVerbs(), ["wait"]);
+  assert.deepEqual(provider.data(3)["last_turn"], { actions: [{ verb: "Do It", state: "rejected", error }] });
+});
+
+test("a text that the server refuses does not end the turn, and the next prompt says that nothing ran", async () => {
+  const { agent, provider, gateway, world, resident } = scene({
+    answers: [
+      answer({ actions: [{ verb: "wait", args: { ticks: 3 } }, { verb: "say", args: { text: "read www.example.com" } }], wait_seconds: 60 }),
+      answer({ actions: [{ verb: "say", args: { text: "hello" } }], wait_seconds: 60 }),
+      answer({ wait_seconds: 60 }),
+    ],
+    agent: { minDecisionSeconds: 0 },
+  });
+  world.addVerb({
+    info: { verb: "say", module: "society", summary: "Say something aloud.", free: true, scope: "zone", args_schema: { type: "object" } },
+    begin: () => ({ done: { heard_by: 0 } }),
+  });
+  const first = await agent.turn();
+  assert.deepEqual(first.acks, []);
+  // One refused text stops the whole plan: the wait did not start.
+  assert.equal(resident.current, undefined);
+  // A muted resident cannot speak. That is no reason to stop either.
+  gateway.muted.add(resident.id);
+  await agent.turn();
+  assert.deepEqual(provider.data(2)["last_turn"], {
+    error:
+      "text_refused: The text at `plan[1].args.text` was refused by the rule `link`. Nothing was sent. No action of your last answer ran.",
+    actions: [
+      { verb: "wait", state: "not_sent" },
+      { verb: "say", state: "not_sent" },
+    ],
+  });
+  await agent.turn();
+  const last = provider.data(3)["last_turn"];
+  assert.match(last.error, /^muted: /);
+  assert.deepEqual(last.actions, [{ verb: "say", state: "not_sent" }]);
 });
 
 test("the model gets at most `maxActions` actions for each turn", async () => {
@@ -455,7 +531,7 @@ test("a key that the server refuses stops `run` with the error of the server", a
   world.rotateKey(resident);
   await assert.rejects(agent.run({ turns: 3 }), (error: unknown) => {
     assert.ok(error instanceof ApiError);
-    assert.deepEqual([error.code, error.status], ["unauthorized", 401]);
+    assert.deepEqual([error.code, error.status], ["invalid_token", 401]);
     return true;
   });
   assert.deepEqual(sleeps, []);
@@ -476,4 +552,50 @@ test("`run` ends without an error when the caller aborts during the long poll", 
   // A run with a signal that is aborted already makes no turn.
   await agent.run({ signal: controller.signal });
   assert.equal(provider.calls.length, 1);
+});
+
+test("the prompt shows the nearest site of each kind, from the public map that the agent reads once", async () => {
+  const site = (id: number, kind: string, x0: number, y0: number) => ({
+    id,
+    kind,
+    name: `${kind} ${id}`,
+    rect: { x0, y0, x1: x0 + 4, y1: y0 + 4 },
+    tags: [],
+  });
+  const { agent, provider, gateway, requestsTo, resident } = scene({
+    world: { sites: [site(5, "farm", 60, 60), site(6, "depot", 40, 30), site(7, "farm", 34, 30), site(8, "bank", 0, 0)] },
+    answers: [answer({ actions: [{ verb: "move_to", args: { site: 6 } }], wait_seconds: 60 }), answer({ wait_seconds: 60 })],
+    agent: { minDecisionSeconds: 0 },
+  });
+  await agent.turn();
+  // The resident stands at 32,32. Farm 7 is nearer than farm 5; the middle of a site counts.
+  assert.deepEqual(provider.data(1)["places"], [
+    { id: 7, kind: "farm", name: "farm 7", dist: 4 },
+    { id: 6, kind: "depot", name: "depot 6", dist: 10 },
+    { id: 8, kind: "bank", name: "bank 8", dist: 30 },
+  ]);
+  // The model used an id of the list: the resident walked into the depot.
+  assert.deepEqual(resident.pos, { x: 42, y: 32 });
+  await agent.turn();
+  assert.deepEqual(provider.data(2)["places"][0], { id: 6, kind: "depot", name: "depot 6", dist: 0 });
+  // Two decisions, one read of the map. The view of the zone came without its residents.
+  const zones = gateway.requests.filter((request) => request.path === "/v1/world/zones/0");
+  assert.deepEqual(zones.map((request) => request.query), [{ residents: "false" }]);
+  assert.equal(gateway.requests.filter((request) => request.path === "/v1/world").length, 1);
+  assert.equal(requestsTo("/v1/observe").length, 1);
+});
+
+test("a map that cannot be read does not stop the turn, and the next turn reads it", async () => {
+  const { agent, provider, gateway, logs } = scene({
+    world: { sites: [{ id: 6, kind: "depot", name: "Depot", rect: { x0: 40, y0: 30, x1: 44, y1: 34 }, tags: [] }] },
+    answers: [answer({ wait_seconds: 60 }), answer({ wait_seconds: 60 })],
+    agent: { minDecisionSeconds: 0 },
+  });
+  gateway.failNext({ status: 500, code: "internal", when: (request) => request.path === "/v1/world" });
+  const first = await agent.turn();
+  assert.equal(first.decided, true);
+  assert.equal("places" in provider.data(1), false);
+  assert.equal(logs.some((line) => line.startsWith("the map of city 0 cannot be read: internal")), true);
+  await agent.turn();
+  assert.deepEqual(provider.data(2)["places"], [{ id: 6, kind: "depot", name: "Depot", dist: 10 }]);
 });

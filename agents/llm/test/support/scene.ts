@@ -101,6 +101,8 @@ export interface Scene {
   agent: LlmAgent;
   /** Delays that the agent asked for after an error, in milliseconds. */
   sleeps: number[];
+  /** The lines that the agent logged. */
+  logs: string[];
   /** Returns `METHOD path` of every request since the last call of `forget`. */
   paths(): string[];
   /** Returns the requests to one path since the last call of `forget`. */
@@ -125,7 +127,7 @@ export function scene(
 ): Scene {
   const world = new FakeWorld({ time: "auto", ...options.world });
   const gateway = new FakeGateway(world);
-  const resident = world.spawn(world.signUp().owner, { name: "Ada" });
+  const resident = world.spawn(world.signUp().owner.id, { name: "Ada" });
   // The client does not sleep between attempts.
   const client = new Client({
     baseUrl: FAKE_URL,
@@ -137,10 +139,14 @@ export function scene(
   const provider = new FakeProvider(...(options.answers ?? []));
   const notes = new MemoryNotes();
   const sleeps: number[] = [];
+  const logs: string[] = [];
   const agent = new LlmAgent({
     world: client,
     provider,
     notes,
+    log: (line) => {
+      logs.push(line);
+    },
     now: () => world.tick * 1000,
     sleep: async (milliseconds) => {
       sleeps.push(milliseconds);
@@ -156,6 +162,7 @@ export function scene(
     notes,
     agent,
     sleeps,
+    logs,
     paths: () => gateway.requests.map((request) => `${request.method} ${request.path}`),
     requestsTo: (path) => gateway.requests.filter((request) => request.path === path),
     sentVerbs: () =>

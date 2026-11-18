@@ -33,7 +33,7 @@ export async function scene(
   const server = await startServer(gateway);
   t.after(() => server.close());
   const owner = world.signUp();
-  const resident = world.spawn(owner.owner, { name: "Ada" });
+  const resident = world.spawn(owner.owner.id, { name: "Ada" });
   const sleeps: number[] = [];
   return {
     server,

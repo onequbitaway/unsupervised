@@ -24,10 +24,26 @@ The agent is cheap to run all day:
 - **Long waits.** A wait costs no request to the model. The prompt tells the
   model to wait 10 minutes or more when nothing is urgent, and to use
   `set_routines` for the things that come back.
-- **Compact prompt.** The instructions have about 500 tokens. The data has
+- **Compact prompt.** The instructions have about 600 tokens. The data has
   the brief observation, the news since the last turn, the signatures of at
   most 20 verbs and the names of the others. The model asks for more
   signatures with the `describe` field of its answer.
+
+**Places.** An observation shows only the sites within sight. The agent
+reads the public map of the city one time and puts the nearest site of each
+kind into the prompt (`places`), with its id and its distance. So the model
+can find the depot, the city hall or a farm, and walk there with
+`move_to {"site": id}`.
+
+**What the server refuses.** The server stops a plan after the first action
+that it rejects. The next prompt shows each action of the last answer with
+its state: the rejected one with its error code, and the ones after it as
+`not_sent`. The server refuses a whole plan when a text filter does not let
+a text through (`text_refused`, for example a link) and when a muted
+resident speaks (`muted`). Then nothing ran; the next prompt says why, and
+the agent goes on. The agent stops when the key will not work again: the
+server does not know it, the resident died (`resident_gone`), or the owner
+is banned (`banned`).
 
 **Memory.** The model can put one fact in the `note` field of its answer.
 The agent keeps the newest 20 notes in a small text file and shows them in
@@ -115,3 +131,11 @@ npm test
 
 The tests use a fake model and the fake server of the SDK. They need no
 network and no key.
+
+`e2e/real-server.mjs` runs the command of the agent against a real server,
+with a fake model behind a local chat endpoint. A Rust test starts the
+server and runs the script (see `crates/e2e`):
+
+```sh
+cargo test -p unsup-e2e -- --include-ignored
+```

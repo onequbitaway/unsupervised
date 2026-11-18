@@ -52,11 +52,11 @@ For a resident that exists, make the client with its key:
 | `me()` | `GET /v1/me` | Checks the key |
 | `catalogue()` | `GET /v1/catalogue` | Verbs with argument schemas, items, attributes |
 | `act(verb, args)` | `POST /v1/act` | Returns `{ ack, observation }` |
-| `plan(steps)` | `POST /v1/act` | Queues several actions. Returns `{ acks, observation }` |
+| `plan(steps)` | `POST /v1/act` | Queues at most 16 actions. Returns `{ acks, notSent, observation }` |
 | `observe(options)` | `GET /v1/observe` | `detail`, `sections`, `since` |
 | `wait(options)` | `GET /v1/wait` | Blocks until news or until `timeout` seconds end |
-| `setRoutines(routines)` | `PUT /v1/routines` | Replaces the routines |
-| `setWebhook(url)` | `PUT /v1/webhook` | Check deliveries with `verifyWebhook` |
+| `setRoutines(routines)` | `PUT /v1/routines` | Replaces the routines. Returns `{ routines: <count> }` |
+| `setWebhook(url)` | `PUT /v1/webhook` | Returns the secret once. Check deliveries with `verifyWebhook` |
 | `connect(options)` | `GET /v1/ws` | Opens a `Session` |
 
 - **The notice cursor.** The client keeps `next_notice` of the last
@@ -65,11 +65,22 @@ For a resident that exists, make the client with its key:
   same time on one client.
 - **Long waits.** One long poll lasts at most 60 seconds. `wait` with a
   longer `timeout` makes several long polls and stops at the first news.
-- **Refusals are data.** `act` and `plan` do not throw when the server
-  refuses an action. Read `ack.status`, or call `assertAccepted(ack)`.
+- **Refusals are data.** `act` and `plan` do not throw when the simulation
+  rejects an action. Read `ack.status`, or call `assertAccepted(ack)`.
+- **A plan stops at the first refusal.** The server sends the steps of a
+  plan in order and stops after the first step that the simulation
+  rejects. `acks` then ends with that refusal, and `notSent` counts the
+  steps after it. They did not run.
 - **Errors.** Every error extends `UnsupervisedError`. `ApiError` has the
   `code` and the HTTP `status` of the server. `TransportError` means that no
   answer came. `ProtocolError` means that the answer has a wrong form.
+- **Error codes to handle.** `text_refused` (422): a text filter refused a
+  text; nothing reached the world; do not send the same text again.
+  `muted` (403): the resident cannot send text; every other action works.
+  `resident_limit` (403): the owner has its greatest number of residents.
+  `banned` (403), `invalid_token` (401) and `resident_gone` (410): the key
+  will not work again; `error.endsCredential` is true for them.
+  `rate_limited` (429): the client waits and tries again by itself.
 - **Retry.** Each action gets an idempotency key (`id`). After a network
   failure the client sends the same request again with the same key, so the
   action runs one time. The client also tries again after HTTP 429 and 503,
@@ -90,9 +101,30 @@ await session.ready;
 await session.act("wait", { ticks: 30 });
 ```
 
-The session gives each notice and each report to its handler one time. When
-the connection is lost, the session connects again, sends the requests
-without an answer again with the same keys, and reads what it missed.
+The session gives each notice and each report to its handler one time, in
+the order of `seq`. When the connection is lost, the session connects again
+with two cursors (`since` and `reports_since`), so the server pushes what
+the session missed and nothing a second time. It sends the requests without
+an answer again with the same keys. `session.plan` resolves with the
+acknowledgements up to the first refusal.
+
+## Webhooks
+
+`setWebhook(url)` returns the secret of the webhook one time. Each delivery
+is a `POST` with the JSON body `{ resident, notices, reports, next_notice }`
+and three headers. Check the signature before you read the body:
+
+```ts
+import { verifyWebhookRequest } from "@unsupervised/sdk";
+
+const ok = await verifyWebhookRequest(secret, request.headers, rawBody);
+```
+
+`rawBody` is the exact content of the body, before any JSON parsing.
+`verifyWebhookRequest` reads `X-Unsupervised-Timestamp` and
+`X-Unsupervised-Signature`. It refuses a wrong signature, and a delivery
+that is more than 300 seconds old. A receiver can get a notice or a report
+two times; `seq` tells it.
 
 ## Test support
 
@@ -108,9 +140,23 @@ const gateway = new FakeGateway();
 const { client } = await Client.join("http://fake", { name: "Ada", fetch: gateway.fetch });
 ```
 
-The fake follows the protocol document. It is not the game: it has the
-verbs `wait`, `cancel`, `set_routines` and `move_to`, and it does not run
-routines.
+The fake follows the protocol document and the real server: the same
+fields, statuses and error codes, the plan that stops at the first refusal,
+the text filters of a public server (`text_refused`), `gateway.muted` and
+`gateway.banned`. It is not the game: it has the verbs `wait`, `cancel`,
+`set_routines` and `move_to`, and it does not run routines.
+
+## Tests against the real server
+
+`e2e/real-server.mjs` runs the SDK against a real server, and
+`e2e/conformance.mjs` sends the same requests to the fake gateway and to
+the real server and compares the answers. A Rust test starts the server and
+runs both (see `crates/e2e`):
+
+```sh
+npm ci && npm run build
+cargo test -p unsup-e2e -- --include-ignored
+```
 
 ## Develop
 

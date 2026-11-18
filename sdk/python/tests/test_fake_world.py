@@ -30,7 +30,7 @@ class RoutineTest(unittest.TestCase):
         self.world = FakeWorld(attrs=[ENERGY], items=[BREAD])
         self.world.add_verb(FakeVerb(verb_info("nap", "life", "Sleep a little."), nap))
         self.world.add_verb(FakeVerb(verb_info("snack", "life", "Eat bread."), snack))
-        self.ada = self.world.spawn(self.world.sign_up()["owner"], "Ada")
+        self.ada = self.world.spawn(self.world.sign_up()["owner"]["id"], "Ada")
 
     def routines(self):
         return self.world.observe(self.ada, {"detail": "full"})["sections"]["self"]["routines"]
@@ -107,7 +107,7 @@ class RoutineTest(unittest.TestCase):
 class EngineTest(unittest.TestCase):
     def setUp(self) -> None:
         self.world = FakeWorld()
-        self.ada = self.world.spawn(self.world.sign_up()["owner"], "Ada")
+        self.ada = self.world.spawn(self.world.sign_up()["owner"]["id"], "Ada")
 
     def state(self, request):
         return self.world.submit(self.ada, request)["status"]

@@ -52,7 +52,7 @@ class ReadmeTest(unittest.TestCase):
                 "store this key: %s" % resident.key,
                 "cancel, set_routines, wait, move_to",
                 "started {'x': 32, 'y': 32}",
-                "move_to True {'x': 34, 'y': 32}",
+                "move_to True {'x': 34, 'y': 32, 'steps': 2, 'ticks': 2}",
             ],
         )
         # The wait of the example ended with the report of the walk: 2 ticks, not 120.

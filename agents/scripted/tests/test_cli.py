@@ -4,6 +4,7 @@ import io
 import json
 import stat
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -12,8 +13,8 @@ import _path  # noqa: F401
 from town import Town, kernel_verbs
 
 from scripted_agent import AgentConfig
-from scripted_agent.cli import enlist, load_state, main, parse_args, run_agents, save_state
-from unsupervised import Client
+from scripted_agent.cli import enlist, load_state, main, parse_args, resident_name, run_agents, save_state
+from unsupervised import ApiError, Client
 from unsupervised.testing import FakeGateway, FakeServer, FakeWorld
 
 
@@ -27,21 +28,30 @@ class ArgumentsTest(unittest.TestCase):
         args = parse_args(["--url", "http://127.0.0.1:8080"])
         self.assertEqual(
             (args.url, args.residents, args.name_prefix, args.model, args.decisions, args.config, args.verbose),
-            ("http://127.0.0.1:8080", 1, "scripted", "scripted", None, None, False),
+            ("http://127.0.0.1:8080", 1, None, "scripted", None, None, False),
         )
+        self.assertIsNone(args.tick_seconds)
         self.assertEqual(args.state, Path.home() / ".unsupervised" / "scripted-agents.json")
 
     def test_every_option(self) -> None:
         args = parse_args(
-            ["--url", "http://x", "--residents", "7", "--name-prefix", "bot", "--model", "rules", "--state", "/tmp/s.json", "--decisions", "3", "--verbose"]
+            ["--url", "http://x", "--residents", "7", "--name-prefix", "bot", "--model", "rules", "--state", "/tmp/s.json"]
+            + ["--decisions", "3", "--verbose", "--owner-token", "unsup_own_1", "--tick-seconds", "0.5"]
         )
         self.assertEqual(
             (args.residents, args.name_prefix, args.model, args.state, args.decisions, args.verbose),
             (7, "bot", "rules", Path("/tmp/s.json"), 3, True),
         )
+        self.assertEqual((args.owner_token, args.tick_seconds), ("unsup_own_1", 0.5))
+
+    def test_the_names_are_first_names_then_first_names_with_a_number(self) -> None:
+        self.assertEqual([resident_name(index) for index in (0, 1, 23)], ["Ada", "Bo", "Yara"])
+        self.assertEqual([resident_name(index) for index in (24, 25, 48)], ["Ada 2", "Bo 2", "Ada 3"])
+        self.assertEqual(resident_name(4, "bot"), "bot-5")
 
     def test_a_missing_url_or_a_bad_count_is_an_error(self) -> None:
-        for argv in ([], ["--url", "http://x", "--residents", "0"], ["--url", "http://x", "--residents", "many"]):
+        bad = (["--residents", "0"], ["--residents", "many"], ["--tick-seconds", "0"])
+        for argv in [[]] + [["--url", "http://x"] + options for options in bad]:
             with self.subTest(argv=argv), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
                 parse_args(argv)
             self.assertEqual(raised.exception.code, 2)
@@ -74,7 +84,7 @@ class EnlistTest(ServerCase):
         self.assertEqual({resident.owner for resident in self.world.residents.values()}, {1})
 
         saved = load_state(self.state)["servers"][self.server.url]
-        self.assertEqual(saved["owner_token"], "owner-token-1")
+        self.assertEqual(self.world.owner_of(saved["owner_token"]), 1)
         self.assertEqual([record["name"] for record in saved["residents"]], ["bot-1", "bot-2", "bot-3"])
         self.assertEqual([record["key"] for record in saved["residents"]], [client.resident_key for client in clients])
         # The file holds keys: only the user can read it.
@@ -90,6 +100,33 @@ class EnlistTest(ServerCase):
         third = self.enlist(1)
         self.assertEqual([client.me()["resident"] for client in third], [1])
         self.assertEqual(len(load_state(self.state)["servers"][self.server.url]["residents"]), 3)
+
+    def test_an_owner_token_of_the_operator_makes_the_residents_and_no_owner_signs_up(self) -> None:
+        operator = self.world.sign_up("Operator")
+        self.world.limits["residents_per_owner"] = 0
+        clients = self.enlist(5, owner_token=operator["token"])
+        self.assertEqual([client.me()["name"] for client in clients], ["Ada", "Bo", "Cleo", "Dev", "Esme"])
+        self.assertEqual({resident.owner for resident in self.world.residents.values()}, {operator["owner"]["id"]})
+        self.assertEqual(self.gateway.requests_to("/v1/owners"), [])
+        # The next run with the same token uses the same residents.
+        again = self.enlist(5, owner_token=operator["token"])
+        self.assertEqual([client.resident_key for client in again], [client.resident_key for client in clients])
+        self.assertEqual(len(self.world.residents), 5)
+
+    def test_the_limit_of_residents_of_the_owner_is_an_error_that_names_the_code(self) -> None:
+        with self.assertRaises(ApiError) as raised:
+            self.enlist(4)
+        self.assertEqual(raised.exception.code, "resident_limit")
+        # The three residents that the owner could make are in the file: the next run uses them.
+        self.assertEqual(len(load_state(self.state)["servers"][self.server.url]["residents"]), 3)
+
+    def test_a_resident_that_left_the_world_gets_a_successor(self) -> None:
+        first = self.enlist(2)
+        self.world.despawn(self.world.residents[1])
+        second = self.enlist(2)
+        self.assertEqual(second[0].resident_key, first[1].resident_key)
+        self.assertEqual([client.me()["name"] for client in second], ["Bo", "Ada"])
+        self.assertEqual(sorted(self.world.residents), [2, 3])
 
     def test_a_key_that_the_server_no_longer_takes_is_rotated(self) -> None:
         self.enlist(1)
@@ -127,6 +164,24 @@ class RunTest(ServerCase):
         waits = {request.token for request in self.gateway.requests_to("/v1/wait")}
         self.assertEqual(waits, {client.resident_key for client in clients})
 
+    def test_with_a_start_spread_the_residents_start_one_after_the_other(self) -> None:
+        clients = self.enlist(3)
+        # 30 game minutes of 0.002 seconds over three residents: 0.02 seconds between two starts.
+        config = AgentConfig(min_decision_seconds=0.0, start_spread_ticks=30, tick_seconds=0.002)
+        started = []
+        real_observe = [client.observe for client in clients]
+        for index, client in enumerate(clients):
+            client.observe = lambda *args, _index=index, **options: (started.append(_index), real_observe[_index](*args, **options))[1]
+        agents = run_agents(clients, config, decisions=1)
+        self.assertEqual([agent.decisions for agent in agents], [1, 1, 1])
+        # Each resident observed for the first time in the order of the start.
+        self.assertEqual(started, [0, 1, 2])
+        # A stop during the spread starts no more residents.
+        stop = threading.Event()
+        stop.set()
+        idle = run_agents(self.enlist(3), config, decisions=1, stop=stop)
+        self.assertEqual([agent.decisions for agent in idle], [0, 0, 0])
+
     def test_the_command_joins_runs_and_returns_zero(self) -> None:
         town = Town()
         server = FakeServer(FakeGateway(town.world))
@@ -139,10 +194,19 @@ class RunTest(ServerCase):
             status = main(argv, client_factory=factory(server))
         self.assertEqual(status, 0)
         self.assertEqual(output.getvalue(), "running 2 resident(s) on %s; stop with Ctrl-C\n" % server.url)
-        self.assertEqual(sorted(resident.name for resident in town.world.residents.values()), ["scripted-1", "scripted-2"])
-        # Both residents acted: each applied for the job in the town.
-        applied = [request.token for request in server.gateway.requests_to("/v1/act") if "apply_job" in json.dumps(request.body)]
-        self.assertEqual(len(set(applied)), 2)
+        self.assertEqual(sorted(resident.name for resident in town.world.residents.values()), ["Ada", "Bo"])
+        # Both residents acted: each read the list of jobs of the town.
+        asked = [request.token for request in server.gateway.requests_to("/v1/act") if "list_jobs" in json.dumps(request.body)]
+        self.assertEqual(len(set(asked)), 2)
+
+    def test_the_command_says_what_to_do_when_the_owner_has_too_many_residents(self) -> None:
+        output = io.StringIO()
+        argv = ["--url", self.server.url, "--residents", "4", "--state", str(self.state)]
+        with redirect_stdout(output):
+            status = main(argv, client_factory=factory(self.server))
+        self.assertEqual(status, 1)
+        self.assertIn("resident_limit", output.getvalue())
+        self.assertIn("residents_per_owner", output.getvalue())
 
     def test_the_command_fails_when_the_server_is_not_there(self) -> None:
         self.server.refuse_requests(100)

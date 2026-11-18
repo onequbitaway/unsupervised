@@ -5,17 +5,27 @@ import uuid
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence
 
 from .errors import MissingCredentialError, ProtocolError
-from .observation import has_news, report_key, reports_of
-from .shapes import ActResult, Me, OwnerSignup, PlanResult, PlanStep, ResidentKey, ResidentSummary, WebhookInfo
+from .observation import has_news, reports_of
+from .shapes import (
+    ActResult,
+    Me,
+    OwnerSignup,
+    PlanResult,
+    PlanStep,
+    ResidentCreated,
+    ResidentList,
+    RotatedKey,
+    RoutinesSet,
+    WebhookInfo,
+)
 from .transport import Transport
 from .types import ActionRequest, Catalogue, Observation, Routine
 
 #: Greatest `timeout` of one `GET /v1/wait` call, in seconds.
 WAIT_MAX_SECONDS = 60
 
-#: How many reports the client remembers to drop repeats. It is the greatest
-#: value of the parameter `kernel.inbox_max`: a server cannot repeat more.
-REPORT_MEMORY = 4096
+#: Greatest number of requests in one plan.
+PLAN_MAX = 16
 
 
 def _default_request_id() -> str:
@@ -75,8 +85,6 @@ class Client:
         #: The notice cursor: `next_notice` of the last observation.
         self.cursor = cursor
         self._request_id = request_id
-        #: Keys of the reports that the client returned, oldest first. A dict keeps the order.
-        self._seen_reports: Dict[str, None] = {}
         self._options = dict(transport)
         self._transport = Transport(base_url, **transport)
 
@@ -94,14 +102,15 @@ class Client:
     ) -> Joined:
         """Signs up (unless `owner_token` is given), creates one resident and returns a client for it.
 
-        This is the whole way in for a new agent.
+        This is the whole way in for a new agent. The server needs a name
+        for the owner: `owner_name`, or the name of the resident.
         """
         client = cls(base_url, owner_token=owner_token, **options)
         owner = None
         if owner_token is None:
-            owner = client.sign_up(owner_name)["owner"]
+            owner = client.sign_up(owner_name or name)["owner"]["id"]
         created = client.create_resident(name, model=model, city=city)
-        return Joined(client, owner, client._owner(), created["resident"], created["key"])
+        return Joined(client, owner, client._owner(), created["resident"]["id"], created["key"])
 
     @property
     def base_url(self) -> str:
@@ -141,26 +150,31 @@ class Client:
         """Returns the layout of the world: cities and zones (`WorldView` of the type `layout`)."""
         return self._transport.request("GET", "/v1/world", idempotent=True)
 
-    def zone(self, zone: int) -> Dict[str, Any]:
-        """Returns the public view of one zone: tiles, sites and residents (`WorldView` of the type `zone`)."""
-        return self._transport.request("GET", "/v1/world/zones/%d" % zone, idempotent=True)
+    def zone(self, zone: int, residents: bool = True) -> Dict[str, Any]:
+        """Returns the public view of one zone: tiles, sites and residents (`WorldView` of the type `zone`).
+
+        `residents=False` leaves the residents out, for a caller that wants
+        only the map.
+        """
+        query = None if residents else {"residents": "false"}
+        return self._transport.request("GET", "/v1/world/zones/%d" % zone, query=query, idempotent=True)
 
     # ---- Owner routes -----------------------------------------------------
 
-    def sign_up(self, name: Optional[str] = None) -> OwnerSignup:
+    def sign_up(self, name: str) -> OwnerSignup:
         """Signs up a new owner: `POST /v1/owners`.
 
-        The client keeps the owner token. Store the token: the server does
-        not show it again.
+        `name` has 1 to 64 bytes. The client keeps the owner token. Store
+        the token: the server does not show it again.
         """
-        body = {} if name is None else {"name": name}
-        answer = self._transport.request("POST", "/v1/owners", body=body, idempotent=False)
-        if not isinstance(answer, dict) or not isinstance(answer.get("token"), str) or not isinstance(answer.get("owner"), int):
+        answer = self._transport.request("POST", "/v1/owners", body={"name": name}, idempotent=False)
+        owner = answer.get("owner") if isinstance(answer, dict) else None
+        if not isinstance(owner, dict) or not isinstance(owner.get("id"), int) or not isinstance(answer.get("token"), str):
             raise ProtocolError("POST /v1/owners did not return `owner` and `token`")
         self.owner_token = answer["token"]
         return answer  # type: ignore[return-value]
 
-    def create_resident(self, name: str, model: Optional[str] = None, city: Optional[int] = None) -> ResidentKey:
+    def create_resident(self, name: str, model: Optional[str] = None, city: Optional[int] = None) -> ResidentCreated:
         """Creates a resident: `POST /v1/residents`.
 
         `name` has 1 to 64 bytes. `model` names the model that controls the
@@ -168,6 +182,10 @@ class Client:
         resident starts in the city with the fewest residents. The client
         keeps the key and acts as the new resident from now on. Store the
         key: the server shows it once.
+
+        Raises `ApiError` with the code `resident_limit` when the owner has
+        its greatest number of residents, and `text_refused` when a filter
+        refuses the name or the model.
         """
         body: Dict[str, Any] = {"name": name}
         if model is not None:
@@ -175,21 +193,26 @@ class Client:
         if city is not None:
             body["city"] = city
         answer = self._transport.request("POST", "/v1/residents", body=body, token=self._owner(), idempotent=False)
-        if not isinstance(answer, dict) or not isinstance(answer.get("key"), str) or not isinstance(answer.get("resident"), int):
+        record = answer.get("resident") if isinstance(answer, dict) else None
+        if not isinstance(record, dict) or not isinstance(record.get("id"), int) or not isinstance(answer.get("key"), str):
             raise ProtocolError("POST /v1/residents did not return `resident` and `key`")
         self.resident_key = answer["key"]
-        self.resident = answer["resident"]
+        self.resident = record["id"]
         self.cursor = 0
         return answer  # type: ignore[return-value]
 
-    def list_residents(self) -> List[ResidentSummary]:
-        """Lists the residents of the owner: `GET /v1/residents`."""
+    def list_residents(self) -> ResidentList:
+        """Lists the residents of the owner that are in the world: `GET /v1/residents`.
+
+        The answer also has `limit`: the greatest number of residents that
+        the owner can have in the world.
+        """
         answer = self._transport.request("GET", "/v1/residents", token=self._owner(), idempotent=True)
         if not isinstance(answer, dict) or not isinstance(answer.get("residents"), list):
             raise ProtocolError("GET /v1/residents did not return `residents`")
-        return answer["residents"]
+        return answer  # type: ignore[return-value]
 
-    def rotate_key(self, resident: int) -> ResidentKey:
+    def rotate_key(self, resident: int) -> RotatedKey:
         """Makes a new key for a resident: `POST /v1/residents/{id}/keys`.
 
         The old key stops to work. When the resident is the one of this
@@ -208,7 +231,7 @@ class Client:
     # ---- Resident routes --------------------------------------------------
 
     def me(self) -> Me:
-        """Checks the resident key: `GET /v1/me`. Returns the id and the name of the resident."""
+        """Checks the resident key: `GET /v1/me`. Returns the resident, its name, its model and its owner."""
         answer = self._transport.request("GET", "/v1/me", token=self._key(), idempotent=True)
         if not isinstance(answer, dict) or not isinstance(answer.get("resident"), int):
             raise ProtocolError("GET /v1/me did not return `resident`")
@@ -227,20 +250,26 @@ class Client:
             step["args"] = args
         if id is not None:
             step["id"] = id
-        acks, observation = self._act(self._request(step), 1)
+        acks, observation, _ = self._act(self._request(step), 1)
+        if len(acks) != 1:
+            raise ProtocolError("POST /v1/act did not return one acknowledgement")
         return ActResult(acks[0], observation)
 
     def plan(self, steps: Sequence[PlanStep]) -> PlanResult:
         """Asks for several actions in order: `POST /v1/act` with a plan.
 
-        The first step starts and the others go to the queue of the
-        resident. Each step gets its own acknowledgement; one refusal does
-        not stop the others. An empty plan only observes.
+        A plan has at most 16 steps. The first step starts and the others
+        go to the queue of the resident. The server stops after the first
+        step that the simulation rejects: `acks` then ends with that
+        refusal, and `not_sent` counts the steps after it. An empty plan
+        only observes.
+
+        Raises `ApiError` with the code `text_refused` when a filter refuses
+        a text of one step. Then no step was sent.
         """
         if not steps:
-            return PlanResult([], self.observe())
-        acks, observation = self._act({"plan": [self._request(step) for step in steps]}, len(steps))
-        return PlanResult(acks, observation)
+            return PlanResult([], self.observe(), 0)
+        return self._act({"plan": [self._request(step) for step in steps]}, len(steps))
 
     def observe(
         self,
@@ -302,12 +331,13 @@ class Client:
             if remaining <= 0 or has_news(self._checked(observation, "GET /v1/wait"), kinds):
                 return self._track(observation, since, "GET /v1/wait")
 
-    def set_routines(self, routines: Sequence[Routine]) -> Any:
+    def set_routines(self, routines: Sequence[Routine]) -> RoutinesSet:
         """Replaces the routines of the resident: `PUT /v1/routines`.
 
         Routines are standing orders that run when the resident is idle. An
-        empty list removes them. Raises `ApiError` when a routine is not
-        valid, for example with the code `unknown_verb`.
+        empty list removes them. Returns `{"routines": <count>}`. Raises
+        `ApiError` when the simulation refuses the list, for example with
+        the code `unknown_verb` or `invalid_args`. The old routines stay.
         """
         return self._transport.request(
             "PUT", "/v1/routines", body={"routines": list(routines)}, token=self._key(), idempotent=True
@@ -317,7 +347,8 @@ class Client:
         """Sets the address that receives the notices of the resident: `PUT /v1/webhook`.
 
         `None` removes it. The answer has the secret that signs each
-        delivery; check deliveries with `verify_webhook`.
+        delivery; the server shows it once. Each call makes a new secret.
+        Check deliveries with `verify_webhook`.
         """
         return self._transport.request("PUT", "/v1/webhook", body={"url": url}, token=self._key(), idempotent=True)
 
@@ -335,9 +366,14 @@ class Client:
             idempotent=True,
         )
         acks = answer.get("acks") if isinstance(answer, dict) else None
-        if not isinstance(acks, list) or len(acks) != count:
-            raise ProtocolError("POST /v1/act did not return %d acknowledgement(s)" % count)
-        return PlanResult(acks, self._track(answer.get("observation"), since, "POST /v1/act", drop_seen_reports=True))
+        if not isinstance(acks, list) or not 1 <= len(acks) <= count:
+            raise ProtocolError("POST /v1/act did not return the acknowledgements of %d request(s)" % count)
+        # The server stops a plan after the first refusal, so the list can
+        # be shorter than the plan. Then its last entry is that refusal.
+        if len(acks) < count and acks[-1].get("status", {}).get("state") != "rejected":
+            raise ProtocolError("POST /v1/act did not return the acknowledgements of %d request(s)" % count)
+        observation = self._track(answer.get("observation"), since, "POST /v1/act")
+        return PlanResult(acks, observation, count - len(acks))
 
     def _request(self, step: PlanStep) -> ActionRequest:
         request: ActionRequest = {"id": step.get("id") or self._request_id(), "verb": step["verb"]}
@@ -357,25 +393,18 @@ class Client:
             raise ProtocolError("%s did not return an observation" % source)
         return observation  # type: ignore[return-value]
 
-    def _track(self, observation: Any, since: int, source: str, drop_seen_reports: bool = False) -> Observation:
-        """Records an observation: checks its form, drops repeated notices and moves the cursor.
+    def _track(self, observation: Any, since: int, source: str) -> Observation:
+        """Records an observation: checks its form, drops repeated news and moves the cursor.
 
-        A server that did not get the cursor repeats notices from before
-        `since`. The client drops them. With `drop_seen_reports`, it also
-        drops the reports that the client returned before. `act` and `plan`
-        use this: the protocol document gives `POST /v1/act` no cursor, so a
-        server can answer with the whole inbox.
+        A server that did not get the cursor repeats notices and reports
+        from before `since`. The client drops them: each has a `seq`.
         """
         checked = self._checked(observation, source)
         checked["notices"] = [notice for notice in checked["notices"] if notice["seq"] >= since]
         reports = reports_of(checked)
-        if drop_seen_reports and any(report_key(report) in self._seen_reports for report in reports):
-            reports = [report for report in reports if report_key(report) not in self._seen_reports]
-            checked["sections"]["reports"] = reports
-        for report in reports:
-            self._seen_reports[report_key(report)] = None
-            if len(self._seen_reports) > REPORT_MEMORY:
-                del self._seen_reports[next(iter(self._seen_reports))]
+        # A report of an old server has no `seq`. The client cannot tell that it is a repeat.
+        if any(report.get("seq", since) < since for report in reports):
+            checked["sections"]["reports"] = [report for report in reports if report.get("seq", since) >= since]
         self.cursor = checked["next_notice"]
         self.resident = checked.get("resident", self.resident)
         return checked

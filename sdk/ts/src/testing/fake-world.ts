@@ -1,11 +1,13 @@
 // A small model of the server, for tests without a network.
 //
-// `FakeWorld` follows `docs/design/protocol.md`: accounts and keys, the
-// action engine (idempotency keys, the queue, free verbs, reports), the
-// inbox with one sequence for notices and reports, observations and the
-// long poll. It is not the game: it has four verbs (`wait`, `cancel`,
-// `set_routines`, `move_to`), it stores routines but does not run them, and
-// a test adds the verbs that it needs with `addVerb`.
+// `FakeWorld` follows `docs/design/protocol.md` and the real server:
+// accounts and keys, the action engine (idempotency keys, the queue, free
+// verbs, reports), the inbox with one sequence for notices and reports,
+// observations and the long poll. The end-to-end tests in `crates/e2e`
+// compare its answers with those of the real server. It is not the game:
+// it has four verbs (`wait`, `cancel`, `set_routines`, `move_to`), it
+// stores routines but does not run them, and a test adds the verbs that it
+// needs with `addVerb`.
 
 import type {
   ActionAck,
@@ -62,7 +64,12 @@ export type VerbOutcome =
   | { done: Value }
   /** The action occupies the resident for a number of ticks. `finish` gives the result; it can throw `FakeActionError`. */
   | { busy: number; finish?: () => Value }
-  /** The action waits for another party for a number of ticks. The acknowledgement is `pending`. */
+  /**
+   * The action waits for another party for a number of ticks. The
+   * acknowledgement is `pending`, and a report follows. A free verb of the
+   * global realm does this, for example `list_jobs`: it does not occupy
+   * the resident.
+   */
   | { pending: number; finish?: () => Value };
 
 /** A verb of the fake world. */
@@ -114,12 +121,16 @@ export interface FakeResident {
   sections: Record<string, Value>;
   routines: Routine[];
   current: Running | undefined;
+  /** Free actions that wait for an answer. They do not occupy the resident. */
+  background: Running[];
   queue: Queued[];
   inbox: InboxEntry[];
   nextSeq: number;
   /** The last accepted request ids with their acknowledgements. */
   recent: [string, ActionAck][];
   key: string;
+  /** Time of the creation, in seconds since 1970. */
+  created_at: number;
   webhook: { url: string; secret: string } | undefined;
   freeTick: number;
   freeUsed: number;
@@ -134,6 +145,8 @@ export interface FakeLimits {
   sight_radius: number;
   nearby_max: number;
   wait_max: number;
+  /** Greatest number of residents of one owner. 0: no limit. This is a limit of the gateway, not a kernel parameter. */
+  residents_per_owner: number;
 }
 
 /** The defaults of the kernel parameters that the fake world uses. */
@@ -145,7 +158,27 @@ export const DEFAULT_LIMITS: FakeLimits = {
   sight_radius: 12,
   nearby_max: 12,
   wait_max: 1440,
+  residents_per_owner: 3,
 };
+
+/** The limits that are kernel parameters: the catalogue lists them. */
+const KERNEL_LIMITS = [
+  "queue_max",
+  "free_actions_per_tick",
+  "inbox_max",
+  "routines_max",
+  "sight_radius",
+  "nearby_max",
+  "wait_max",
+] as const;
+
+/** The time of every sign-up in the fake world, in seconds since 1970. */
+const CREATED_AT = 1_800_000_000;
+
+/** Returns a token of the form that the server makes: a prefix and 64 hexadecimal characters. */
+function token(prefix: string, ...numbers: number[]): string {
+  return `${prefix}${numbers.map((number) => number.toString(16).padStart(8, "0")).join("").padEnd(64, "0")}`;
+}
 
 /** Options of a fake world. Every option has a default. */
 export interface FakeWorldOptions {
@@ -196,8 +229,8 @@ interface Waiter {
   resolve: (observation: Observation) => void;
 }
 
-/** A listener for the inbox of one resident: a WebSocket connection. */
-export type InboxListener = (entry: InboxEntry) => void;
+/** A listener for the inbox of one resident: a WebSocket connection. `gone` says that the resident left the world. */
+export type InboxListener = (entry: InboxEntry | "gone") => void;
 
 /** The fake world. See the head of this file. */
 export class FakeWorld {
@@ -212,6 +245,7 @@ export class FakeWorld {
   readonly time: "manual" | "auto";
   readonly #verbs = new Map<string, FakeVerb>();
   readonly #owners = new Map<string, OwnerId>();
+  readonly #ownerNames = new Map<OwnerId, string>();
   readonly #keys = new Map<string, ResidentId>();
   readonly #listeners = new Map<ResidentId, Set<InboxListener>>();
   readonly #spawn: Pos;
@@ -252,25 +286,39 @@ export class FakeWorld {
     const verbs = [...this.#verbs.values()]
       .map((verb) => verb.info)
       .sort((a, b) => a.module.localeCompare(b.module) || a.verb.localeCompare(b.verb));
-    const params: ParamInfo[] = Object.entries(this.limits)
-      .map(([name, value]) => ({
-        name: `kernel.${name}`,
-        value: value as number,
-        policy: false,
-        summary: `The kernel parameter ${name}.`,
-      }))
+    const params: ParamInfo[] = KERNEL_LIMITS.map((name) => ({
+      name: `kernel.${name}`,
+      value: this.limits[name],
+      policy: false,
+      summary: `The kernel parameter ${name}.`,
+    }))
       .sort((a, b) => a.name.localeCompare(b.name));
     return { verbs, params, items: this.items, attrs: this.attrs, conditions: this.conditions };
   }
 
   // ---- Accounts -------------------------------------------------------------
 
-  /** Signs up an owner. Returns its id and its token. */
-  signUp(): { owner: OwnerId; token: string } {
+  /** Signs up an owner. Returns the owner and its token, as `POST /v1/owners` does. */
+  signUp(name = "Owner"): { owner: { id: OwnerId; name: string; created_at: number }; token: string } {
     this.#owner += 1;
-    const token = `owner-token-${this.#owner}`;
-    this.#owners.set(token, this.#owner);
-    return { owner: this.#owner, token };
+    const secret = token("unsup_own_", this.#owner);
+    this.#owners.set(secret, this.#owner);
+    this.#ownerNames.set(this.#owner, name);
+    return { owner: { id: this.#owner, name, created_at: CREATED_AT }, token: secret };
+  }
+
+  /** Returns the residents of an owner that are in the world, in the order of their ids. */
+  residentsOf(owner: OwnerId): FakeResident[] {
+    return [...this.residents.values()].filter((resident) => resident.owner === owner).sort((a, b) => a.id - b.id);
+  }
+
+  /** Removes a resident from the world, as a death does. Its key ends. */
+  despawn(resident: FakeResident): void {
+    this.residents.delete(resident.id);
+    this.#keys.delete(resident.key);
+    this.abandonWaits(resident);
+    for (const listener of this.#listeners.get(resident.id) ?? []) listener("gone");
+    this.#listeners.delete(resident.id);
   }
 
   /** Returns the owner of a token, if the token is known. */
@@ -303,11 +351,13 @@ export class FakeWorld {
       sections: {},
       routines: [],
       current: undefined,
+      background: [],
       queue: [],
       inbox: [],
       nextSeq: 1,
       recent: [],
       key: "",
+      created_at: CREATED_AT,
       webhook: undefined,
       freeTick: -1,
       freeUsed: 0,
@@ -321,7 +371,7 @@ export class FakeWorld {
   rotateKey(resident: FakeResident): string {
     this.#keys.delete(resident.key);
     this.#secrets += 1;
-    resident.key = `resident-key-${resident.id}-${this.#secrets}`;
+    resident.key = token("unsup_res_", resident.id, this.#secrets);
     this.#keys.set(resident.key, resident.id);
     return resident.key;
   }
@@ -333,7 +383,7 @@ export class FakeWorld {
       return undefined;
     }
     this.#secrets += 1;
-    resident.webhook = { url, secret: `webhook-secret-${resident.id}-${this.#secrets}` };
+    resident.webhook = { url, secret: token("unsup_whs_", resident.id, this.#secrets) };
     return resident.webhook.secret;
   }
 
@@ -382,10 +432,22 @@ export class FakeWorld {
         }
         resident.freeUsed += 1;
         const outcome = verb.begin(resident, args, this);
-        if (!("done" in outcome)) {
-          throw new FakeActionError("internal", `The free verb \`${verb.info.verb}\` did not finish at once.`);
+        if ("done" in outcome) return doneStatus(outcome.done);
+        if (!("pending" in outcome)) {
+          throw new FakeActionError("internal", `The free verb \`${verb.info.verb}\` cannot occupy the resident.`);
         }
-        return doneStatus(outcome.done);
+        // A free verb of the global realm: the answer comes later, in a
+        // report, and the resident stays free.
+        resident.background.push({
+          action_id,
+          verb: verb.info.verb,
+          request_id: request.id ?? undefined,
+          started: this.tick,
+          ends: this.tick + Math.max(1, outcome.pending),
+          waiting: true,
+          finish: outcome.finish,
+        });
+        return { state: "pending" };
       }
       if (resident.current !== undefined || resident.queue.length > 0) {
         const max = this.limits.queue_max;
@@ -519,6 +581,10 @@ export class FakeWorld {
   }
 
   #advance(resident: FakeResident): void {
+    for (const waiting of resident.background.filter((action) => action.ends <= this.tick)) {
+      resident.background.splice(resident.background.indexOf(waiting), 1);
+      this.#finish(resident, waiting);
+    }
     const running = resident.current;
     if (running !== undefined && running.ends <= this.tick) {
       resident.current = undefined;
@@ -567,7 +633,7 @@ export class FakeWorld {
     } else if (result !== null) {
       report.result = result;
     }
-    this.#push(resident, (seq) => ({ seq, report }));
+    this.#push(resident, (seq) => ({ seq, report: { ...report, seq } }));
   }
 
   // ---- Inbox ----------------------------------------------------------------
@@ -583,9 +649,13 @@ export class FakeWorld {
     });
   }
 
-  /** Writes a notice with text of another resident. The text is marked `untrusted`. */
-  tell(to: ResidentId, from: ResidentId, text: string, kind = "society.speech"): number {
-    return this.notify(to, kind, { untrusted: true, from, text }, from);
+  /**
+   * Writes a notice with text of another resident, as the verbs `say`
+   * (`society.said`) and `message` (`society.message`) do. The text is in
+   * the field `text` of the data, in an object with `untrusted: true`.
+   */
+  tell(to: ResidentId, from: ResidentId, text: string, kind = "society.said"): number {
+    return this.notify(to, kind, { text: { untrusted: true, from, text } }, from);
   }
 
   /** Listens to the inbox of a resident, as a WebSocket connection does. Returns a function that stops it. */
@@ -745,6 +815,8 @@ export class FakeWorld {
     const since = options.since ?? resident.nextSeq;
     const answer = (): Observation => this.observe(resident, { since_notice: since });
     if (this.hasNews(resident, since, options.kinds)) return Promise.resolve(answer());
+    // A wait of zero seconds answers at once, without news.
+    if (options.timeout <= 0) return Promise.resolve(answer());
     if (this.time === "auto") {
       for (let i = 0; i < options.timeout && !this.hasNews(resident, since, options.kinds); i += 1) {
         this.step(1);
@@ -796,24 +868,29 @@ function checkArgs(info: VerbInfo, args: Value | undefined): Record<string, Valu
   if (typeof given !== "object" || Array.isArray(given)) {
     throw new FakeActionError("invalid_args", `The arguments of \`${info.verb}\` must be an object.`);
   }
-  const schema = info.args_schema as { properties?: Record<string, { type?: string }>; required?: string[] } | null;
+  const schema = info.args_schema as {
+    properties?: Record<string, { type?: string | string[] }>;
+    required?: string[];
+  } | null;
   for (const name of schema?.required ?? []) {
     if (!(name in given)) {
       throw new FakeActionError("invalid_args", `\`${info.verb}\` needs the argument \`${name}\`.`);
     }
   }
+  const fits = (type: string, value: Value): boolean =>
+    (type === "null" && value === null) ||
+    (type === "integer" && Number.isInteger(value)) ||
+    (type === "number" && typeof value === "number") ||
+    (type === "string" && typeof value === "string") ||
+    (type === "boolean" && typeof value === "boolean") ||
+    (type === "array" && Array.isArray(value)) ||
+    (type === "object" && typeof value === "object" && value !== null && !Array.isArray(value));
   for (const [name, value] of Object.entries(given)) {
     const type = schema?.properties?.[name]?.type;
-    const fits =
-      type === undefined ||
-      (type === "integer" && Number.isInteger(value)) ||
-      (type === "number" && typeof value === "number") ||
-      (type === "string" && typeof value === "string") ||
-      (type === "boolean" && typeof value === "boolean") ||
-      (type === "array" && Array.isArray(value)) ||
-      (type === "object" && typeof value === "object" && value !== null && !Array.isArray(value));
-    if (!fits) {
-      throw new FakeActionError("invalid_args", `The argument \`${name}\` of \`${info.verb}\` must be of type ${type}.`);
+    // A schema names one type, or a list of types such as `["integer", "null"]`.
+    const types = type === undefined ? [] : Array.isArray(type) ? type : [type];
+    if (types.length > 0 && !types.some((one) => fits(one, value))) {
+      throw new FakeActionError("invalid_args", `The argument \`${name}\` of \`${info.verb}\` must be of type ${types.join(" or ")}.`);
     }
   }
   return given;

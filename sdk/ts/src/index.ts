@@ -4,10 +4,19 @@ export * from "./generated/protocol.js";
 export * from "./types.js";
 export * from "./errors.js";
 export * from "./observation.js";
-export { signWebhook, verifyWebhook } from "./webhook.js";
+export {
+  WEBHOOK_DELIVERY_HEADER,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_TIMESTAMP_HEADER,
+  WEBHOOK_TOLERANCE_SECONDS,
+  signWebhook,
+  verifyWebhook,
+  verifyWebhookRequest,
+} from "./webhook.js";
+export type { VerifyWebhookOptions, WebhookParts } from "./webhook.js";
 export { Transport, defaultRetryDelay } from "./http.js";
 export type { FetchLike, TransportOptions, TransportRequest } from "./http.js";
-export { Client, WAIT_MAX_SECONDS } from "./client.js";
+export { Client, PLAN_MAX, WAIT_MAX_SECONDS } from "./client.js";
 export type {
   ActOptions,
   ActResult,

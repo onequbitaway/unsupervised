@@ -1,16 +1,22 @@
 // The WebSocket session: requests with answers, pushed notices and reports,
-// and reconnect.
+// and reconnect (`docs/design/protocol.md`, "WebSocket frames (agents)").
 //
-// The frames have no correlation id in the protocol document. The session
-// reads the document this way:
+// The frames have no correlation id. The session uses these rules of the
+// server:
 //
 // - The server answers the requests of one connection in order.
 // - An `ack` answers the pending action with the same request id. The
 //   session gives every action a request id.
+// - A plan gets one `ack` for each request up to the first refusal, and
+//   nothing for the requests after it.
 // - An `observation` answers the oldest pending `observe`; a `pong` answers
 //   the oldest pending `ping`.
 // - An `error` answers the oldest pending request of any kind.
 // - `subscribe` has no answer.
+// - A report and a notice have a `seq` of one shared sequence. The session
+//   keeps the last `seq` of each of the two. After a lost connection it
+//   connects again with `since` and `reports_since`, so the server pushes
+//   what the session missed, and nothing a second time.
 
 import { ApiError, MissingCredentialError, ProtocolError, SessionClosedError, TransportError } from "./errors.js";
 import type {
@@ -22,7 +28,7 @@ import type {
   ObserveOpts,
   ResidentId,
 } from "./generated/protocol.js";
-import { REPORT_KIND, reportKey, reportsOf } from "./observation.js";
+import { REPORT_KIND, reportsOf } from "./observation.js";
 import type { ClientFrame, Me, ServerFrame } from "./types.js";
 import type { ActOptions, ObserveOptions, PlanStep } from "./client.js";
 import type { Value } from "./generated/protocol.js";
@@ -64,11 +70,11 @@ export type SessionState = "connecting" | "open" | "reconnecting" | "closed";
 
 /** Options of a session. Every option has a default. */
 export interface SessionOptions {
-  /** Called for each notice, once, in order. */
+  /** Called for each notice, once, in the order of `seq`. */
   onNotice?: (notice: Notice) => void;
-  /** Called for each action report, once. */
+  /** Called for each action report, once, in the order of `seq`. */
   onReport?: (report: ActionReport) => void;
-  /** Called each time the connection opens, after the session caught up. */
+  /** Called each time the connection opens. */
   onOpen?: () => void;
   /** Called each time the connection closes. `final` is true when the session will not connect again. */
   onClose?: (info: { final: boolean }) => void;
@@ -88,14 +94,16 @@ export interface SessionOptions {
 
 interface Pending {
   expects: "ack" | "observation" | "pong";
-  /** The action of an `ack`. */
-  request?: ActionRequest;
-  /** Pending acknowledgements with the same `plan` number go out in one frame. */
-  plan?: number;
+  /** The actions of an `ack` entry: one for `act`, all steps for `plan`. */
+  requests?: ActionRequest[];
+  /** True when the entry is a plan: it goes out as one `plan` frame. */
+  plan?: boolean;
+  /** The acknowledgements that came so far, in the order of `requests`. */
+  acks?: ActionAck[];
   /** The options of an `observation`. */
   opts?: ObserveOpts;
-  /** The cursor that the `observe` request carried. */
-  since?: number;
+  /** True for the observation that the session asks for itself, to learn where the inbox ends. */
+  internal?: boolean;
   resolve: (value: any) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -104,8 +112,10 @@ interface Pending {
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 30_000;
-/** How many delivered reports the session remembers to drop repeats. */
-const REPORT_MEMORY = 128;
+/** Codes of an `error` frame that end the session: the key will not work again. */
+const FATAL_CODES = ["resident_gone", "banned", "unauthorized", "invalid_token"];
+/** A cursor behind every sequence number: an observation with it has no news. */
+const NO_NEWS = Number.MAX_SAFE_INTEGER;
 
 function defaultReconnectDelay(attempt: number): number {
   const ceiling = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** (attempt - 1));
@@ -124,8 +134,8 @@ function defaultWebSocket(url: string, headers: Record<string, string>): WebSock
  *
  * The server pushes notices and reports; the session gives each of them to
  * `onNotice` or `onReport` once. When the connection is lost, the session
- * connects again, sends the unanswered requests again with the same request
- * ids, and reads what it missed with the notice cursor.
+ * connects again with its two cursors, sends the unanswered requests again
+ * with the same request ids, and gets what it missed.
  */
 export class Session {
   /** Resolves when the first connection is open. Rejects when the session closes before that. */
@@ -138,8 +148,12 @@ export class Session {
   #kinds: string[] | undefined;
   #attempts = 0;
   #everOpen = false;
-  #plans = 0;
-  #seenReports: string[] = [];
+  /** Where the inbox ended when the session started: the cursor for news that no push carried yet. */
+  #base: number | undefined;
+  /** The `seq` of the last notice that the session took. */
+  #lastNotice: number | undefined;
+  /** The `seq` of the last report that the session took. */
+  #lastReport: number | undefined;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #readyResolve!: () => void;
   #readyReject!: (error: Error) => void;
@@ -149,6 +163,8 @@ export class Session {
     this.#host = host;
     this.#options = options;
     this.#kinds = options.kinds;
+    // A client that observed before has a cursor: the session starts there.
+    if (host.cursor > 0) this.#base = host.cursor;
     this.ready = new Promise<void>((resolve, reject) => {
       this.#readyResolve = resolve;
       this.#readyReject = reject;
@@ -167,28 +183,46 @@ export class Session {
     return this.#state;
   }
 
+  /**
+   * The cursors that the next connection sends: `since` is the `seq` of the
+   * last notice plus 1, and `reportsSince` is the `seq` of the last report
+   * plus 1. `undefined` while the session does not know where the inbox
+   * ends.
+   */
+  get cursors(): { since: number; reportsSince: number } | undefined {
+    const since = this.#lastNotice === undefined ? this.#base : this.#lastNotice + 1;
+    const reportsSince = this.#lastReport === undefined ? this.#base : this.#lastReport + 1;
+    return since === undefined || reportsSince === undefined ? undefined : { since, reportsSince };
+  }
+
   /** Asks for one action. Resolves with the acknowledgement. A refusal is not thrown. */
-  act(verb: string, args?: Value, options: ActOptions = {}): Promise<ActionAck> {
+  async act(verb: string, args?: Value, options: ActOptions = {}): Promise<ActionAck> {
     const request = this.#request({ verb, ...(args === undefined ? {} : { args }), ...options });
-    return this.#enqueue({ expects: "ack", request });
+    const acks = await this.#enqueue<ActionAck[]>({ expects: "ack", requests: [request], acks: [] });
+    return acks[0] as ActionAck;
   }
 
-  /** Asks for several actions in order. Resolves with one acknowledgement for each step. */
+  /**
+   * Asks for several actions in order. Resolves with one acknowledgement
+   * for each step that the server sent to the simulation. The server stops
+   * after the first step that the simulation rejects: the list then ends
+   * with that refusal.
+   */
   plan(steps: PlanStep[]): Promise<ActionAck[]> {
-    this.#plans += 1;
-    const plan = this.#plans;
-    const acks = steps.map((step) => this.#enqueue<ActionAck>({ expects: "ack", request: this.#request(step), plan }, false));
-    this.#flush();
-    return Promise.all(acks);
+    if (steps.length === 0) return Promise.resolve([]);
+    const requests = steps.map((step) => this.#request(step));
+    return this.#enqueue<ActionAck[]>({ expects: "ack", requests, plan: true, acks: [] });
   }
 
-  /** Returns the current observation. It moves the cursor. */
+  /**
+   * Returns the current observation. Its notices and reports go to the
+   * handlers too, unless a push gave them already.
+   */
   observe(options: ObserveOptions = {}): Promise<Observation> {
-    const since = options.since ?? this.#host.cursor;
-    const opts: ObserveOpts = { since_notice: since };
+    const opts: ObserveOpts = { since_notice: options.since ?? this.#host.cursor };
     if (options.detail !== undefined) opts.detail = options.detail;
     if (options.sections !== undefined) opts.sections = options.sections;
-    return this.#enqueue({ expects: "observation", opts, since });
+    return this.#enqueue({ expects: "observation", opts });
   }
 
   /**
@@ -197,8 +231,8 @@ export class Session {
    * again after a reconnect.
    */
   subscribe(kinds: string[]): void {
-    this.#kinds = kinds;
-    if (this.#state === "open") this.#send({ op: "subscribe", kinds });
+    this.#kinds = kinds.length === 0 ? undefined : kinds;
+    if (this.#state === "open") this.#sendSubscription();
   }
 
   /** Sends a `ping`. Resolves when the `pong` arrives. */
@@ -219,7 +253,7 @@ export class Session {
     return request;
   }
 
-  #enqueue<T>(entry: Pick<Pending, "expects" | "request" | "plan" | "opts" | "since">, flush = true): Promise<T> {
+  #enqueue<T>(entry: Omit<Pending, "resolve" | "reject" | "timer">): Promise<T> {
     if (this.#state === "closed") {
       return Promise.reject(new SessionClosedError("The session is closed."));
     }
@@ -234,38 +268,30 @@ export class Session {
         }, this.#options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS),
       };
       this.#pending.push(pending);
-      if (flush && this.#state === "open") this.#transmit([pending]);
+      if (this.#state === "open") this.#transmit(pending);
     });
   }
 
-  /** Sends the pending entries of the newest plan. */
-  #flush(): void {
-    if (this.#state !== "open") return;
-    this.#transmit(this.#pending.filter((pending) => pending.plan === this.#plans));
-  }
-
-  /** Sends the frames of pending entries, in order. Entries of one plan share a frame. */
-  #transmit(entries: Pending[]): void {
-    const sent = new Set<number>();
-    for (const entry of entries) {
-      if (entry.expects === "pong") {
-        this.#send({ op: "ping" });
-      } else if (entry.expects === "observation") {
-        this.#send({ op: "observe", opts: entry.opts ?? {} });
-      } else if (entry.plan === undefined) {
-        this.#send({ op: "act", request: entry.request as ActionRequest });
-      } else if (!sent.has(entry.plan)) {
-        sent.add(entry.plan);
-        const requests = entries
-          .filter((other) => other.plan === entry.plan)
-          .map((other) => other.request as ActionRequest);
-        this.#send({ op: "plan", requests });
-      }
+  /** Sends the frame of one pending entry. */
+  #transmit(entry: Pending): void {
+    if (entry.expects === "pong") {
+      this.#send({ op: "ping" });
+    } else if (entry.expects === "observation") {
+      this.#send({ op: "observe", opts: entry.opts ?? {} });
+    } else if (entry.plan === true) {
+      this.#send({ op: "plan", requests: entry.requests as ActionRequest[] });
+    } else {
+      this.#send({ op: "act", request: (entry.requests as ActionRequest[])[0] as ActionRequest });
     }
   }
 
   #send(frame: ClientFrame): void {
     this.#socket?.send(JSON.stringify(frame));
+  }
+
+  /** Sends the kinds that the caller chose. Without kinds, the server pushes everything. */
+  #sendSubscription(): void {
+    this.#send(this.#kinds === undefined ? { op: "subscribe" } : { op: "subscribe", kinds: this.#kinds });
   }
 
   #drop(pending: Pending): void {
@@ -274,17 +300,18 @@ export class Session {
     if (index >= 0) this.#pending.splice(index, 1);
   }
 
-  #settle(pending: Pending | undefined, value: unknown): boolean {
-    if (pending === undefined) return false;
+  #settle(pending: Pending | undefined, value: unknown): void {
+    if (pending === undefined) return;
     this.#drop(pending);
     pending.resolve(value);
-    return true;
   }
 
   // ---- Connection -------------------------------------------------------------
 
   #open(): void {
-    const url = `${this.#host.baseUrl.replace(/^http/, "ws")}/v1/ws`;
+    const cursors = this.cursors;
+    const query = cursors === undefined ? "" : `?since=${cursors.since}&reports_since=${cursors.reportsSince}`;
+    const url = `${this.#host.baseUrl.replace(/^http/, "ws")}/v1/ws${query}`;
     const headers = { authorization: `Bearer ${this.#host.residentKey}` };
     let socket: WebSocketLike;
     try {
@@ -329,31 +356,41 @@ export class Session {
     this.#everOpen = true;
     this.#state = "open";
     this.#attempts = 0;
-    if (this.#kinds !== undefined) this.#send({ op: "subscribe", kinds: this.#kinds });
-    // Unanswered requests go out again. Their request ids make that safe.
-    this.#transmit(this.#pending);
-    if (first) {
-      this.#readyResolve();
-      this.#options.onOpen?.();
-      return;
+    if (this.#kinds !== undefined) this.#sendSubscription();
+    // Unanswered requests go out again, in their order. Their request ids
+    // make that safe.
+    for (const entry of this.#pending) this.#transmit(entry);
+    // Without a cursor the server pushes only the news that comes from now
+    // on. The session asks where the inbox ends, so that a later connection
+    // has a cursor. The answer has no news: the cursor of the request is
+    // behind every number.
+    if (this.cursors === undefined) {
+      const learn = this.#enqueue<Observation>({
+        expects: "observation",
+        opts: { since_notice: NO_NEWS, sections: [] },
+        internal: true,
+      });
+      learn.catch((error: Error) => {
+        if (!(error instanceof SessionClosedError)) this.#options.onError?.(error);
+      });
     }
-    // Read what came while the connection was down.
-    this.observe().then(
-      () => this.#options.onOpen?.(),
-      (error: Error) => this.#options.onError?.(error),
-    );
+    if (first) this.#readyResolve();
+    this.#options.onOpen?.();
   }
 
   async #onClose(opened: boolean): Promise<void> {
     if (this.#state === "closed") return;
     const again = this.#options.reconnect !== false;
     this.#state = "reconnecting";
+    // The observation that the session asked for itself has no caller. The
+    // next connection asks again.
+    for (const entry of this.#pending.filter((pending) => pending.internal === true)) this.#drop(entry);
     if (!opened) {
       // A WebSocket does not say why the server refused it. Ask over HTTPS.
       try {
         await this.#host.me();
       } catch (error) {
-        const refused = error instanceof ApiError && (error.status === 401 || error.status === 403);
+        const refused = error instanceof ApiError && (error.endsCredential || error.status === 403);
         if (refused || error instanceof MissingCredentialError) {
           this.#finish(error);
           return;
@@ -406,18 +443,22 @@ export class Session {
       return;
     }
     switch (frame.op) {
-      case "ack": {
-        const id = frame.ack.request_id;
-        const acks = this.#pending.filter((pending) => pending.expects === "ack");
-        const match = id == null ? acks[0] : acks.find((pending) => pending.request?.id === id);
-        // An ack without a pending request repeats an answer that came before a reconnect.
-        this.#settle(match, frame.ack);
+      case "ack":
+        this.#ack(frame.ack);
         return;
-      }
       case "observation": {
         const pending = this.#pending.find((entry) => entry.expects === "observation");
         const observation = frame.observation;
-        this.#deliver(observation, pending?.since ?? this.#host.cursor);
+        if (typeof observation?.next_notice !== "number" || !Array.isArray(observation.notices)) {
+          this.#options.onError?.(new ProtocolError("An `observation` frame did not hold an observation."));
+          return;
+        }
+        if (pending?.internal === true) {
+          // Only the end of the inbox counts. The pushes carry the news.
+          this.#base ??= observation.next_notice;
+        } else {
+          this.#deliver(observation);
+        }
         this.#settle(pending, observation);
         return;
       }
@@ -432,12 +473,16 @@ export class Session {
         return;
       case "error": {
         const error = new ApiError(frame.error);
-        const pending = this.#pending[0];
-        if (pending === undefined) {
-          this.#options.onError?.(error);
-        } else {
+        const pending = this.#pending.find((entry) => entry.internal !== true);
+        if (pending !== undefined) {
           this.#drop(pending);
           pending.reject(error);
+        }
+        if (FATAL_CODES.includes(error.code)) {
+          // The server closes the connection, and no new one can open.
+          this.#finish(error);
+        } else if (pending === undefined) {
+          this.#options.onError?.(error);
         }
         return;
       }
@@ -446,36 +491,49 @@ export class Session {
     }
   }
 
-  /** Gives the news of an observation to the handlers and moves the cursor. */
-  #deliver(observation: Observation, since: number): void {
-    if (typeof observation?.next_notice !== "number" || !Array.isArray(observation.notices)) {
-      this.#options.onError?.(new ProtocolError("An `observation` frame did not hold an observation."));
-      return;
-    }
-    observation.notices = observation.notices.filter((notice) => notice.seq >= since);
-    for (const notice of observation.notices) this.#notice(notice);
+  /** Takes one acknowledgement: finds its request among the pending actions. */
+  #ack(ack: ActionAck): void {
+    const id = ack.request_id;
+    const entries = this.#pending.filter((pending) => pending.expects === "ack");
+    const entry = id == null ? entries[0] : entries.find((pending) => pending.requests?.some((request) => request.id === id));
+    // An ack without a pending request repeats an answer that came before a reconnect.
+    if (entry === undefined) return;
+    const requests = entry.requests as ActionRequest[];
+    const acks = entry.acks as ActionAck[];
+    const index = id == null ? acks.length : requests.findIndex((request) => request.id === id);
+    acks[index] = ack;
+    // The server stops a plan after the first refusal: no more acks come.
+    const complete = index === requests.length - 1 || ack.status.state === "rejected";
+    if (complete) this.#settle(entry, acks.slice(0, index + 1));
+  }
+
+  /** Gives the news of an observation to the handlers, unless a push gave it already. */
+  #deliver(observation: Observation): void {
     for (const report of reportsOf(observation)) this.#report(report);
-    this.#host.cursor = observation.next_notice;
+    for (const notice of observation.notices) this.#notice(notice);
+    this.#host.cursor = Math.max(this.#host.cursor, observation.next_notice);
     this.#host.resident = observation.resident;
   }
 
   /** Returns true when the handlers want notices of this kind. */
   #wants(kind: string): boolean {
-    return this.#kinds === undefined || this.#kinds.length === 0 || this.#kinds.includes(kind);
+    return this.#kinds === undefined || this.#kinds.includes(kind);
   }
 
   #notice(notice: Notice): void {
-    // The cursor is the next sequence number that the session has not seen.
-    if (notice.seq < this.#host.cursor) return;
-    this.#host.cursor = notice.seq + 1;
+    // The notices come in the order of `seq`. A lower number came already.
+    if (this.#lastNotice !== undefined && notice.seq <= this.#lastNotice) return;
+    this.#lastNotice = notice.seq;
+    this.#host.cursor = Math.max(this.#host.cursor, notice.seq + 1);
     if (this.#wants(notice.kind)) this.#options.onNotice?.(notice);
   }
 
   #report(report: ActionReport): void {
-    const key = reportKey(report);
-    if (this.#seenReports.includes(key)) return;
-    this.#seenReports.push(key);
-    if (this.#seenReports.length > REPORT_MEMORY) this.#seenReports.shift();
+    const seq = report.seq ?? 0;
+    // The reports come in the order of `seq`. A lower number came already.
+    if (this.#lastReport !== undefined && seq <= this.#lastReport) return;
+    this.#lastReport = seq;
+    this.#host.cursor = Math.max(this.#host.cursor, seq + 1);
     if (this.#wants(REPORT_KIND)) this.#options.onReport?.(report);
   }
 }

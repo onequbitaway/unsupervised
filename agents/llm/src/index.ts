@@ -12,6 +12,8 @@ export { DecisionError, parseDecision } from "./decision.js";
 export type { Decision, DecisionLimits } from "./decision.js";
 export { DEFAULT_NOTES_MAX, FileNotes } from "./notes.js";
 export type { NotesStore } from "./notes.js";
+export { DEFAULT_PLACES_MAX, nearestPlaces, readPlaces } from "./places.js";
+export type { MapSource, Place } from "./places.js";
 export { OpenAICompatibleProvider } from "./openai.js";
 export type { OpenAICompatibleOptions } from "./openai.js";
 export {

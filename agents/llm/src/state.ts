@@ -143,6 +143,7 @@ export async function enlist(options: EnlistOptions): Promise<Client> {
       log?.(`resident ${me.resident} (${me.name}): the key of ${options.stateFile} works`);
       return client;
     } catch (error) {
+      // 401: the key was replaced. A resident that left the world and a ban cannot be repaired here.
       const refused = error instanceof ApiError && error.status === 401;
       if (!refused || ownerToken === undefined || entry.resident === undefined) throw error;
     }
@@ -155,19 +156,19 @@ export async function enlist(options: EnlistOptions): Promise<Client> {
 
   const client = make(ownerToken === undefined ? {} : { ownerToken });
   if (ownerToken === undefined) {
-    const signup = await client.signUp({ name: options.residentName });
-    entry.owner = signup.owner;
+    const signup = await client.signUp({ name: fitBytes(options.residentName) });
+    entry.owner = signup.owner.id;
     entry.owner_token = signup.token;
     await saveState(options.stateFile, state);
-    log?.(`signed up as owner ${signup.owner}`);
+    log?.(`signed up as owner ${signup.owner.id}`);
   }
   const created = await client.createResident({
     name: fitBytes(options.residentName),
     ...(options.model === undefined ? {} : { model: fitBytes(options.model) }),
   });
-  entry.resident = created.resident;
+  entry.resident = created.resident.id;
   entry.resident_key = created.key;
   await saveState(options.stateFile, state);
-  log?.(`created the resident ${created.resident} (${options.residentName}); its key is in ${options.stateFile}`);
+  log?.(`created the resident ${created.resident.id} (${options.residentName}); its key is in ${options.stateFile}`);
   return client;
 }

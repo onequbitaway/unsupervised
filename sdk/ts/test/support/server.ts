@@ -78,6 +78,10 @@ export interface TestServer {
   readonly world: FakeWorld;
   /** How many WebSocket upgrades the server saw, also the refused ones. */
   readonly upgrades: number;
+  /** The path and the query of each WebSocket upgrade, in order. */
+  readonly upgradeUrls: string[];
+  /** The text of each WebSocket frame that a client sent, in order. */
+  readonly frames: string[];
   /** The next `count` HTTP requests are handled, but the answer is lost: the connection is cut. */
   loseResponses(count: number): void;
   /** The next `count` HTTP requests are cut before the gateway sees them. */
@@ -98,6 +102,8 @@ export async function startServer(gateway: FakeGateway = new FakeGateway()): Pro
   let refuse = 0;
   let loseFrames = 0;
   let upgrades = 0;
+  const upgradeUrls: string[] = [];
+  const frames: string[] = [];
   let frameWaiters: (() => void)[] = [];
   const sockets = new Map<Duplex, FakeSocket>();
 
@@ -133,14 +139,36 @@ export async function startServer(gateway: FakeGateway = new FakeGateway()): Pro
     upgrades += 1;
     const authorization = request.headers.authorization;
     const key = authorization?.startsWith("Bearer ") === true ? authorization.slice(7) : undefined;
+    // A frame that the gateway pushes at once waits for the handshake.
+    let handshake = false;
+    const early: string[] = [];
     const send = (text: string): void => {
+      if (!handshake) {
+        early.push(text);
+        return;
+      }
       if (loseFrames > 0) {
         loseFrames -= 1;
         return;
       }
       socket.write(encodeFrame(OP_TEXT, Buffer.from(text, "utf8")));
     };
-    const connection = request.url === "/v1/ws" ? gateway.connect(key, send) : undefined;
+    // The query of the upgrade request has the cursors of a client that connects again.
+    const target = new URL(request.url ?? "/", "http://fake");
+    const cursor = (name: string): number | undefined => {
+      const text = target.searchParams.get(name);
+      return text === null ? undefined : Number(text);
+    };
+    const since = cursor("since");
+    const reportsSince = cursor("reports_since");
+    upgradeUrls.push(`${target.pathname}${target.search}`);
+    const connection =
+      target.pathname === "/v1/ws"
+        ? gateway.connect(key, send, {
+            ...(since === undefined ? {} : { since }),
+            ...(reportsSince === undefined ? {} : { reportsSince }),
+          })
+        : undefined;
     if (connection === undefined) {
       socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
       return;
@@ -151,6 +179,8 @@ export async function startServer(gateway: FakeGateway = new FakeGateway()): Pro
     socket.write(
       `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
     );
+    handshake = true;
+    early.splice(0).forEach(send);
     sockets.set(socket, connection);
     let buffer: Buffer = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
@@ -158,6 +188,7 @@ export async function startServer(gateway: FakeGateway = new FakeGateway()): Pro
       buffer = decoded.rest;
       for (const frame of decoded.frames) {
         if (frame.opcode === OP_TEXT) {
+          frames.push(frame.payload.toString("utf8"));
           connection.receive(frame.payload.toString("utf8"));
           for (const waiter of frameWaiters.splice(0)) waiter();
         } else if (frame.opcode === OP_PING) {
@@ -185,6 +216,8 @@ export async function startServer(gateway: FakeGateway = new FakeGateway()): Pro
     get upgrades() {
       return upgrades;
     },
+    upgradeUrls,
+    frames,
     loseResponses(count) {
       lose = count;
     },
