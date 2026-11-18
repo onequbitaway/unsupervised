@@ -10,9 +10,11 @@
 //!
 //! The development mode sits between 2 and 3: it applies the `[dev]` table.
 //!
-//! The data directory holds two things: the store of accounts and keys
-//! (one SQLite file) and the world (the directory `world` with the input
-//! log and the snapshots).
+//! The data directory holds three things: the store of accounts and keys
+//! (one SQLite file), the world (the directory `world` with the input log
+//! and the snapshots) and what the viewer service keeps (the directory
+//! `spectator` with the life histories and the pinned clips). The third
+//! is always next to the second: see [`WorldStore`].
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -23,6 +25,7 @@ use serde::Deserialize;
 use unsup_gateway::{GatewayConfig, merge_tables};
 use unsup_runtime::{DurableConfig, SyncPolicy};
 
+use crate::sponsor::SponsorConfig;
 use crate::world::WorldShape;
 
 /// The defaults of the server, as TOML text.
@@ -75,6 +78,11 @@ impl WorldStoreKind {
 ///
 /// In both cases the world has an input log and snapshots, so an
 /// administrator can roll it back.
+///
+/// The viewer service keeps the life histories and the pinned clips of
+/// the world in the same place: in memory, or in the directory
+/// `spectator` next to the world directory. So they come back with the
+/// world after a restart. A new world starts without them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorldStore {
     /// Memory only. Each start makes a new world.
@@ -178,6 +186,13 @@ pub struct ServerConfig {
     pub params: Vec<PathBuf>,
     /// Limits and options of the gateway.
     pub gateway: GatewayConfig,
+    /// The configuration of the viewer service: the limits of the feed,
+    /// the delay of the stream, the director. The `[spectator]` table of
+    /// the configuration changes the values that it names
+    /// (`unsup_spectator::Config::with_overrides`).
+    pub spectator: unsup_spectator::Config,
+    /// How the server takes missions from human sponsors.
+    pub sponsors: SponsorConfig,
     /// Development mode: the server makes a ready owner, and an admin
     /// token when the configuration has none, and returns both in
     /// [`Server::dev`](crate::Server::dev).
@@ -240,6 +255,8 @@ struct FileConfig {
     shutdown_grace_ms: u64,
     world: WorldFile,
     durability: DurabilityFile,
+    sponsors: SponsorConfig,
+    spectator: toml::Table,
     gateway: toml::Table,
 }
 
@@ -417,6 +434,19 @@ impl ServerConfig {
         anyhow::ensure!(file.world.cities >= 1, "`world.cities` must be at least 1");
         anyhow::ensure!(file.world.districts >= 1, "`world.districts` must be at least 1");
 
+        anyhow::ensure!(
+            file.sponsors.answer_timeout_ms >= 1,
+            "`sponsors.answer_timeout_ms` must be at least 1"
+        );
+        // The viewer service reads its own table. It gets the table as
+        // text, and it names what is wrong in it.
+        let spectator = toml::to_string(&file.spectator)
+            .context("the `[spectator]` table cannot be written as TOML")
+            .and_then(|text| {
+                unsup_spectator::Config::with_overrides(&text)
+                    .map_err(|error| anyhow::anyhow!("the `[spectator]` table: {}", error.message))
+            })?;
+
         let mut gateway = file.gateway;
         // `join_file` at the top is the default; `[gateway]` can replace it.
         if !gateway.contains_key("join_file") {
@@ -446,6 +476,8 @@ impl ServerConfig {
             durability: file.durability.into_durability()?,
             params: file.params,
             gateway: GatewayConfig::from_table(gateway)?,
+            spectator,
+            sponsors: file.sponsors,
             dev,
             shutdown_grace: Duration::from_millis(file.shutdown_grace_ms),
         })

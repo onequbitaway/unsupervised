@@ -121,22 +121,77 @@ impl Gateway {
             return Err(ApiError::muted());
         }
         for (index, entry) in &found {
-            let usage = if entry.speech {
-                TextUse::Speech { verb: entry.verb }
+            let place = if requests.len() > 1 {
+                format!("Action {}: `{}`", index + 1, entry.path)
             } else {
-                TextUse::Argument { verb: entry.verb }
+                format!("`{}`", entry.path)
             };
-            let text = Text { author: Author::Resident(resident), usage, text: entry.text };
-            if let Err(refusal) = moderation.check(&text).await {
-                let place = if requests.len() > 1 {
-                    format!("Action {}: `{}`", index + 1, entry.path)
-                } else {
-                    format!("`{}`", entry.path)
-                };
-                return Err(refused(&place, &refusal));
-            }
+            self.check_found(Author::Resident(resident), entry, &place).await?;
         }
         Ok(())
+    }
+
+    /// Asks every filter about one text that [`texts::collect`] found.
+    async fn check_found(
+        &self,
+        author: Author,
+        entry: &texts::Found<'_>,
+        place: &str,
+    ) -> Result<(), ApiError> {
+        let usage = if entry.speech {
+            TextUse::Speech { verb: entry.verb }
+        } else {
+            TextUse::Argument { verb: entry.verb }
+        };
+        let text = Text { author, usage, text: entry.text };
+        self.inner.moderation.check(&text).await.map_err(|refusal| refused(place, &refusal))
+    }
+
+    /// Checks every text in the arguments of a verb before the host sends
+    /// them to the simulation, for a route that the host added (see
+    /// [`OwnerRoute`](crate::OwnerRoute)).
+    ///
+    /// The gateway is the only door for text. A text that comes in by a
+    /// route of the host passes the same filters as the arguments of an
+    /// action: each string in `args` and each name of a field inside a
+    /// value. `verb` names the use of the text: the filters and the
+    /// configuration (`text_verbs`, `text_args`) treat the text as an
+    /// argument of that verb.
+    ///
+    /// # Errors
+    ///
+    /// The first refusal: `text_refused` with the place of the text in
+    /// `args` and the rule, or `rate_limited` when the filter says that
+    /// the text came too soon.
+    pub async fn check_texts(
+        &self,
+        author: Author,
+        verb: &str,
+        args: &Value,
+    ) -> Result<(), ApiError> {
+        let found = texts::collect_at(&self.inner.moderation.config, verb, args, "");
+        for entry in &found {
+            self.check_found(author, entry, &format!("`{}`", entry.path)).await?;
+        }
+        Ok(())
+    }
+
+    /// Checks one text before the host uses it, for a route that the host
+    /// added. `place` names the text in the answer.
+    ///
+    /// # Errors
+    ///
+    /// The refusal of the first filter that refuses the text, as
+    /// [`Gateway::check_texts`] gives it.
+    pub async fn check_text(
+        &self,
+        author: Author,
+        usage: TextUse<'_>,
+        place: &str,
+        text: &str,
+    ) -> Result<(), ApiError> {
+        let text = Text { author, usage, text };
+        self.inner.moderation.check(&text).await.map_err(|refusal| refused(place, &refusal))
     }
 
     /// Checks a name before the server keeps it. `field` names it in the

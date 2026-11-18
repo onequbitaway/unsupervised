@@ -25,6 +25,8 @@ use unsup_store::{
 
 use crate::config::{ServerConfig, StoreConfig, WorldStore};
 use crate::durable::{self, WorldStart, hash_text};
+use crate::sponsor;
+use crate::viewer::{Returned, ViewerStorage};
 
 /// Paths that belong to the API. An unknown path under one of them gets a
 /// JSON error, never a file of the viewer.
@@ -76,6 +78,9 @@ pub struct Server {
     pub world: WorldStart,
     gateway: Gateway,
     runtime: RuntimeJoin,
+    /// Resolves when the viewer service let go of its directory. `None`
+    /// when the service keeps its data in memory.
+    viewer_done: Option<Returned>,
     grace: Duration,
     stop: oneshot::Sender<()>,
     /// True when the grace time of a stop is over: see [`cut_at_stop`].
@@ -180,12 +185,18 @@ fn world_config(config: &ServerConfig) -> anyhow::Result<WorldConfig> {
 /// after a crash; an empty directory gets a new world. A new world ends
 /// the resident records of the store. A recovered world keeps them.
 ///
+/// The viewer service keeps the life histories and the pinned clips where
+/// the world is: in the directory `spectator` next to the world
+/// directory, or in memory. A recovered world gets them back. A new
+/// world starts without them.
+///
 /// # Errors
 ///
 /// Fails when the world shape or a parameter file is not valid, when the
 /// world directory holds a world that cannot be recovered or is in use by
-/// another server, when the store cannot be opened, or when the address
-/// cannot be bound.
+/// another server, when the store or the directory of the viewer service
+/// cannot be opened, when the sponsor missions are on in a world without
+/// the missions module, or when the address cannot be bound.
 pub async fn start(mut config: ServerConfig) -> anyhow::Result<Server> {
     let store = open_store(&config.store)?;
     // Accounts in memory do not outlive the world on the disk: after a
@@ -224,6 +235,9 @@ pub async fn start(mut config: ServerConfig) -> anyhow::Result<Server> {
         tracing::info!(frame = world.frame, "new world");
     }
     let dev = if config.dev { Some(dev_access(store.as_ref(), &mut config)?) } else { None };
+    // The history of the viewer service is that of the world: it lives
+    // where the world lives, and a new world starts without it.
+    let viewer_storage = ViewerStorage::open(&world_store, !world.recovered)?;
 
     let mut runtime_config = RuntimeConfig {
         tick_interval: config.tick_interval,
@@ -234,7 +248,12 @@ pub async fn start(mut config: ServerConfig) -> anyhow::Result<Server> {
         runtime_config.pacer = Box::new(Dilation::new(DilationConfig::default()));
     }
     let (sim, runtime) = unsup_runtime::start(opened.world, runtime_config);
-    let gateway = Gateway::start(sim.clone(), store, config.gateway.clone())
+    // The route of the sponsors speaks to the missions module. It is code
+    // of the server, behind the door of the gateway.
+    let sponsors = sponsor::Desk::new(sim.clone(), config.sponsors.clone())?;
+    let gateway = Gateway::builder(sim.clone(), store, config.gateway.clone())
+        .owner_route(sponsor::PATH, Arc::new(sponsors))
+        .start()
         .await
         .context("cannot start the gateway")?;
 
@@ -252,6 +271,7 @@ pub async fn start(mut config: ServerConfig) -> anyhow::Result<Server> {
             "start": started,
             "audit": board.report(),
             "snapshots": durable::snapshots(storage.as_ref()),
+            "newest_snapshot": durable::newest_snapshot(storage.as_ref()),
         })
     });
     if world.recovered {
@@ -273,11 +293,12 @@ pub async fn start(mut config: ServerConfig) -> anyhow::Result<Server> {
         }
     }
 
+    let (spectator, viewer_done) = viewer_storage.serve(sim.clone(), config.spectator)?;
     let viewer = config.web_dir.filter(|dir| dir.is_dir()).map(ServeDir::new);
     let (cut, cut_signal) = watch::channel(false);
     let app: Router = gateway
         .router()
-        .merge(unsup_spectator::router(sim.clone()))
+        .merge(spectator)
         .fallback_service(Router::new().fallback(fallback).with_state(viewer))
         .layer(middleware::from_fn_with_state(cut_signal, cut_at_stop))
         .layer(gateway.cors());
@@ -303,6 +324,7 @@ pub async fn start(mut config: ServerConfig) -> anyhow::Result<Server> {
         world,
         gateway,
         runtime,
+        viewer_done,
         grace: config.shutdown_grace,
         stop,
         cut,
@@ -319,7 +341,9 @@ impl Server {
     /// after that gets the answer `shutdown`, and its connection gets the
     /// grace time once more to take that answer. Then the simulation
     /// stops, and the feeds of the viewers end with it. The journal
-    /// writes a final snapshot, so the next start replays nothing.
+    /// writes a final snapshot, so the next start replays nothing. The
+    /// viewer service writes its history one last time; the stop waits
+    /// for that, for the grace time at most.
     ///
     /// # Errors
     ///
@@ -366,6 +390,18 @@ impl Server {
             .await
             .context("the stop of the simulation failed")?
             .map_err(|panic| anyhow::anyhow!("the simulation stopped with an error: {panic}"))?;
+        // The viewer service sees the stop of the simulation and writes
+        // its history a last time, in a task of its own. When it let go
+        // of its directory, the write is done and another server can
+        // open the directory.
+        if let Some(done) = self.viewer_done
+            && tokio::time::timeout(self.grace, done).await.is_err()
+        {
+            tracing::warn!(
+                "the viewer service did not end in the grace time; the last part of the life \
+                 histories can be absent after the next start"
+            );
+        }
         Ok(Stopped {
             frame: world.frame(),
             state_hash: hash_text(&world.state_hash()),

@@ -10,15 +10,21 @@ mod residents;
 mod sanctions;
 mod webhook;
 
+use std::sync::Arc;
+
 use axum::Router;
-use axum::extract::DefaultBodyLimit;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::middleware;
 use axum::routing::{get, post, put};
+use serde_json::Value;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use crate::auth::OwnerAuth;
 use crate::client::address_limit;
 use crate::error::ApiError;
+use crate::extract::{Body, Params};
+use crate::host::{self, NoQuery};
 use crate::state::Gateway;
 use crate::{mcp, ws};
 
@@ -29,7 +35,7 @@ impl Gateway {
     /// (`into_make_service_with_connect_info::<SocketAddr>()`), or the
     /// limit for each address sees all clients as one.
     pub fn router(&self) -> Router {
-        let limited = Router::new()
+        let mut limited = Router::new()
             .route("/join.md", get(public::join))
             .route("/v1/catalogue", get(public::catalogue))
             .route("/v1/owners", post(owners::sign_up))
@@ -59,7 +65,20 @@ impl Gateway {
             .route("/admin/alerts", get(ops::alerts))
             .route("/admin/flags", get(ops::flags))
             .route("/admin/flags/{id}/dismiss", post(ops::dismiss))
-            .route("/admin/rollback", post(ops::rollback))
+            .route("/admin/rollback", post(ops::rollback));
+        // The routes that the host added. Each is `POST` with an owner
+        // token, no query and a JSON body.
+        for (path, route) in &self.inner.owner_routes {
+            let route = Arc::clone(route);
+            let handler = move |State(gateway): State<Gateway>,
+                                OwnerAuth(owner): OwnerAuth,
+                                Params(NoQuery {}): Params<NoQuery>,
+                                Body(body): Body<Value>| {
+                host::serve(gateway, Arc::clone(&route), owner, body)
+            };
+            limited = limited.route(path, post(handler));
+        }
+        let limited = limited
             .method_not_allowed_fallback(method_not_allowed)
             .layer(DefaultBodyLimit::max(self.config().limits.max_body_bytes))
             .layer(middleware::from_fn_with_state(self.clone(), address_limit));

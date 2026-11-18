@@ -12,10 +12,10 @@ use unsup_protocol::{AdminCommand, SimError};
 use unsup_runtime::{
     DurableConfig, DurableJournal, Fault, FsStorage, Journal, LogError, MemStorage, RecoverError,
     ReplayFrom, ReplayOptions, ReplayReport, RuntimeConfig, RuntimeJoin, SimHandle, SimStats,
-    Storage, SyncPolicy, recover, replay, start,
+    Storage, SyncPolicy, recover, replay, snapshot, start,
 };
 
-use common::{Town, act, hash_of, new_world, play, play_inputs, plugins, spec};
+use common::{Town, act, hash_of, hex, new_world, play, play_inputs, plugins, spec};
 
 /// An interval that never ends during a test: with it only the explicit
 /// sync points (a snapshot, a new segment, the stop) force the log to the
@@ -649,4 +649,65 @@ async fn an_admin_command_survives_a_crash() {
     let rounds =
         recovery.world.catalogue().params.into_iter().find(|p| p.name == "town.heavy_rounds");
     assert_eq!(rounds.map(|p| p.value), Some(12));
+}
+
+#[tokio::test]
+async fn a_host_reads_the_snapshots_of_a_world_that_runs() {
+    let storage = MemStorage::new();
+    assert_eq!(snapshot::list(&storage), Ok(Vec::new()));
+    assert_eq!(snapshot::newest(&storage), Ok(None));
+
+    // A new world has its first snapshot: frame 0, no input.
+    let (handle, join, _) = open(&storage, config(NEVER, 4, 5));
+    let first = snapshot::newest(&storage).expect("the storage reads").expect("a snapshot");
+    assert_eq!((first.frame, first.seq), (0, 0));
+    assert_eq!(hex(&first.state_hash), hash_of(&common::world()));
+
+    // The world runs 9 frames: snapshots at the frames 4 and 8.
+    play_with_snapshots(&handle, 0, 9, 4).await;
+    let listed = snapshot::list(&storage).expect("the storage lists");
+    let frames: Vec<u64> = listed.iter().map(|entry| entry.frame).collect();
+    assert_eq!(frames, [0, 4, 8]);
+    let names: Vec<&str> = listed.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(names, storage.list("snapshots").expect("list"));
+    assert_eq!(listed[0].seq, 0);
+    assert!(listed[1].seq < listed[2].seq, "more inputs in the later snapshot: {listed:?}");
+
+    // The newest one has the state hash that the world had at frame 8,
+    // while the world is at frame 9.
+    let at_eight = twin(|handle| async move { play(&handle, 0, 8).await }).await;
+    let newest = snapshot::newest(&storage).expect("the storage reads").expect("a snapshot");
+    assert_eq!((newest.frame, newest.seq), (8, listed[2].seq));
+    assert_eq!(hex(&newest.state_hash), hash_of(&at_eight));
+    assert_eq!(handle.stats().await.expect("stats").frame, 9);
+
+    // A rollback to frame 4 makes the snapshot of frame 8 void. Here its
+    // file comes back, as when the rollback could not delete it: the list
+    // has it, and the newest usable snapshot is that of frame 4.
+    let void = storage.read(&listed[2].name).expect("the snapshot of frame 8");
+    assert_eq!(handle.rollback(7).await.map(|report| report.frame), Ok(4));
+    assert_eq!(snapshot_frames(&storage), [0, 4]);
+    storage.write(&listed[2].name, &[&void]).expect("the file is written");
+    let frames: Vec<u64> =
+        snapshot::list(&storage).expect("list").iter().map(|entry| entry.frame).collect();
+    assert_eq!(frames, [0, 4, 8]);
+    let at_four = twin(|handle| async move { play(&handle, 0, 4).await }).await;
+    let newest = snapshot::newest(&storage).expect("the storage reads").expect("a snapshot");
+    assert_eq!((newest.frame, newest.seq), (4, listed[1].seq));
+    assert_eq!(hex(&newest.state_hash), hash_of(&at_four));
+
+    // A file with the name of a later snapshot and no header is passed
+    // over too.
+    let junk = "snapshots/00000000000000009999-00000000000000000099.snap";
+    storage.write(junk, &[b"not a snapshot"]).expect("the file is written");
+    assert_eq!(snapshot::list(&storage).expect("list").last().map(|entry| entry.frame), Some(99));
+    assert_eq!(snapshot::newest(&storage).map(|meta| meta.map(|meta| meta.frame)), Ok(Some(4)));
+    storage.delete(junk).expect("the file is deleted");
+
+    // A clean stop writes the final snapshot: the newest one is the world
+    // at the stop.
+    handle.step(2).await.expect("step");
+    let world = join.shutdown().expect("a clean stop");
+    let last = snapshot::newest(&storage).expect("the storage reads").expect("a snapshot");
+    assert_eq!((last.frame, hex(&last.state_hash)), (6, hash_of(&world)));
 }

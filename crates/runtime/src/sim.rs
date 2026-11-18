@@ -6,11 +6,20 @@
 //!    ([`Journal::record`](crate::Journal::record));
 //! 2. lets the journal make them durable
 //!    ([`Journal::commit`](crate::Journal::commit));
-//! 3. applies the inputs and answers the calls, in the order of arrival.
+//! 3. applies the inputs and answers the calls, in the order of arrival;
+//! 4. builds the observations of all `observe` calls of the batch in one
+//!    step (see [`crate::observe`]).
 //!
 //! So an input is in the log before the world has it, and one write to the
 //! disk serves a whole batch. A frame is a batch of its own, because the
 //! pacer decides its `skip` list only when the frame before it has run.
+//!
+//! An observation shows the world after every input of its batch, also
+//! after an input that came later than the `observe` call. That is a state
+//! that the world had between the call and its answer. The observation of
+//! a `wait` call is built on its own, when the call is answered.
+
+mod observing;
 
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
@@ -65,7 +74,9 @@ enum Read {
 enum Pending {
     /// An input that the journal recorded. It is applied after the commit.
     Input { input: Input, reply: InputReply },
-    /// A read. It is answered in its place between the inputs.
+    /// A read. A view, the statistics and the start of a `wait` call are
+    /// answered in their place between the inputs. An `observe` call is
+    /// answered after the last input of the batch.
     Read(Read),
 }
 
@@ -93,6 +104,11 @@ struct Sim<'a> {
     batch: Vec<Pending>,
     /// The answers of the current batch that are ready.
     answers: Vec<Answer>,
+    /// The `observe` calls of the current batch. Their observations are
+    /// built together, after the inputs of the batch.
+    observes: Vec<(ResidentId, ObserveOpts)>,
+    /// Where the answers to `observes` go, in the same order.
+    observe_replies: Vec<Reply<Observation>>,
     /// The thread that sends the answers of large batches. `None` when the
     /// operating system could not start it; the answers are then sent here.
     replier: Option<Replier>,
@@ -120,6 +136,11 @@ struct Sim<'a> {
     commit_time: Duration,
     apply_time: Duration,
     reply_time: Duration,
+    /// Observations that this thread built.
+    observations: u64,
+    /// Steps in which this thread built observations.
+    observe_batches: u64,
+    observe_time: Duration,
 }
 
 /// Returns true when an observation holds news that the filter lets
@@ -273,6 +294,7 @@ impl Sim<'_> {
                 Pending::Read(read) => self.read(read, &mut answers),
             }
         }
+        self.answer_observes(&mut answers);
         let apply_done = Instant::now();
         match &self.replier {
             // A large batch means load: another thread wakes the callers
@@ -297,7 +319,10 @@ impl Sim<'_> {
     fn read(&mut self, read: Read, answers: &mut Vec<Answer>) {
         match read {
             Read::Observe { resident, opts, reply } => {
-                answers.push(Answer::Observation(reply, self.world.observe(resident, &opts)));
+                // The answer comes with those of the other `observe` calls
+                // of the batch.
+                self.observes.push((resident, opts));
+                self.observe_replies.push(reply);
             }
             Read::Wait { resident, filter, since, timeout, reply } => {
                 self.start_wait(resident, filter, since, timeout, reply);
@@ -388,13 +413,6 @@ impl Sim<'_> {
     }
 
     // ---- Waiting calls ----------------------------------------------------------
-
-    /// Builds the observation that a waiting call gets. A cursor that is
-    /// ahead of the inbox (after a rollback) counts as "now".
-    fn observation(&self, resident: ResidentId, since: u64) -> Result<Observation, SimError> {
-        let since = since.min(self.world.next_notice(resident)?);
-        self.world.observe(resident, &ObserveOpts { since_notice: since, ..ObserveOpts::default() })
-    }
 
     /// Answers the waiting calls of a resident whose filter lets the new
     /// notices through. The others keep waiting.
@@ -510,6 +528,9 @@ impl Sim<'_> {
             commit_micros: micros(self.commit_time),
             apply_micros: micros(self.apply_time),
             reply_micros: micros(self.reply_time),
+            observations: self.observations,
+            observe_batches: self.observe_batches,
+            observe_micros: micros(self.observe_time),
         }
     }
 }
@@ -615,6 +636,8 @@ pub(crate) fn run(
         max_waiters_per_resident: config.max_waiters_per_resident,
         batch: Vec::new(),
         answers: Vec::new(),
+        observes: Vec::new(),
+        observe_replies: Vec::new(),
         replier,
         reply_handoff: config.reply_handoff.max(1),
         recorded: 0,
@@ -635,6 +658,9 @@ pub(crate) fn run(
         commit_time: Duration::ZERO,
         apply_time: Duration::ZERO,
         reply_time: Duration::ZERO,
+        observations: 0,
+        observe_batches: 0,
+        observe_time: Duration::ZERO,
     };
     let batch = config.batch.max(1);
     // A panic of a plugin or of the kernel ends the thread. The journal

@@ -78,6 +78,16 @@ pub struct SimStats {
     pub apply_micros: u64,
     /// Time that the simulation thread spent handing answers to callers.
     pub reply_micros: u64,
+    /// Observations that the simulation thread built since the start, for
+    /// `observe` calls and for `wait` calls. A cluster builds observations
+    /// in its workers and reports 0.
+    pub observations: u64,
+    /// Steps in which the simulation thread built observations. One step
+    /// builds the observations of all `observe` calls of one batch, or of
+    /// all `wait` calls that one frame woke.
+    pub observe_batches: u64,
+    /// Time that the simulation thread spent building observations.
+    pub observe_micros: u64,
 }
 
 /// Converts a duration to whole microseconds.
