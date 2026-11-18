@@ -1,0 +1,60 @@
+# Limits of the spectator service. Every number of the crate lives here.
+# `Config::default()` reads this file. `router_with` takes other values.
+
+[feed]
+# Public events that the cache keeps, with any drama score.
+recent_events = 10000
+# Public events that the cache keeps longer: those with a drama score of at
+# least `notable_drama`.
+notable_events = 10000
+# Lowest drama score of a notable event (see docs/design/game-design.md, 6).
+notable_drama = 11
+# Lowest drama score of a headline. Every viewer gets headlines.
+headline_drama = 71
+# Events in one answer of `/v1/feed` when the query has no `limit`.
+page_default = 50
+# Greatest `limit` of `/v1/feed`.
+page_max = 500
+
+[socket]
+# Messages that wait for one viewer. A viewer whose queue is full loses
+# frames. It must be at least `max_zones + 2`.
+client_queue = 256
+# Frames that the task of one viewer can fall behind before it loses frames.
+frame_buffer = 64
+# Zones that one viewer can subscribe to.
+max_zones = 32
+# Greatest size of a message from a viewer, in bytes.
+max_message_bytes = 16384
+# Headlines in one `frame` message. The highest drama scores win.
+headlines_per_frame = 8
+# Events in one `delta` message. The highest drama scores win.
+zone_events_per_frame = 256
+# Real milliseconds that one message can take to leave before the server
+# closes the connection.
+send_timeout_ms = 10000
+
+[profile]
+# Events in one profile.
+events = 20
+# Residents that left the world and still have a profile.
+departed = 4096
+
+[map]
+# Frames after which a request reads the tiles and sites of a zone again.
+refresh_frames = 60
+
+[start]
+# Real milliseconds before the cache tries again to read the world when the
+# simulation is overloaded.
+retry_ms = 200
+
+[published]
+# Greatest number of series (kind and key) that the cache keeps.
+max_series = 4096
+# Greatest length of a key, in bytes.
+max_key_bytes = 64
+# The kind that `/v1/stats/economy` serves.
+stats_kind = "finance.stats_published"
+# The kind that `/v1/leaderboards/{board}` serves. The board is the key.
+leaderboard_kind = "missions.leaderboard_published"

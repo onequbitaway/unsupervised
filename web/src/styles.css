@@ -1,0 +1,427 @@
+/* The page around the picture. Strong contrast and large type, so that
+   the text stays readable on a video stream. */
+
+:root {
+  --ink: #ffffff;
+  --ink-soft: #c3cad6;
+  --glass: rgba(9, 12, 18, 0.9);
+  --edge: rgba(255, 255, 255, 0.16);
+  --accent: #ffe14d;
+  --headline: #ff5a5a;
+  --news: #ffb347;
+  --local: #8fd0c8;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* One unit of type. It grows with the height of the screen. */
+  --u: clamp(13px, 1.75vh, 26px);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: #0b0e14;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--u);
+  line-height: 1.3;
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#app {
+  position: relative;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.stage:active {
+  cursor: grabbing;
+}
+
+.stage canvas {
+  display: block;
+}
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  font-size: calc(var(--u) * 1.4);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+/* The head: top left. */
+
+.corner {
+  position: absolute;
+  top: var(--u);
+  left: var(--u);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 0.6);
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.hud,
+.legend,
+.controls,
+.panel {
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: calc(var(--u) * 0.6);
+}
+
+.hud {
+  padding: calc(var(--u) * 0.7) var(--u);
+}
+
+.hud-title {
+  font-size: calc(var(--u) * 0.85);
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+}
+
+.hud-clock {
+  font-size: calc(var(--u) * 1.5);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-counts,
+.hud-place {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.hud-place {
+  color: var(--ink);
+}
+
+.hud-notice {
+  margin-top: calc(var(--u) * 0.4);
+  font-weight: 700;
+  color: var(--news);
+}
+
+.legend {
+  padding: calc(var(--u) * 0.5) var(--u);
+  font-weight: 600;
+}
+
+.legend-title {
+  font-size: calc(var(--u) * 0.85);
+  color: var(--ink-soft);
+}
+
+.legend-scale {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-bar {
+  width: calc(var(--u) * 10);
+  height: calc(var(--u) * 0.7);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+}
+
+/* The controls: top right. */
+
+.controls {
+  position: absolute;
+  top: var(--u);
+  right: var(--u);
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--u) * 0.5);
+  align-items: center;
+  justify-content: flex-end;
+  max-width: calc(var(--u) * 24);
+  padding: calc(var(--u) * 0.5);
+}
+
+.controls-levels,
+.controls-zoom {
+  display: flex;
+  gap: calc(var(--u) * 0.3);
+}
+
+.controls-hint {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: calc(var(--u) * 0.8);
+  color: var(--ink-soft);
+  text-align: right;
+}
+
+button {
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--edge);
+  border-radius: calc(var(--u) * 0.4);
+  padding: calc(var(--u) * 0.3) calc(var(--u) * 0.7);
+  cursor: pointer;
+}
+
+button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button.active {
+  color: #10131a;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The panel of the selected resident: right. */
+
+.panel {
+  position: absolute;
+  top: calc(var(--u) * 8);
+  right: var(--u);
+  width: min(calc(var(--u) * 22), 40vw);
+  max-height: calc(100% - var(--u) * 20);
+  overflow: auto;
+  padding: var(--u);
+  box-sizing: border-box;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.6);
+}
+
+.panel-swatch {
+  flex: none;
+  width: calc(var(--u) * 1.2);
+  height: calc(var(--u) * 1.2);
+  border: 2px solid #10131a;
+  outline: 2px solid var(--ink);
+  border-radius: 50%;
+}
+
+.panel-name {
+  flex: 1;
+  margin: 0;
+  font-size: calc(var(--u) * 1.35);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.panel-close {
+  flex: none;
+  padding: 0 calc(var(--u) * 0.5);
+  font-size: calc(var(--u) * 1.2);
+}
+
+.panel-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: calc(var(--u) * 0.2) var(--u);
+  margin: calc(var(--u) * 0.8) 0;
+}
+
+.panel-facts dt {
+  color: var(--ink-soft);
+}
+
+.panel-facts dd {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.panel-note {
+  margin: 0 0 calc(var(--u) * 0.8);
+  font-weight: 700;
+  color: var(--news);
+}
+
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--u) * 0.5);
+}
+
+.panel-link {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.panel-title {
+  margin: var(--u) 0 calc(var(--u) * 0.4);
+  font-size: calc(var(--u) * 0.85);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.panel-events {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel-events li {
+  padding: calc(var(--u) * 0.35) 0;
+  border-top: 1px solid var(--edge);
+  overflow-wrap: anywhere;
+}
+
+.panel-events time {
+  display: block;
+  font-size: calc(var(--u) * 0.75);
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-none {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+/* The news ticker: bottom. */
+
+.ticker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+.ticker-recent {
+  align-self: flex-start;
+  max-width: min(70%, calc(var(--u) * 48));
+  margin: 0 0 calc(var(--u) * 0.5) var(--u);
+  padding: 0;
+  list-style: none;
+  pointer-events: auto;
+}
+
+.ticker-row {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: calc(var(--u) * 0.25);
+  padding: calc(var(--u) * 0.2) calc(var(--u) * 0.6);
+  overflow: hidden;
+  font-size: calc(var(--u) * 0.9);
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--glass);
+  border-left: 4px solid var(--local);
+  border-radius: 0 calc(var(--u) * 0.3) calc(var(--u) * 0.3) 0;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.ticker-row[data-tag='headline'] {
+  border-left-color: var(--headline);
+}
+
+.ticker-row[data-tag='news'] {
+  border-left-color: var(--news);
+}
+
+.ticker-main {
+  display: flex;
+  align-items: center;
+  gap: var(--u);
+  width: 100%;
+  padding: calc(var(--u) * 0.6) var(--u);
+  font-size: calc(var(--u) * 1.35);
+  font-weight: 700;
+  text-align: left;
+  background: rgba(6, 8, 12, 0.96);
+  border: 0;
+  border-top: 3px solid var(--local);
+  border-radius: 0;
+  pointer-events: auto;
+}
+
+.ticker-main:hover {
+  background: rgba(6, 8, 12, 0.96);
+}
+
+.ticker-main[data-tag='headline'] {
+  border-top-color: var(--headline);
+}
+
+.ticker-main[data-tag='news'] {
+  border-top-color: var(--news);
+}
+
+.ticker-tag {
+  flex: none;
+  padding: calc(var(--u) * 0.1) calc(var(--u) * 0.5);
+  font-size: calc(var(--u) * 0.85);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: #10131a;
+  background: var(--local);
+  border-radius: calc(var(--u) * 0.25);
+}
+
+.ticker-main[data-tag='headline'] .ticker-tag {
+  background: var(--headline);
+}
+
+.ticker-main[data-tag='news'] .ticker-tag {
+  background: var(--news);
+}
+
+.ticker-line {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* `?broadcast=1`: a picture for a video stream. No controls, no pointer. */
+
+.broadcast .controls,
+.broadcast .panel-actions,
+.broadcast .panel-close {
+  display: none;
+}
+
+.broadcast .stage,
+.broadcast .ticker-main,
+.broadcast .ticker-row {
+  cursor: none;
+}

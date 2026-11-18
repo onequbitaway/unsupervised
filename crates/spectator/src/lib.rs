@@ -2,107 +2,114 @@
 //!
 //! Viewers read the world through this crate. It can never change the
 //! simulation: it only calls the read methods of [`SimHandle`].
+//!
+//! # How it works
+//!
+//! One task reads the frames of the simulation ([`SimHandle::frames`]) and
+//! keeps a read-only cache: the residents of every zone, the number of
+//! residents per zone, tiles and sites, the recent public events, the
+//! published state and the last residents that left the world. At the
+//! start, and after it lost frames, the task reads the whole world with
+//! [`SimHandle::view`].
+//!
+//! Every answer for a viewer comes from the cache. A viewer costs the
+//! simulation nothing, however many viewers there are and however slow
+//! they are. The one exception is the map of a zone (tiles and sites): a
+//! request reads it again when the copy is old, at most one request at a
+//! time for a zone.
+//!
+//! # Routes
+//!
+//! | Route | Answer |
+//! | --- | --- |
+//! | `GET /v1/world` | `WorldView::layout` |
+//! | `GET /v1/world/zones/{zone}` | `WorldView::zone` |
+//! | `GET /v1/spectate` | The WebSocket feed: [`wire::ClientMessage`] in, [`wire::ServerMessage`] out |
+//! | `GET /v1/spectate/stats` | [`wire::FeedStats`] |
+//! | `GET /v1/feed` | [`wire::FeedPage`] |
+//! | `GET /v1/residents/{id}/profile` | [`wire::Profile`] |
+//! | `GET /v1/published` | [`wire::PublishedIndex`] |
+//! | `GET /v1/published/{kind}` | [`wire::PublishedKind`] |
+//! | `GET /v1/published/{kind}/{key}` | [`wire::Published`] |
+//! | `GET /v1/stats/economy` | [`wire::PublishedKind`] of the statistics kind |
+//! | `GET /v1/leaderboards/{board}` | [`wire::Published`] of the leaderboard kind |
+//! | `GET /debug` | A page without a build step that draws every resident as a dot |
+//!
+//! `docs/design/protocol.md`, section "Viewer feed", is the contract of
+//! the feed.
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
+mod cache;
+mod config;
+mod digest;
+mod http;
+mod hub;
+mod pump;
+mod session;
+pub mod wire;
+
+use std::sync::Arc;
+
+use axum::Router;
+use axum::extract::State;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::response::{Html, Response};
 use axum::routing::get;
-use axum::{Json, Router};
-use serde_json::{Value, json};
-use tokio::sync::broadcast::error::RecvError;
-use unsup_protocol::{ViewQuery, ZoneId};
 use unsup_runtime::SimHandle;
 
-/// Returns the routes that viewers use.
-pub fn router(sim: SimHandle) -> Router {
-    Router::new()
-        .route("/v1/world", get(layout))
-        .route("/v1/world/zones/{zone}", get(zone))
-        .route("/v1/spectate", get(spectate))
-        .route("/debug", get(|| async { Html(DEBUG_PAGE) }))
-        .with_state(sim)
-}
-
-async fn view(sim: &SimHandle, query: ViewQuery) -> Response {
-    match sim.view(query).await {
-        Ok(view) => Json(json!(view)).into_response(),
-        Err(error) => {
-            let body: Value =
-                json!({ "error": { "code": "not_found", "message": error.to_string() } });
-            (StatusCode::NOT_FOUND, Json(body)).into_response()
-        }
-    }
-}
-
-async fn layout(State(sim): State<SimHandle>) -> Response {
-    view(&sim, ViewQuery::Layout).await
-}
-
-async fn zone(State(sim): State<SimHandle>, Path(zone): Path<u32>) -> Response {
-    view(&sim, ViewQuery::Zone { zone: ZoneId(zone) }).await
-}
-
-async fn spectate(State(sim): State<SimHandle>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| feed(socket, sim))
-}
-
-/// Sends every frame to one viewer until the viewer leaves. A viewer that
-/// is too slow loses frames; it never slows the simulation.
-async fn feed(mut socket: WebSocket, sim: SimHandle) {
-    let mut frames = sim.frames();
-    loop {
-        match frames.recv().await {
-            Ok(frame) => {
-                let Ok(text) = serde_json::to_string(&*frame) else { continue };
-                if socket.send(Message::Text(text.into())).await.is_err() {
-                    return;
-                }
-            }
-            Err(RecvError::Lagged(_)) => {}
-            Err(RecvError::Closed) => return,
-        }
-    }
-}
+pub use crate::config::{
+    Config, ConfigError, FeedConfig, MapConfig, ProfileConfig, PublishedConfig, SocketConfig,
+    StartConfig,
+};
+use crate::hub::Hub;
 
 /// A page without a build step that draws every resident as a dot. It is a
 /// development tool. The real viewer is in `web/`.
-const DEBUG_PAGE: &str = r#"<!doctype html>
-<meta charset="utf-8">
-<title>Unsupervised: debug view</title>
-<style>body{margin:0;background:#111;color:#ccc;font:12px monospace}canvas{display:block}#s{position:fixed;left:8px;top:8px}</style>
-<div id="s">connecting</div><canvas id="c"></canvas>
-<script>
-const c = document.getElementById('c'), g = c.getContext('2d'), s = document.getElementById('s');
-const residents = new Map(); let bounds = null, frame = 0;
-function fit() { c.width = innerWidth; c.height = innerHeight; } fit(); onresize = fit;
-async function load() {
-  const world = await (await fetch('/v1/world')).json();
-  for (const z of world.zones) {
-    const b = z.bounds;
-    bounds = bounds ? { x0: Math.min(bounds.x0, b.x0), y0: Math.min(bounds.y0, b.y0), x1: Math.max(bounds.x1, b.x1), y1: Math.max(bounds.y1, b.y1) } : { ...b };
-    const view = await (await fetch('/v1/world/zones/' + z.id)).json();
-    for (const r of view.residents) residents.set(r.id, r.pos);
-  }
-  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/v1/spectate');
-  ws.onmessage = (m) => {
-    const f = JSON.parse(m.data); frame = f.frame;
-    for (const z of f.zones) {
-      for (const r of z.entered || []) residents.set(r.id, r.pos);
-      for (const [id, pos] of z.moved || []) residents.set(id, pos);
+const DEBUG_PAGE: &str = include_str!("debug.html");
+
+/// Returns the routes that viewers use, with the limits of
+/// `data/spectator.toml`.
+///
+/// Call it inside a Tokio runtime: the task that feeds the cache starts at
+/// once. Outside a runtime the task starts with the first request, and the
+/// feed has no events from before that.
+pub fn router(sim: SimHandle) -> Router {
+    build(sim, Config::default())
+}
+
+/// Returns the routes that viewers use, with other limits. See [`router`].
+///
+/// # Errors
+///
+/// Fails when [`Config::validate`] refuses the limits.
+pub fn router_with(sim: SimHandle, config: Config) -> Result<Router, ConfigError> {
+    config.validate()?;
+    Ok(build(sim, config))
+}
+
+fn build(sim: SimHandle, config: Config) -> Router {
+    let hub = Hub::new(sim, config);
+    if tokio::runtime::Handle::try_current().is_ok() {
+        hub.start();
     }
-  };
+    Router::new()
+        .route("/v1/world", get(http::world::layout))
+        .route("/v1/world/zones/{zone}", get(http::world::zone))
+        .route("/v1/spectate", get(spectate))
+        .route("/v1/spectate/stats", get(http::world::stats))
+        .route("/v1/feed", get(http::feed::feed))
+        .route("/v1/residents/{id}/profile", get(http::feed::profile))
+        .route("/v1/published", get(http::published::index))
+        .route("/v1/published/{kind}", get(http::published::kind))
+        .route("/v1/published/{kind}/{key}", get(http::published::series))
+        .route("/v1/stats/economy", get(http::published::economy))
+        .route("/v1/leaderboards/{board}", get(http::published::leaderboard))
+        .route("/debug", get(|| async { Html(DEBUG_PAGE) }))
+        .with_state(hub)
 }
-function draw() {
-  g.fillStyle = '#111'; g.fillRect(0, 0, c.width, c.height);
-  if (bounds) {
-    const k = Math.min(c.width / (bounds.x1 - bounds.x0), c.height / (bounds.y1 - bounds.y0));
-    g.fillStyle = '#6cf';
-    for (const p of residents.values()) g.fillRect((p.x - bounds.x0) * k, (p.y - bounds.y0) * k, Math.max(2, k), Math.max(2, k));
-  }
-  s.textContent = 'frame ' + frame + ', residents ' + residents.size;
-  requestAnimationFrame(draw);
+
+/// Upgrades a request to the WebSocket feed.
+async fn spectate(State(hub): State<Arc<Hub>>, upgrade: WebSocketUpgrade) -> Response {
+    upgrade
+        .max_message_size(hub.config.socket.max_message_bytes)
+        .on_upgrade(move |socket| session::run(socket, hub))
 }
-load(); draw();
-</script>
-"#;

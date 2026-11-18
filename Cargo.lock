@@ -1923,8 +1923,17 @@ name = "unsup-spectator"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "clap",
+ "futures",
+ "reqwest",
+ "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite 0.30.0",
+ "toml",
+ "tower-http 0.7.1",
+ "tracing",
+ "unsup-kernel",
  "unsup-protocol",
  "unsup-runtime",
 ]

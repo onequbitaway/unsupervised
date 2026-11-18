@@ -1,0 +1,32 @@
+{
+  "name": "unsupervised-viewer",
+  "version": "0.1.0",
+  "description": "The 2D viewer of Unsupervised.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "screenshot": "node scripts/screenshot.mjs",
+    "populate": "node scripts/populate.mjs",
+    "perf": "node scripts/perf.mjs"
+  },
+  "dependencies": {
+    "pixi.js": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "happy-dom": "21.0.4",
+    "playwright-core": "1.65.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  }
+}
