@@ -65,12 +65,20 @@ max_subjects = 512
 
 [facts]
 # Fields of the data of an event that name a resident: a resident id, a
-# list of ids, or a holder that is a resident.
+# list of ids, or a holder that is a resident. A field of this list must
+# name residents in every event that has it. A field that is a count in
+# one event (`candidates`, `members`, `jurors`, `second`) is not here: the
+# service would read the count as a resident id.
+#
+# The crime, politics and missions fields are those of
+# docs/design/modules/crime.md (12), politics.md (13.1) and missions.md
+# (13).
 resident_fields = [
-    "resident", "thief", "victim", "suspect", "officer", "judge", "target",
+    "resident", "victim", "officer", "judge", "target",
     "a", "b", "buyer", "seller", "tenant", "founder", "by", "winner",
-    "loser", "candidate", "voter", "about", "from", "to", "host", "owner",
-    "heir", "other", "parties", "candidates", "accused", "witness",
+    "winners", "previous", "leader", "candidate", "donor", "sponsor",
+    "member", "signed_by", "starter", "holders", "poster", "about", "from",
+    "to", "host", "owner", "heir", "other", "parties",
 ]
 # Fields that name the site of an event.
 site_fields = ["site"]
@@ -105,37 +113,63 @@ line_chars = 160
 # `only` (optional): data fields with the values that an event must have
 # there. An event without the field passes.
 
+# The events of the crime module that belong to a case have `case`. The
+# events without one (a release, a paid fine, a served sentence, a bounty)
+# join the story of their resident.
+# A warrant (drama 40) opens a story: when the city watch or an officer
+# saw the crime, the warrant is in the frame of the crime, and the feed has
+# the events of the global realm before those of the zones. An attempt
+# (30) and a search (20) open none.
 [[story]]
 kind = "crime"
 label = "Crime"
 prefixes = ["crime."]
-threads = [["case"], ["crime"]]
+threads = [["case"]]
 share = 1
 link_frames = 720
-open_drama = 41
+open_drama = 40
 min_events = 1
 headline = "{lead}"
 
+# Each event of an election has `election`. A recall has `recall` until it
+# calls an election.
 [[story]]
 kind = "election"
 label = "Election"
-prefixes = ["politics.election", "politics.candidate", "politics.campaign", "politics.vote", "politics.recall"]
-threads = [["election"], ["city", "office"], ["city"]]
+prefixes = [
+    "politics.election_", "politics.candidate_", "politics.donation_", "politics.rally_",
+    "politics.polls_", "politics.lead_", "politics.recall_",
+]
+threads = [["election"], ["recall"], ["city", "office"], ["office"]]
 share = 0
 link_frames = 1440
 open_drama = 11
 min_events = 1
 headline = "{latest}"
 
+# Each event of a bill has `bill`.
 [[story]]
 kind = "law"
 label = "Politics"
-prefixes = ["politics.law", "politics.bill"]
-threads = [["law"], ["bill"]]
+prefixes = ["politics.law_", "politics.bill_"]
+threads = [["bill"]]
 share = 0
 link_frames = 1440
 open_drama = 11
 min_events = 1
+headline = "{latest}"
+
+# Each event of a mission has `mission`. The mission of a sponsor and a
+# completion open a story. The mission of a resident joins one.
+[[story]]
+kind = "mission"
+label = "Mission"
+prefixes = ["missions.mission_"]
+threads = [["mission"]]
+share = 0
+link_frames = 1440
+open_drama = 30
+min_events = 2
 headline = "{latest}"
 
 [[story]]
@@ -199,6 +233,7 @@ offices = ["politics.", "society.org_granted", "society.org_grant_revoked", "fin
 jobs = [
     "economy.worker_hired", "economy.worker_left", "economy.business_opened",
     "economy.business_closed", "economy.shift_unpaid", "life.level_gained",
+    "missions.mission_",
 ]
 homes = [
     "economy.lease_started", "economy.lease_ended", "economy.tenant_evicted",
@@ -270,10 +305,53 @@ deals = [
 "society.household_joined" = "{name:resident|Someone} moved in with {name:host|a host}"
 "society.household_left" = "{name:resident|Someone} moved out from {name:host|a host}"
 "society.opinion_given" = "{name:from|Someone} spoke in public about {name:about|someone} ({word:verdict|an opinion})"
-"crime.theft_committed" = "{name:thief|Someone} stole {money:amount} from {name:victim|a victim}"
-"crime.heist_committed" = "{name:thief|Someone} took {money:amount} in a heist"
-"crime.investigation_opened" = "{name:officer|The police} opened an investigation against {name:suspect|a suspect}"
-"crime.arrest_made" = "{name:suspect|A suspect} was arrested"
-"crime.trial_ended" = "The trial of {name:accused|a suspect} ended ({word:verdict|no verdict})"
+# Crime. A crime has no actor and names no perpetrator: the first event
+# that names the resident is the arrest.
+"crime.theft_committed" = "A {word:kind|theft} took {money:value} in {place|the city}"
+"crime.assault_committed" = "{name:victim|A resident} was the victim of {word:kind|an assault} in {place|the city}"
+"crime.vandalism_committed" = "Vandals did damage of {money:damage} to {site:site|a building}"
+"crime.contraband_seized" = "The city watch seized contraband worth {money:value}"
+"crime.goods_fenced" = "Stolen goods worth {money:value} were sold in {city:city|the city}"
+"crime.warrant_issued" = "A warrant was issued for a {word:kind|crime} in {city:city|the city}"
+"crime.search_made" = "{name:officer|An officer} searched a resident in {place|the city}"
+"crime.arrest_made" = "{name:officer|The city watch} arrested {name:target|a suspect}"
+"crime.suspect_charged" = "{name:target|A suspect} was charged with {word:kind|a crime}"
+"crime.jury_summoned" = "A jury of {word:jurors|some} residents was called for a {word:kind|crime} trial"
+"crime.verdict_given" = "The verdict for {name:target|a defendant} in the {word:kind|crime} trial: guilty {word:guilty|unknown}"
+"crime.suspect_released" = "{name:target|A suspect} was released ({word:reason|no reason given})"
+"crime.sentence_served" = "{name:resident|An inmate} served a sentence"
+"crime.fine_paid" = "{name:resident|A convict} paid {money:amount} to the court"
+"crime.fine_defaulted" = "{name:resident|A convict} did not pay {money:owed} and went to jail for it"
+"crime.site_repaired" = "{name:by|Someone} repaired {site:site|a building}"
+"crime.bounty_posted" = "{name:by|Someone} put a bounty of {money:amount} on {name:target|a resident}"
+"crime.bounty_paid" = "{name:officer|An officer} earned the bounty of {money:amount} on {name:target|a resident}"
+"crime.bounty_expired" = "The bounty of {money:amount} on {name:target|a resident} ended ({word:reason|expired})"
+# Politics. An election event has `office`, and `city` when a city votes.
+"politics.election_called" = "An election for {word:office|an office} was called in {city:city|the country}"
 "politics.candidate_registered" = "{name:candidate|A resident} runs for {word:office|an office} in {city:city|the country}"
-"politics.election_decided" = "{name:winner|A candidate} won the election for {word:office|an office} in {city:city|the country}"
+"politics.donation_made" = "{name:donor|Someone} gave {money:amount} to the campaign of {name:candidate|a candidate}"
+"politics.rally_held" = "{name:candidate|A candidate} held a rally for {word:office|an office} in {place|the city}"
+"politics.polls_opened" = "The polls opened for {word:office|an office} in {city:city|the country}"
+"politics.lead_changed" = "{name:leader|A candidate} took the lead for {word:office|an office} in {city:city|the country}"
+"politics.election_decided" = "{name:winners|Nobody} won the election for {word:office|an office} in {city:city|the country}"
+"politics.bill_proposed" = "{name:sponsor|A member} proposed to set {word:param|a parameter} to {word:value|a new value}"
+"politics.bill_voted" = "{name:member|A member} voted {word:vote|on} the bill for {word:param|a parameter}"
+"politics.bill_passed" = "The bill for {word:param|a parameter} passed with {word:yes|some} to {word:no|some} votes"
+"politics.bill_rejected" = "The bill for {word:param|a parameter} failed ({word:why|rejected})"
+"politics.law_vetoed" = "{name:by|The executive} vetoed the bill for {word:param|a parameter}"
+"politics.law_enacted" = "A law set {word:param|a parameter} to {word:value|a new value} in {city:city|the country}"
+"politics.official_appointed" = "{name:by|The executive} appointed {name:resident|a resident} as {word:post|an official}"
+"politics.official_dismissed" = "{name:by|The executive} dismissed {name:resident|a resident} as {word:post|an official}"
+"politics.recall_started" = "{name:starter|A resident} started a recall of the {word:office|office} in {city:city|the country}"
+"politics.recall_succeeded" = "The recall of the {word:office|office} in {city:city|the country} got its signatures"
+"politics.recall_failed" = "The recall of the {word:office|office} in {city:city|the country} failed"
+"politics.salaries_paid" = "The government of {city:city|the country} paid salaries of {money:total}"
+# Missions.
+"missions.mission_posted" = "A mission was posted: “{text:title|a mission}” for {money:reward}"
+"missions.mission_accepted" = "{name:resident|Someone} took a mission"
+"missions.mission_abandoned" = "{name:resident|Someone} gave up a mission"
+"missions.mission_completed" = "{name:resident|Someone} completed a mission and earned {money:paid}"
+"missions.mission_closed" = "A mission closed ({word:reason|closed})"
+"missions.season_started" = "Season {word:season|a new season} started"
+"missions.season_ended" = "Season {word:season|the season} ended"
+"missions.season_reset_applied" = "The season reset changed {word:residents|some} residents"

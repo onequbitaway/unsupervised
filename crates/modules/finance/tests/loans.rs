@@ -537,6 +537,7 @@ fn a_loan_that_the_account_cannot_hold_is_refused() {
 
     let error = err(&mut w, ann, "loan_request", json!({ "amount": 10_001, "term_days": 4 }));
     assert_eq!(error.code, ErrorCode::InvalidArgs);
+    assert_eq!(error.message, "The amount is too large for your account.");
     // Nothing was created, so nothing is owed.
     assert_eq!(minted(&w, "bank.loan_issue"), 0);
     let bank = w.global().res::<Bank>();

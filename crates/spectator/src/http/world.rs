@@ -6,7 +6,7 @@ use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
-use unsup_protocol::{ViewQuery, WorldView, ZoneId};
+use unsup_protocol::{WorldView, ZoneId};
 
 use super::error::ApiError;
 use crate::delay::Held;
@@ -47,20 +47,25 @@ impl Refresh<'_> {
     }
 }
 
-/// Reads the tiles and sites of a zone again when the copy of the cache is
-/// old. One request at a time does this for a zone, so viewers cannot load
-/// the simulation with it.
+/// Asks for a new copy of the tiles and sites of a zone when the copy of
+/// the cache is old. One request at a time does this for a zone, so
+/// viewers cannot load the simulation with it.
+///
+/// The request that asks does not get the new copy. The copy goes to the
+/// delay of the stream with the stamp of its read (`source.rs`), like
+/// everything that the service reads, and the cache gets it when the
+/// delay is over. Only a service without a delay takes it at once.
 async fn refresh_map(hub: &Hub, zone: ZoneId) {
     if !hub.cache().claim_refresh(zone, hub.config.map.refresh_frames) {
         return;
     }
     let refresh = Refresh { hub, zone };
-    match hub.sim.view(ViewQuery::Zone { zone }).await {
-        Ok(view) if hub.config.stream.delay_frames == 0 => hub.cache_mut().set_map(view),
-        // The map waits like everything else for viewers. No other request
-        // reads the map again until the cache has this one.
-        Ok(view) => {
-            hub.delay().push(hub.live(), Held::Map(view));
+    match hub.source.read_map(zone).await {
+        Ok(read) if hub.config.stream.delay_frames == 0 => hub.cache_mut().set_map(read.value),
+        // No other request reads the map again until the cache has this
+        // one.
+        Ok(read) => {
+            hub.delay().push(read.stamp, Held::Map(read.value));
             refresh.leave_open();
         }
         // The old map stays. A later request tries again.

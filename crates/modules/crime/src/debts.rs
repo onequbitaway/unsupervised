@@ -1,11 +1,12 @@
 //! The debts of a convict: fines and restitutions.
 //!
 //! A fine goes to the treasury of the city of the case. A restitution
-//! goes to the victim. A debt that is not paid when its time is over
+//! goes to the victim. A restitution to a site that cannot be reached goes
+//! to the city treasury. A debt that is not paid when its time is over
 //! becomes jail time.
 
 use unsup_kernel::serde_json::json;
-use unsup_kernel::{Dest, EventMeta, Holder, Idx, Money, Realm};
+use unsup_kernel::{CityId, Dest, EventMeta, Holder, Idx, Money, OrgId, Realm};
 
 use crate::calc;
 use crate::hot;
@@ -14,28 +15,63 @@ use crate::jail;
 use crate::names::{event, label, notice};
 use crate::record::{Debt, Record};
 
+/// Where the money of a debt goes.
+enum Route {
+    /// To a holder in the ledger of this zone.
+    Here(Holder),
+    /// By wire to a holder in another realm.
+    Wire(Dest, Holder),
+}
+
+/// Returns the treasury of the city that gets a restitution whose site
+/// cannot be reached: the city of the zone that the debt names, when the
+/// world has that zone, else the city where the convict is now.
+fn treasury_for(realm: &Realm, debt: &Debt) -> Holder {
+    let named = debt.zone.and_then(|zone| realm.layout().zone(zone)).map(|zone| zone.city);
+    let city = named.or_else(|| realm.zone_info().map(|zone| zone.city)).unwrap_or(CityId(0));
+    Holder::Org(OrgId::city(city))
+}
+
+/// Finds the way of the money of a debt.
+///
+/// A site is reached in two ways: it is a site of this zone, or the debt
+/// names its zone and the world has that zone. A zone cannot see the sites
+/// of another zone, so a wire to a zone of the world goes out as it is.
+///
+/// Every other site cannot be reached: the debt names no zone and the site
+/// is not here, the debt names a zone that the world does not have, or the
+/// site of this zone is gone. That money goes to the city treasury, so
+/// that the convict can always pay what it owes.
+fn route(realm: &Realm, debt: &Debt) -> Route {
+    let here = realm.zone_info().map(|zone| zone.id);
+    let treasury = || Route::Wire(Dest::Global, treasury_for(realm, debt));
+    match debt.to {
+        Holder::Resident(to) if realm.idx_of(to).is_some() => Route::Here(debt.to),
+        Holder::Resident(to) => Route::Wire(Dest::Resident(to), debt.to),
+        Holder::Site(site) => match debt.zone {
+            Some(zone) if Some(zone) != here => {
+                if realm.layout().zone(zone).is_some() {
+                    Route::Wire(Dest::Zone(zone), debt.to)
+                } else {
+                    treasury()
+                }
+            }
+            _ if realm.sites().get(site).is_some() => Route::Here(debt.to),
+            _ => treasury(),
+        },
+        _ => Route::Wire(Dest::Global, debt.to),
+    }
+}
+
 /// Sends money of a resident to the holder of a debt, in whatever realm
 /// that holder is. Returns true when the money left the resident.
 fn send(realm: &Realm, idx: Idx, debt: &Debt, amount: i64) -> bool {
     let from = Holder::Resident(realm.id_of(idx));
     let reason = if debt.fine { label::FINE } else { label::RESTITUTION };
     let money = Money(amount);
-    let here = realm.zone_info().map(|zone| zone.id);
-    let moved = match debt.to {
-        Holder::Resident(to) if realm.idx_of(to).is_some() => {
-            realm.ledger_mut().transfer_money(from, debt.to, money, reason).is_ok()
-        }
-        Holder::Resident(to) => {
-            realm.wire_money(from, Dest::Resident(to), debt.to, money, reason).is_ok()
-        }
-        Holder::Site(_) if debt.zone.is_none() || debt.zone == here => {
-            realm.ledger_mut().transfer_money(from, debt.to, money, reason).is_ok()
-        }
-        Holder::Site(_) => match debt.zone {
-            Some(zone) => realm.wire_money(from, Dest::Zone(zone), debt.to, money, reason).is_ok(),
-            None => false,
-        },
-        _ => realm.wire_money(from, Dest::Global, debt.to, money, reason).is_ok(),
+    let moved = match route(realm, debt) {
+        Route::Here(to) => realm.ledger_mut().transfer_money(from, to, money, reason).is_ok(),
+        Route::Wire(dest, to) => realm.wire_money(from, dest, to, money, reason).is_ok(),
     };
     if moved
         && !debt.fine

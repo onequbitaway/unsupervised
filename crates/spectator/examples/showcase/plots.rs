@@ -48,34 +48,36 @@ pub fn start(frame: u64, numbers: &Numbers, pick: &dyn Fn(u64) -> ResidentId) ->
         let n = turn(plots.crime_every);
         let (thief, victim, officer) = (pick(n * 7 + 1), pick(n * 7 + 2), pick(n * 13 + 5));
         let case = 1_000 + n;
-        // Every third crime is a heist.
+        // The events have the data of the crime module
+        // (`docs/design/modules/crime.md`, section 12). Every third crime
+        // is a heist: a burglary with a large loss.
         let heist = n % 3 == 2;
         if heist {
             let data = json!({
-                "thief": thief, "victim": victim, "amount": 450_000 + 90_000 * (n % 7), "case": case,
+                "case": case, "kind": "burglary", "city": 0, "site": null,
+                "value": 450_000 + 90_000 * (n % 7), "attempt": false,
             });
             steps.push(step(
                 frame,
                 thief,
                 "happen",
-                "crime.heist_committed",
+                "crime.theft_committed",
                 drama.heist_committed,
                 data,
             ));
         } else {
             // A theft needs the victim in the same district. When it is
-            // not there, the investigation starts the story.
-            let args = json!({ "other": victim });
+            // not there, the warrant starts the story.
+            let args = json!({ "other": victim, "case": case });
             steps.push(Step { due: frame, actor: thief, verb: "rob", args });
         }
-        let suspect = json!({ "case": case, "officer": officer, "suspect": thief });
         steps.push(step(
             frame + plots.investigation_after,
             officer,
             "happen",
-            "crime.investigation_opened",
+            "crime.warrant_issued",
             drama.investigation_opened,
-            suspect.clone(),
+            json!({ "case": case, "kind": "theft", "city": 0 }),
         ));
         steps.push(step(
             frame + plots.arrest_after,
@@ -83,18 +85,24 @@ pub fn start(frame: u64, numbers: &Numbers, pick: &dyn Fn(u64) -> ResidentId) ->
             "happen",
             "crime.arrest_made",
             drama.arrest_made,
-            suspect,
+            json!({
+                "officer": officer, "target": thief, "case": case, "cases": [case], "city": 0,
+                "watch": false,
+            }),
         ));
         steps.push(step(
             frame + plots.trial_after,
             thief,
             "happen",
-            "crime.trial_ended",
+            "crime.verdict_given",
             drama.trial_ended,
-            json!({ "case": case, "accused": thief, "verdict": if n % 2 == 0 { "guilty" } else { "not_guilty" } }),
+            json!({
+                "case": case, "kind": "theft", "city": 0, "target": thief, "guilty": n % 2 == 0,
+                "by": "jury", "judge": null, "fine": 3_000, "jail_ticks": 240,
+                "restitution": 4_500, "votes_guilty": 3, "votes_not_guilty": 2,
+            }),
         ));
     }
-
     if at(plots.feud_every, 40) {
         let n = turn(plots.feud_every);
         let (a, b) = (pick(n * 11 + 3), pick(n * 11 + 4));
@@ -188,7 +196,10 @@ pub fn campaign(
                 "declare",
                 "politics.candidate_registered",
                 numbers.plot_drama.candidate_registered,
-                json!({ "city": city, "office": "mayor", "candidate": candidate }),
+                json!({
+                    "gov": "city", "city": city, "office": "mayor", "kind": "regular",
+                    "candidate": candidate, "candidates": n + 1, "fee": 5_000,
+                }),
             )
         })
         .collect()
@@ -210,26 +221,35 @@ pub fn stats(frame: u64, residents: u64) -> Value {
     })
 }
 
-/// Returns the boards: the richest residents and the models. `name` gives
-/// the name of a resident.
+/// Returns the board of the richest residents, in the shape of the
+/// missions module (`docs/design/modules/missions.md`, section 10.3): the
+/// top residents, and the sums for each declared model.
 pub fn boards(frame: u64, numbers: &Numbers, pick: &dyn Fn(u64) -> ResidentId) -> Vec<Value> {
     let rows = numbers.plots.board_rows;
     let turn = frame / numbers.plots.boards_every.max(1);
-    let wealth: Vec<Value> = (0..rows)
+    let top: Vec<Value> = (0..rows)
         .map(|rank| {
+            let resident = pick(rank * 31 + 1);
             json!({
-                "resident": pick(rank * 31 + 1),
+                "rank": rank + 1,
+                "resident": resident,
+                "owner": 1 + resident.0 % 20,
+                "model": MODELS[(rank % 3) as usize],
                 "score": 9_800_000 - 870_000 * rank as i64 + 12_000 * ((turn + rank) % 9) as i64,
             })
         })
         .collect();
-    let models: Vec<Value> = MODELS
+    let by_model: Vec<Value> = MODELS
         .iter()
         .enumerate()
-        .map(|(rank, model)| json!({ "name": model, "score": 71 - 9 * rank as i64 + ((turn + rank as u64) % 4) as i64 }))
+        .map(|(rank, model)| {
+            let score = 7_100_000 - 900_000 * rank as i64 + 10_000 * ((turn + rank as u64) % 4) as i64;
+            json!({ "rank": rank + 1, "model": model, "score": score, "residents": 3, "mean": score / 3 })
+        })
         .collect();
-    vec![
-        json!({ "key": "wealth", "title": "Richest residents", "unit": "money", "rows": wealth }),
-        json!({ "key": "models", "title": "Models by mission score", "unit": "points", "rows": models }),
-    ]
+    vec![json!({
+        "key": "wealth", "season": 1, "unit": "cents", "residents": rows,
+        "model_source": "self_reported", "top": top, "by_owner": [], "by_org": [],
+        "by_model": by_model,
+    })]
 }

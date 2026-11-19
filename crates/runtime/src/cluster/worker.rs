@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use unsup_kernel::World;
 use unsup_protocol::ZoneId;
 
+use super::auth::{self, ClusterSecret};
 use super::config::WorkerConfig;
 use super::error::ClusterError;
 use super::fingerprint::fingerprint;
@@ -71,9 +72,10 @@ pub(crate) fn lost(error: &WireError) -> ClusterError {
 }
 
 impl Worker {
-    /// Connects to the coordinator and does the first step of the
-    /// handshake: the coordinator checks the protocol version, the world
-    /// configuration, the set of plugins and the slot.
+    /// Connects to the coordinator and does the first steps of the
+    /// handshake: both sides prove that they know the shared secret of the
+    /// cluster, then the coordinator checks the protocol version, the
+    /// world configuration, the set of plugins and the slot.
     ///
     /// The worker tries to connect until `connect_timeout` has passed, so
     /// it can start before the coordinator.
@@ -81,10 +83,22 @@ impl Worker {
     /// # Errors
     ///
     /// [`ClusterError::Config`] when the world configuration or the data
-    /// of a plugin is not valid. [`ClusterError::Io`] when no connection
-    /// could be made in time. [`ClusterError::Refused`] when the
-    /// coordinator refused the worker; the reason says what differs.
+    /// of a plugin is not valid, and when the coordinator is not on a
+    /// loopback address and the worker has no secret. [`ClusterError::Io`]
+    /// when no connection could be made in time. [`ClusterError::Refused`]
+    /// when the coordinator refused the worker; the reason says what
+    /// differs, or that the secret is not the one of the coordinator.
+    /// [`ClusterError::Protocol`] when the coordinator does not prove that
+    /// it knows the secret.
     pub fn connect(plugins: Plugins, config: WorkerConfig) -> Result<Worker, ClusterError> {
+        if config.secret.is_none() && !config.coordinator.ip().is_loopback() {
+            return Err(ClusterError::Config(format!(
+                "the coordinator at {} is not on a loopback address, and this worker has no \
+                 shared secret; give it the secret of the cluster",
+                config.coordinator
+            )));
+        }
+        let secret = ClusterSecret::or_open(config.secret.as_ref());
         let print = fingerprint(&plugins, &config.world)?;
         let s = &settings().cluster;
         let retry = Duration::from_millis(s.retry_ms);
@@ -106,6 +120,8 @@ impl Worker {
         let io = |e: std::io::Error| ClusterError::Io(e.to_string());
         stream.set_nodelay(true).map_err(io)?;
         stream.set_read_timeout(Some(config.reply_timeout)).map_err(io)?;
+        // The proof of the shared secret comes before everything else.
+        auth::present(&mut stream, &secret)?;
         let hello = FromWorker::Hello {
             protocol: PROTOCOL_VERSION,
             world: print.world,

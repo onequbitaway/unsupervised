@@ -15,8 +15,12 @@
 //! Every answer for a viewer comes from the cache. A viewer costs the
 //! simulation nothing, however many viewers there are and however slow
 //! they are. The one exception is the map of a zone (tiles and sites): a
-//! request reads it again when the copy is old, at most one request at a
-//! time for a zone.
+//! request asks for a new copy when the copy is old, at most one request
+//! at a time for a zone. The new copy goes to the cache like everything
+//! else; the request does not get it.
+//!
+//! One module holds the handle of the simulation (`source.rs`). No route
+//! and no viewer task can read the simulation.
 //!
 //! # The show
 //!
@@ -39,6 +43,20 @@
 //! `stream.delay_frames` in the configuration holds back everything that
 //! viewers get by that number of frames. The live view shows what residents
 //! cannot see; the delay keeps an owner from giving it to an agent.
+//!
+//! The rule: with a delay of N frames, when the simulation is at frame F,
+//! no route and no message of the feed shows anything that is newer than
+//! frame F - N. A frame of the simulation waits N frames from its own
+//! number. A read of the world (the whole world at the start and after
+//! lost frames, the map of a zone) has no frame number, and it can show
+//! what the inputs since the last frame did. It waits N frames from the
+//! frame after the newest frame that the simulation had when the read was
+//! over. So the map of a zone can come one frame after the frame of the
+//! feed that shows the same change, and never before it. A runtime that
+//! has applied nothing but frames since it started has no such change, and
+//! a read of it waits from its newest frame (`source.rs` names the one
+//! case in which a change from before the start of the runtime comes one
+//! frame before its frame of the feed).
 //!
 //! # Routes
 //!
@@ -79,6 +97,7 @@ mod http;
 mod hub;
 mod pump;
 mod session;
+mod source;
 mod stories;
 mod studio;
 mod vault;

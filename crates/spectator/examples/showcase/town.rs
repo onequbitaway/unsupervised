@@ -44,6 +44,9 @@ pub struct SayArgs {
 pub struct OtherArgs {
     /// The other resident.
     pub other: ResidentId,
+    /// The case number of a theft. The id of the action when absent.
+    #[serde(default)]
+    pub case: Option<u64>,
 }
 
 /// Arguments of `win_election`.
@@ -69,9 +72,9 @@ pub struct HappenArgs {
 /// takes the kind of an event as static text.
 pub const PLOT_KINDS: [&str; 13] = [
     "crime.arrest_made",
-    "crime.heist_committed",
-    "crime.investigation_opened",
-    "crime.trial_ended",
+    "crime.theft_committed",
+    "crime.verdict_given",
+    "crime.warrant_issued",
     "economy.lease_started",
     "economy.property_foreclosed",
     "economy.tenant_evicted",
@@ -86,6 +89,10 @@ pub const PLOT_KINDS: [&str; 13] = [
 /// The kinds that `happen` and `declare` also take, outside the list
 /// above.
 const MORE_KINDS: [&str; 2] = ["society.opinion_given", "politics.election_decided"];
+
+/// The kinds that the crime module emits without an actor: a crime names
+/// no perpetrator before the arrest.
+const NO_ACTOR: [&str; 2] = ["crime.theft_committed", "crime.warrant_issued"];
 
 fn plot_kind(kind: &str) -> Result<&'static str, ActionError> {
     PLOT_KINDS
@@ -291,16 +298,18 @@ impl Plugin for Town {
                 if realm.idx_of(args.other).is_none() || args.other == ctx.resident {
                     return Err(ActionError::not_found("The victim is not in this district."));
                 }
+                // The data of the crime module: no actor, and no field
+                // with the thief or the victim.
+                let case = args.case.unwrap_or(ctx.action_id);
+                let city = realm.zone_info().map_or(0, |zone| zone.city.0);
                 realm.emit(
-                    EventMeta::public("crime.theft_committed", theft)
-                        .actor(ctx.resident)
-                        .at(realm.pos(ctx.idx)),
+                    EventMeta::public("crime.theft_committed", theft).at(realm.pos(ctx.idx)),
                     &json!({
-                        "thief": ctx.resident, "victim": args.other, "amount": 4_500,
-                        "case": ctx.action_id,
+                        "case": case, "kind": "theft", "city": city, "site": null,
+                        "value": 4_500, "attempt": false,
                     }),
                 );
-                Ok(json!({ "case": ctx.action_id }))
+                Ok(json!({ "case": case }))
             },
         );
         // The events of the stories that the driver plays: with a place
@@ -308,9 +317,9 @@ impl Plugin for Town {
         b.instant_verb::<HappenArgs>(
             spec("happen", "Make a public event here."),
             |realm, ctx, args| {
-                let meta = EventMeta::public(plot_kind(&args.kind)?, args.drama)
-                    .actor(ctx.resident)
-                    .at(realm.pos(ctx.idx));
+                let kind = plot_kind(&args.kind)?;
+                let meta = EventMeta::public(kind, args.drama).at(realm.pos(ctx.idx));
+                let meta = if NO_ACTOR.contains(&kind) { meta } else { meta.actor(ctx.resident) };
                 realm.emit(meta, &args.data);
                 Ok(Value::Null)
             },
@@ -380,7 +389,12 @@ impl Plugin for Town {
             move |realm, ctx, args| {
                 realm.emit(
                     EventMeta::public("politics.election_decided", election).actor(ctx.resident),
-                    &json!({ "city": args.city, "office": "mayor", "winner": ctx.resident }),
+                    // The data of the politics module, without the count.
+                    &json!({
+                        "gov": "city", "city": args.city, "office": "mayor", "kind": "regular",
+                        "seats": 1, "winner": ctx.resident, "winners": [ctx.resident],
+                        "previous": [], "tie": false,
+                    }),
                 );
                 Ok(Value::Null)
             },

@@ -14,9 +14,9 @@ use unsup_kernel::protocol::{ActionReport, ActionStatus, FrameOutput, Notice, Sp
 use unsup_kernel::schemars::JsonSchema;
 use unsup_kernel::testing::TestWorld;
 use unsup_kernel::{
-    Builder, CityId, CondDef, Dest, Envelope, ErrorCode, Event, EventMeta, GRANT_FAUCET, Holder,
-    Money, NoArgs, OrgId, OwnerId, Plugin, Pos, RealmId, Rect, ResidentId, Scope, Site, SiteId,
-    VerbSpec, ZoneId,
+    ActionError, Begin, Builder, CityId, CondDef, Dest, Envelope, ErrorCode, Event, EventMeta,
+    GRANT_FAUCET, Holder, Money, NoArgs, OrgId, OwnerId, Plugin, Pos, RealmId, Rect, ResidentId,
+    Scope, Site, SiteId, VerbSpec, ZoneId,
 };
 use unsup_missions::{MissionSpec, MissionsPlugin, SponsorMission};
 
@@ -46,6 +46,16 @@ struct ProduceArgs {
     item: String,
     /// Number of units.
     qty: i64,
+}
+
+/// Arguments of `walk_test`.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "unsup_kernel::schemars")]
+struct WalkArgs {
+    /// Column of the tile.
+    x: i32,
+    /// Row of the tile.
+    y: i32,
 }
 
 /// Arguments of `arrest_test`.
@@ -113,6 +123,18 @@ impl Plugin for Fixture {
             );
             Ok(Value::Null)
         });
+        // A walk that ends in the next tick of the zone, so that the
+        // resident changes zone while the zone ticks.
+        b.verb::<WalkArgs>(
+            VerbSpec { free: false, ..spec("walk_test") },
+            |_realm, _ctx, _args| Ok(Begin::Busy { ticks: 1 }),
+            |realm, ctx, args| {
+                realm.set_pos(ctx.idx, Pos::new(args.x, args.y)).map_err(|error| {
+                    ActionError::invalid_args(format!("No such tile: {error}."))
+                })?;
+                Ok(Value::Null)
+            },
+        );
         b.instant_verb::<NoArgs>(spec("shift_test"), |realm, ctx, _args| {
             realm.emit(
                 EventMeta::public("economy.shift_completed", 2).actor(ctx.resident),

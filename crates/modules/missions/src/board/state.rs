@@ -97,6 +97,10 @@ pub(crate) struct Record {
     pub(crate) notoriety: i64,
     /// The frame of the newest report with the resident. 0: no report yet.
     pub(crate) reported: u64,
+    /// True when that report came from a zone that the resident left at the
+    /// end of that frame.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) leaving: bool,
     /// The frame in which the resident left the world. 0: it is in the
     /// world.
     pub(crate) gone: u64,
@@ -249,13 +253,25 @@ impl Boards {
         self.records.get(&resident).map_or(0, |record| record.arrests)
     }
 
-    /// Takes the report of a zone. A report that is older than what the
-    /// boards know about a resident does not change that resident: the
-    /// resident moved to a zone that reported later.
+    /// Takes the report of a zone. For each resident, the boards keep the
+    /// row that says where the resident is at the end of the newest frame:
+    ///
+    /// - A report of an older frame than the one that the boards know does
+    ///   not change the resident: the resident moved to a zone that
+    ///   reported later.
+    /// - Of two reports of the same frame, the row of the zone where the
+    ///   resident stays wins over the row of the zone that it leaves.
+    ///
+    /// So the result does not depend on the order in which the reports of
+    /// one frame arrive. The kernel moves a resident after every zone
+    /// ticked, so one process never has two rows of one resident in one
+    /// frame; the second rule holds for every other sender.
     pub(crate) fn apply(&mut self, zone: u32, report: ZoneReport) {
         for row in report.rows {
             let record = self.records.entry(row.id).or_default();
-            if record.gone != 0 || record.reported > report.frame {
+            let older = record.reported > report.frame;
+            let left_behind = record.reported == report.frame && row.leaving && !record.leaving;
+            if record.gone != 0 || older || left_behind {
                 continue;
             }
             record.owner = row.owner;
@@ -266,6 +282,7 @@ impl Boards {
             record.standing = row.standing;
             record.notoriety = row.notoriety;
             record.reported = report.frame;
+            record.leaving = row.leaving;
         }
         let before = self.zones.insert(zone, report.sites.clone()).unwrap_or_default();
         for (owner, cents) in before {

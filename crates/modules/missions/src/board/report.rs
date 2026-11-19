@@ -32,6 +32,10 @@ pub(crate) struct Row {
     pub(crate) notoriety: i64,
     /// The organizations of the resident, ordered by id.
     pub(crate) orgs: Vec<OrgId>,
+    /// True when the resident leaves the zone at the end of this tick: it
+    /// is in another zone at the end of the frame.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) leaving: bool,
 }
 
 /// What one zone tells the leaderboards. The zone sends it to the global
@@ -65,10 +69,17 @@ impl Resource for Reporter {
 }
 
 /// Reads the residents and the sites of a zone into a report.
+///
+/// A resident that walked out of the zone in this tick is still a row of
+/// the zone: the kernel moves it at the end of the tick. Its position is
+/// outside the zone already. The report names it, because no other zone has
+/// it in this frame, and marks it as `leaving`.
 fn build(realm: &Realm, p: &Params) -> ZoneReport {
     let ledger = realm.ledger();
     let standing = realm.attrs(p.standing);
     let notoriety = realm.attrs(p.notoriety);
+    let bounds = realm.zone_info().map(|zone| zone.bounds);
+    let positions = realm.positions();
     let rows = realm
         .indices()
         .map(|idx| {
@@ -83,6 +94,7 @@ fn build(realm: &Realm, p: &Params) -> ZoneReport {
                 standing: standing[idx.index()],
                 notoriety: notoriety[idx.index()],
                 orgs: realm.memberships(idx).iter().map(|m| m.org).collect(),
+                leaving: bounds.is_some_and(|bounds| !bounds.contains(positions[idx.index()])),
             }
         })
         .collect();
@@ -99,7 +111,8 @@ fn build(realm: &Realm, p: &Params) -> ZoneReport {
 /// Runs in every tick of a zone: sends one report in each period of
 /// `missions.report_period` frames, in the first tick of the period that
 /// the zone runs. The zones that run every frame thus report in the same
-/// frame, and each resident is in exactly one report.
+/// frame, and each resident is in exactly one report: the kernel moves a
+/// resident to its new zone after every zone ticked.
 pub(crate) fn tick(realm: &Realm, p: &Params) {
     let period = realm.frame() / params::frames(realm, p.report_period);
     if realm.res::<Reporter>().period == period {

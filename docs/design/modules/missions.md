@@ -152,11 +152,18 @@ pub struct SponsorMission {
   `reward * takers` cents in the escrow of the mission.
 - The faucet has a limit: `sponsor_daily_limit` cents in one game day, for
   all sponsors together. A game day is 1,440 frames. A mission that does not
-  fit in the rest of the day is refused.
+  fit in the rest of the day is refused with `rate_limited`.
+- The module creates the reward with `Ledger::try_mint`. The ledger creates
+  the whole reward or nothing (the supply cap of the kernel,
+  architecture.md, section 5.4). When the ledger creates nothing, the
+  mission is refused with `conflict`. No mission opens with an empty
+  escrow.
+- Only money that the ledger created counts against the limit of the day.
 - The limit `open_max` holds for sponsor missions too.
 - The module answers with one public event. `missions.mission_posted` has
   `request` and the id of the mission. `missions.sponsor_refused` has
-  `request`, `code` and `message`. A refusal changes nothing.
+  `request`, `code` and `message`. A refusal opens no mission, creates no
+  money and uses nothing of the limit of the day.
 
 The server must check who the sponsor is and how much it can ask for. The
 module checks only the definition and the daily limit.
@@ -242,6 +249,24 @@ share of a member = reward * events of the member / events of all members
 - When every place is taken and no taker works on the mission any more, the
   mission closes with the reason `completed`.
 
+The receipt. The engine keeps a receipt for each taker that completed: the
+frame, and the cents that each wire really moved out of the escrow. It does
+not keep the computed shares. Every amount that the module reports comes
+from the receipt: `paid` and `shares` of the event
+`missions.mission_completed`, `paid` of the notices, of `mission_claim` and
+of `you` in `mission_list`.
+
+- A wire sends at most what the escrow holds. The escrow holds the whole
+  reward (section 15), so a wire moves the whole share.
+- When a wire moves less than the share, the receipt also keeps the cents
+  that are missing. The event, the notices and the answers then have the
+  field `short`: the missing cents of all members in the event and in the
+  notice `missions.mission_paid`, and the missing cents of one member in
+  its notice, in `mission_claim` and in `you`.
+- An answer without `short` says that the payment was whole.
+- A member that earned a share gets its mission points also when the share
+  arrived short.
+
 ### 7.3 The deadline
 
 `deadline = frame of the publication + deadline_in`. The global realm
@@ -270,7 +295,7 @@ The engine pays by itself, so a claim of a taker never moves money.
 
 | Caller | Effect |
 | --- | --- |
-| A taker that was paid, or a member of a team that was paid | Result: `mission`, `status` (`paid`), `paid` (its own cents), `frame` |
+| A taker that was paid, or a member of a team that was paid | Result: `mission`, `status` (`paid`), `paid` (the cents that the escrow sent to the caller), `frame`, and `short` when cents are missing (section 7.2) |
 | A taker whose objectives are not met | Refused with `conflict`. The details have the `progress` |
 | The poster, when no taker works on the mission | The mission closes with the reason `withdrawn`. The unpaid reward comes back now. Result: `mission`, `status` (`withdrawn`), `refunded` |
 | The poster, when a taker works on the mission | Refused with `conflict`. The details have `active` and `deadline` |
@@ -300,7 +325,8 @@ With `mission`, the answer is `{ mission }` with one mission in full: the
 fields above, `text`, `poster` or `sponsor`, `posted`, `completed`, the
 `objectives` (each with `event`, `fields`, `count`, `actor`), and `you`.
 `you` says how the caller stands: `posted`; `accepted` with `progress` (and
-`org`, `assignee`, `members` for a team); or `paid` with `paid` and `frame`.
+`org`, `assignee`, `members` for a team); or `paid` with `paid`, `frame`
+and, when cents are missing, `short` (section 7.2).
 `progress` has one pair for each objective: events counted, events needed.
 
 ## 9. Refusals
@@ -341,6 +367,28 @@ The boards are computed in the global realm from four sources.
    `rep.notoriety` and the organizations. It also has the value of the sites
    of the zone that residents own: the attribute `value` of each site whose
    `owner` is `Holder::Resident`.
+
+   A resident that changes zone. The kernel moves a resident to its new
+   zone after every zone ticked. So in the tick in which a resident walks
+   out of a zone, that zone still has it and reports it, with the mark
+   `leaving`. The new zone reports it from its next report on. The global
+   realm keeps, for each resident, the row that says where the resident is
+   at the end of the newest frame:
+
+   - A report of an older frame than the one that the boards know does not
+     change the resident.
+   - Of two reports of the same frame, the row of the zone where the
+     resident stays wins over the row of a zone that it leaves.
+
+   The result does not depend on the order in which the reports of one
+   frame arrive. One process never has two rows of one resident in one
+   frame. The second rule holds for every other sender of reports.
+
+   A zone that skips the first frame of a period (time dilation) reports in
+   its next tick. A resident that an input moves between two frames from a
+   zone that did not report yet to a zone that reported already is in no
+   report of that period. The boards keep its last row until the next
+   period.
 2. **The ledger of the global realm.** A bank deposit is the money of
    `Holder::Account(resident id)` (the finance module).
 3. **Events.** `crime.arrest_made` counts one arrest for the actor of the
@@ -550,7 +598,7 @@ All events are public. Each drama score is a parameter `drama_*`.
 | `missions.mission_posted` | `mission`, `title` (untrusted), `reward`, `takers`, `mode`, `org`, `deadline`, `objectives` (a number), and `poster` or `sponsor` (untrusted) with `request` | `drama_posted`; `drama_sponsored` for a sponsor |
 | `missions.mission_accepted` | `mission`, `resident`; `org` and `members` for a team | `drama_accepted` |
 | `missions.mission_abandoned` | `mission`, `resident`; `org` for a team | `drama_accepted` |
-| `missions.mission_completed` | `mission`, `resident` (the assignee), `org` for a team, `paid`, `shares` (`resident`, `amount`) | `drama_completed` |
+| `missions.mission_completed` | `mission`, `resident` (the assignee), `org` for a team, `paid`, `shares` (`resident`, `amount`): the cents that the wires moved; `short` when cents are missing | `drama_completed` |
 | `missions.mission_closed` | `mission`, `reason` (`expired`, `completed`, `withdrawn`), `completed` (takers), `refunded`, `destroyed` | `drama_closed` |
 | `missions.sponsor_refused` | `request`, `code`, `message` | `drama_routine` |
 | `missions.leaderboard_published` | Section 10.3 | `drama_routine` |
@@ -566,7 +614,7 @@ no actor. The actor of the next three events is the resident.
 
 | Kind | To | Data |
 | --- | --- | --- |
-| `missions.mission_completed` | Each member of the taker that completed | `mission`, `paid`, `points` |
+| `missions.mission_completed` | Each member of the taker that completed | `mission`, `paid`, `points`; `short` when cents of its share are missing |
 | `missions.mission_paid` | The poster | The data of the event `missions.mission_completed` |
 | `missions.mission_ended` | Each resident that still worked on a mission when it closed; a member that left the organization of its team | `mission`, `reason` (`expired`, `left_organization`) |
 | `missions.mission_closed` | The poster, unless it withdrew the mission itself | `mission`, `reason`, `completed`, `refunded` |

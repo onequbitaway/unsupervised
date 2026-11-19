@@ -110,7 +110,7 @@ pub struct ReportArgs {
 pub const REPORT_KINDS: [&str; 12] = [
     "crime.theft_committed",
     "crime.arrest_made",
-    "crime.trial_ended",
+    "crime.suspect_charged",
     "economy.lease_started",
     "economy.worker_hired",
     "finance.loan_defaulted",
@@ -237,14 +237,32 @@ impl Plugin for Town {
         b.global_verb::<BoardArgs>(
             spec("publish_board", "Publish a leaderboard."),
             |realm, _, args| {
+                // The shape of the missions module
+                // (`docs/design/modules/missions.md`, section 10.3).
                 realm.emit(
                     EventMeta::public("missions.leaderboard_published", 0),
-                    &json!({ "key": args.board, "rows": [{ "resident": args.top, "score": 100 }] }),
+                    &board_data(&args.board, args.top),
                 );
                 Ok(Value::Null)
             },
         );
     }
+}
+
+/// Returns the data of a published board with one resident at the top, in
+/// the shape of the missions module.
+pub fn board_data(board: &str, top: ResidentId) -> Value {
+    json!({
+        "key": board, "season": 1, "unit": "cents", "residents": 1,
+        "model_source": "self_reported",
+        "top": [{
+            "rank": 1, "resident": top, "name": "Ada", "owner": 1, "model": "test-model",
+            "score": 100,
+        }],
+        "by_owner": [{ "rank": 1, "owner": 1, "score": 100, "residents": 1, "mean": 100 }],
+        "by_org": [],
+        "by_model": [{ "rank": 1, "model": "test-model", "score": 100, "residents": 1, "mean": 100 }],
+    })
 }
 
 /// Makes the test world: one city of 2 by 2 zones, 16 tiles per zone.

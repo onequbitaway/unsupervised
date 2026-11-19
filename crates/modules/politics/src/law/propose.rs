@@ -87,6 +87,7 @@ fn run(
     }
     let frame = realm.frame();
     let minutes = u64::try_from(realm.param(p.bill_voting_minutes).max(1)).unwrap_or(1);
+    let members = offices::members_with(realm, gov.org(), GOV_VOTE);
     let bill = Bill {
         id: realm.alloc_id(),
         gov,
@@ -98,6 +99,8 @@ fn run(
         proposed: frame,
         stage: Stage::Vote,
         deadline: frame + minutes,
+        // The members of this moment vote on the bill.
+        electorate: Some(members.iter().copied().collect()),
         yes: BTreeSet::new(),
         no: BTreeSet::new(),
         passed: None,
@@ -112,7 +115,7 @@ fn run(
             "deadline": calendar::moment(realm, bill.deadline),
         }),
     );
-    for member in offices::members_with(realm, gov.org(), GOV_VOTE) {
+    for member in members {
         if member != ctx.resident {
             realm.notify(member, "politics.bill_proposed", Some(ctx.resident), facts.clone());
         }

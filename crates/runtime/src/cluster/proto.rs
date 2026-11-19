@@ -4,6 +4,9 @@
 //! has exactly one [`FromWorker`] answer, except `Refuse` and `Stop`, which
 //! end the connection. A worker speaks first only in the handshake
 //! (`Hello`) and when it fails (`Failed`).
+//!
+//! These messages start after the proof of the shared secret, which has
+//! messages of its own (`auth.rs`).
 
 use serde::{Deserialize, Serialize};
 use unsup_kernel::{Dest, Envelope, Input, Output};
@@ -18,7 +21,10 @@ use super::wire::{Blob, Hash};
 use crate::journal::JournalStats;
 
 /// Version of the protocol. Both sides must have the same number.
-pub(crate) const PROTOCOL_VERSION: u32 = 1;
+///
+/// Version 2 starts each connection with the proof of the shared secret
+/// (`auth.rs`): the coordinator speaks first.
+pub(crate) const PROTOCOL_VERSION: u32 = 2;
 
 /// The kind of the kernel message that carries a resident to another zone.
 pub(crate) const ARRIVE_KIND: &str = "kernel.arrive";
@@ -257,7 +263,7 @@ pub(crate) struct Peeked {
 /// What a worker sends.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) enum FromWorker {
-    /// The first message of a connection.
+    /// The first message of a worker after the proof of the shared secret.
     Hello { protocol: u32, world: Hash, plugins: Hash, slot: u32 },
     /// The answer to `Welcome`.
     State { zones: Vec<ZoneState> },

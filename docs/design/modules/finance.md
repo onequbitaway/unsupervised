@@ -289,7 +289,7 @@ Refusals:
 | Verb | Code | When |
 | --- | --- | --- |
 | `loan_request`, `loan_repay` | `invalid_args` | The amount is zero or less |
-| `loan_request` | `invalid_args` | The amount is below `loan_min`, the term is outside `loan_term_min_days` to `loan_term_max_days`, or the account cannot hold the amount |
+| `loan_request` | `invalid_args` | The amount is below `loan_min`, the term is outside `loan_term_min_days` to `loan_term_max_days`, or the account cannot hold the amount: `Ledger::try_mint` refuses an amount above the supply cap of the kernel. Nothing is created and nothing is owed then |
 | `loan_request`, `loan_repay` | `not_found` | The resident has no account. For `loan_repay`: or no loan |
 | `loan_request` | `conflict` | The resident has a loan |
 | `loan_request` | `not_allowed` | The resident is bankrupt, or the amount is above the credit limit |
@@ -483,6 +483,12 @@ Refusals: `not_allowed` without the permission, outside the rate band or
 above a yearly limit; `invalid_args` for an amount of zero or less, or an
 amount that the treasury cannot hold; `insufficient` when the treasury has
 less than the amount to retire.
+
+The module creates the money with `Ledger::try_mint`. The ledger creates the
+whole amount or nothing: it refuses an amount that takes the global realm
+above the supply cap of the kernel (architecture.md, section 5.4). The verb
+then answers "The amount is too large for the treasury." Nothing is issued,
+and nothing counts against the yearly limit.
 
 ## 7. Statistics
 

@@ -262,8 +262,8 @@ fn request(
         first_due_day: today + first_due_in_days,
         ..Loan::default()
     };
-    if bank.mint_in(realm, p.loan_issue, resident, amount) != amount {
-        // Nothing was created, so nothing is owed.
+    if bank.mint_in(realm, p.loan_issue, resident, amount).is_err() {
+        // The ledger created nothing, so nothing is owed.
         return Err(ActionError::invalid_args("The amount is too large for your account."));
     }
     bank.principal += amount;

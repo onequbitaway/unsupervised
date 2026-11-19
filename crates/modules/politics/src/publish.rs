@@ -18,9 +18,9 @@ use unsup_kernel::{Builder, EventMeta, Holder, Realm, ResidentId, Scope, Stage, 
 
 use crate::calendar;
 use crate::election::{facts as election_facts, facts_with as election_facts_with, fund};
-use crate::law::{ballot, reason_of};
+use crate::law::reason_of;
 use crate::model::Gov;
-use crate::offices::{self, GOV_VOTE};
+use crate::offices;
 use crate::params::{self, Params};
 use crate::state::Politics;
 use crate::state::bill::{Bill, Stage as BillStage};
@@ -200,14 +200,9 @@ pub(crate) fn election_decided(
     realm.emit(published(realm, p, "politics.election_published"), &view);
 }
 
-/// Returns a bill for viewers. An open bill shows the votes of the
-/// residents that are members now.
-fn bill_view(realm: &Realm, bill: &Bill) -> Value {
-    let (yes, no) = if bill.stage.takes_votes() {
-        ballot::tally(bill, &offices::members_with(realm, bill.gov.org(), GOV_VOTE))
-    } else {
-        (bill.yes.len(), bill.no.len())
-    };
+/// Returns a bill for viewers, with the votes of its current stage.
+fn bill_view(bill: &Bill) -> Value {
+    let (yes, no) = bill.count();
     let (how, why) = match bill.stage {
         BillStage::Enacted(how) => (Some(how.name()), None),
         BillStage::Rejected(why) => (None, Some(why.name())),
@@ -236,11 +231,11 @@ fn bill_view(realm: &Realm, bill: &Bill) -> Value {
 /// closed bills and the laws in force.
 fn bills(realm: &Realm, p: &Params, state: &Politics, gov: Gov) {
     let org = gov.org();
-    let open: Vec<Value> = state.bills_of(gov).map(|bill| bill_view(realm, bill)).collect();
+    let open: Vec<Value> = state.bills_of(gov).map(bill_view).collect();
     let closed: Vec<Value> = state
         .closed
         .get(&org)
-        .map(|register| register.iter().rev().map(|bill| bill_view(realm, bill)).collect())
+        .map(|register| register.iter().rev().map(bill_view).collect())
         .unwrap_or_default();
     let laws: Vec<Value> = state
         .laws

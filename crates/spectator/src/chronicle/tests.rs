@@ -79,17 +79,17 @@ impl Desk {
         );
         self.event(
             20,
-            "crime.theft_committed",
+            "crime.arrest_made",
             55,
             Some(2),
-            json!({ "thief": 2, "victim": 1, "amount": 4500 }),
+            json!({ "officer": 2, "target": 1, "case": 7, "cases": [7], "city": 0, "watch": false }),
         );
         self.event(
             30,
             "politics.election_decided",
             85,
             Some(1),
-            json!({ "city": 0, "office": "mayor", "winner": 1 }),
+            json!({ "gov": "city", "city": 0, "office": "mayor", "winner": 1, "winners": [1] }),
         );
         self.event(31, "town.fair_opened", 30, Some(1), json!({}));
         self.event(
@@ -126,7 +126,7 @@ fn a_life_story_has_its_chapters() {
     assert_eq!(lines(&life.jobs), [(5, "Ada got a job at First Bank")]);
     assert_eq!(lines(&life.homes), [(9, "Ada rented a place for $8.00 a day")]);
     assert_eq!(lines(&life.deals), [(12, "Ada got a loan of $500.00")]);
-    assert_eq!(lines(&life.crimes), [(20, "Bo stole $45.00 from Ada")]);
+    assert_eq!(lines(&life.crimes), [(20, "Bo arrested Ada")]);
     assert_eq!(lines(&life.offices), [(30, "Ada won the election for mayor in Latent City")]);
     // An event without a chapter and with enough drama is a moment. The
     // shift (drama 2) is not kept.
@@ -141,10 +141,10 @@ fn a_life_story_has_its_chapters() {
     assert_eq!(death.event, EventId { frame: 40, index: 0 });
     assert_eq!((born.zone, life.jobs[0].site), (Some(ZoneId(0)), Some(SiteId(900))));
 
-    // The theft is also in the life of the thief. The death of Ada is a
+    // The arrest is also in the life of the officer. The death of Ada is a
     // moment in the life of her heir, not his own death.
     let bo = desk.chronicle.life(ResidentId(2));
-    assert_eq!(lines(&bo.crimes), [(20, "Bo stole $45.00 from Ada")]);
+    assert_eq!(lines(&bo.crimes), [(20, "Bo arrested Ada")]);
     assert_eq!((bo.born.is_some(), bo.death.is_some()), (false, false));
     let heir = desk.chronicle.life(ResidentId(3));
     assert_eq!(heir.death, None);
@@ -307,7 +307,7 @@ fn a_rewrite_holds_what_the_chronicle_holds() {
     let records = desk.chronicle.records();
     let frames: Vec<u64> = records.iter().map(|record| record.entry.entry.frame).collect();
     assert_eq!(frames, [1, 5, 9, 20, 30, 31, 40, 40]);
-    // The theft left the life of Ada. Bo, the thief, still has it.
+    // The arrest left the life of Ada. Bo, the officer, still has it.
     let theft = &records[3];
     assert_eq!((theft.about, theft.others.as_slice()), (Some(ResidentId(2)), [].as_slice()));
     // The job at frame 5 left the life of Ada. The bank still has it.

@@ -93,9 +93,28 @@ pub(crate) fn on_event(realm: &Realm, p: &Params, event: &Event) {
     }
 }
 
+/// Sends each share from the escrow and writes down what really moved. A
+/// wire sends at most what the escrow holds, so a share can arrive short;
+/// the receipt then says by how much.
+fn pay_shares(realm: &Realm, escrow: Holder, owed: &[(ResidentId, i64)], frame: u64) -> Receipt {
+    let mut receipt = Receipt { frame, shares: Vec::with_capacity(owed.len()), short: Vec::new() };
+    for &(resident, cents) in owed {
+        let moved = pay::wire_to_resident(realm, escrow, resident, cents, REWARD);
+        receipt.shares.push((resident, moved));
+        if moved < cents {
+            receipt.short.push((resident, cents - moved));
+        }
+    }
+    receipt
+}
+
 /// Pays a taker whose objectives are met: the whole reward to a solo taker,
 /// or a share to each member of a team that added events. Then the mission
 /// closes when no place is left.
+///
+/// The receipt, the notices and the event carry the cents that the wires
+/// moved. When that is less than the reward, they also carry `short`: the
+/// cents that are missing.
 fn complete(realm: &Realm, p: &Params, state: &mut Missions, id: u64, key: u64) {
     let now = realm.frame();
     let Some(mission) = state.open.get_mut(&id) else {
@@ -114,31 +133,26 @@ fn complete(realm: &Realm, p: &Params, state: &mut Missions, id: u64, key: u64) 
     };
     let assignee = taker.assignee;
     let members: Vec<(ResidentId, u32)> = taker.members.iter().map(|(&r, &e)| (r, e)).collect();
-    let shares = if team { pay::split(reward, &members) } else { vec![(assignee, reward)] };
-    let mut paid = 0i64;
-    for &(resident, cents) in &shares {
-        paid += pay::wire_to_resident(realm, escrow, resident, cents, REWARD);
-    }
-    taker.done = Some(Receipt { frame: now, shares: shares.clone() });
+    let owed = if team { pay::split(reward, &members) } else { vec![(assignee, reward)] };
+    let receipt = pay_shares(realm, escrow, &owed, now);
+    taker.done = Some(receipt.clone());
     let finished = mission.is_full() && mission.active() == 0;
     for &(member, _) in &members {
         state.unenrol(member, id);
     }
 
-    // Each member that earned a share also earns points. A member that
-    // added no event gets the news and nothing else.
+    // Each member that earned a share also earns points, also when the
+    // escrow paid the share short. A member that added no event gets the
+    // news and nothing else.
     for &(member, _) in &members {
-        let share = shares.iter().find(|(who, _)| *who == member).map(|s| s.1);
-        let points = match share {
-            Some(_) => board::credit_points(realm, p, member, poster_owner),
-            None => 0,
-        };
-        realm.notify(
-            member,
-            "missions.mission_completed",
-            None,
-            json!({ "mission": id, "paid": share.unwrap_or(0), "points": points }),
-        );
+        let earned = owed.iter().any(|(who, _)| *who == member);
+        let points = if earned { board::credit_points(realm, p, member, poster_owner) } else { 0 };
+        let mut news = Map::new();
+        news.insert("mission".into(), json!(id));
+        news.insert("paid".into(), json!(receipt.paid_to(member)));
+        news.insert("points".into(), json!(points));
+        view::insert_short(&mut news, receipt.short_of(member));
+        realm.notify(member, "missions.mission_completed", None, Value::Object(news));
     }
     let mut data = Map::new();
     data.insert("mission".into(), json!(id));
@@ -146,10 +160,14 @@ fn complete(realm: &Realm, p: &Params, state: &mut Missions, id: u64, key: u64) 
     if team {
         data.insert("org".into(), json!(key));
     }
-    data.insert("paid".into(), json!(paid));
-    let list: Vec<Value> =
-        shares.iter().map(|(who, cents)| json!({ "resident": who, "amount": cents })).collect();
+    data.insert("paid".into(), json!(receipt.paid()));
+    let list: Vec<Value> = receipt
+        .shares
+        .iter()
+        .map(|(who, cents)| json!({ "resident": who, "amount": cents }))
+        .collect();
     data.insert("shares".into(), Value::Array(list));
+    view::insert_short(&mut data, receipt.missing());
     if let Some(poster) = poster {
         realm.notify(poster, "missions.mission_paid", Some(assignee), Value::Object(data.clone()));
     }

@@ -25,6 +25,15 @@ reqwest.workspace = true
 tokio-tungstenite.workspace = true
 tower-http.workspace = true
 unsup-kernel.workspace = true
+# The game modules, for the test that feeds their real events to the show
+# (tests/modules.rs). The service itself does not depend on a module.
+unsup-crime.workspace = true
+unsup-economy.workspace = true
+unsup-finance.workspace = true
+unsup-life.workspace = true
+unsup-missions.workspace = true
+unsup-politics.workspace = true
+unsup-society.workspace = true
 
 [lints]
 workspace = true

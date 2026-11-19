@@ -1,9 +1,14 @@
 //! The verb `vote_law` and the count of a stage.
+//!
+//! The electorate of a stage is fixed when the stage begins: the residents
+//! with `gov.vote` at the proposal (stage `vote`) or at the veto (stage
+//! `override`). Only they vote in the stage. The quorum counts them, and a
+//! vote stays when its member leaves the council or the legislature.
 
 use serde::{Deserialize, Serialize};
 use unsup_kernel::schemars::JsonSchema;
 use unsup_kernel::serde_json::json;
-use unsup_kernel::{ActionError, Builder, EventMeta, GlobalCtx, Realm, ResidentId, Value};
+use unsup_kernel::{ActionError, Builder, EventMeta, GlobalCtx, Realm, Value};
 
 use super::{enact, facts_with, find, wrong_stage};
 use crate::calendar;
@@ -11,7 +16,7 @@ use crate::offices::{self, GOV_SIGN, GOV_VOTE};
 use crate::params::{self, Params};
 use crate::remote::spec;
 use crate::state::Politics;
-use crate::state::bill::{self, Bill, How, Stage, Why};
+use crate::state::bill::{self, How, Stage, Why};
 
 /// The vote of a member.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema)]
@@ -45,26 +50,18 @@ pub(crate) struct VoteLawArgs {
     pub(crate) vote: Choice,
 }
 
-/// The votes of the residents that are members now: in favour, against.
-/// A vote of a resident that left the council or the legislature does not
-/// count.
-pub(crate) fn tally(bill: &Bill, members: &[ResidentId]) -> (usize, usize) {
-    let count = |votes: &std::collections::BTreeSet<ResidentId>| {
-        votes.iter().filter(|voter| members.contains(voter)).count()
-    };
-    (count(&bill.yes), count(&bill.no))
-}
-
 /// Ends the stage `vote` or `override` of a bill and decides what comes
 /// next. Returns the stage of the bill after the count, or `None` when no
 /// open bill has the id.
 pub(crate) fn conclude(realm: &Realm, p: &Params, state: &mut Politics, id: u64) -> Option<Stage> {
     let bill = state.bills.get_mut(&id)?;
     let org = bill.gov.org();
-    let members = offices::members_with(realm, org, GOV_VOTE);
-    let (yes, no) = tally(bill, &members);
+    // The quorum counts the electorate of the stage, not the members of
+    // now: a member that leaves does not make a decision easier.
+    let members = bill.electorate(|| offices::members_with(realm, org, GOV_VOTE)).len();
+    let (yes, no) = bill.count();
     let cast = yes + no;
-    let quorate = cast >= bill::quorum(members.len(), realm.param(p.quorum_permille));
+    let quorate = cast >= bill::quorum(members, realm.param(p.quorum_permille));
     match bill.stage {
         Stage::Vote if !quorate => enact::reject(realm, p, state, id, Why::NoQuorum),
         Stage::Vote if yes <= no => enact::reject(realm, p, state, id, Why::VotedDown),
@@ -86,7 +83,7 @@ pub(crate) fn conclude(realm: &Realm, p: &Params, state: &mut Politics, id: u64)
                 json!({
                     "yes": yes,
                     "no": no,
-                    "members": members.len(),
+                    "members": members,
                     "deadline": calendar::moment(realm, bill.deadline),
                 }),
             );
@@ -129,19 +126,25 @@ fn run(
         return Err(wrong_stage(bill, "Members vote in the stages `vote` and `override`."));
     }
     let gov = bill.gov;
+    let org = gov.org();
     offices::require(realm, gov, ctx.resident, GOV_VOTE)?;
-    if bill.has_voted(ctx.resident) {
-        return Err(ActionError::conflict("You voted on this bill in this stage already."));
-    }
     let Some(bill) = state.bills.get_mut(&args.bill) else {
         return Err(ActionError::internal("The bill left the register during the request."));
     };
+    if !bill.electorate(|| offices::members_with(realm, org, GOV_VOTE)).contains(&ctx.resident) {
+        return Err(ActionError::not_allowed(
+            "You were not a member when this stage of the bill began. Only the members of that \
+             moment vote in it.",
+        ));
+    }
+    if bill.has_voted(ctx.resident) {
+        return Err(ActionError::conflict("You voted on this bill in this stage already."));
+    }
     match args.vote {
         Choice::Yes => bill.yes.insert(ctx.resident),
         Choice::No => bill.no.insert(ctx.resident),
     };
-    let members = offices::members_with(realm, gov.org(), GOV_VOTE);
-    let (yes, no) = tally(bill, &members);
+    let (yes, no) = bill.count();
     let stage = bill.stage;
     realm.emit(
         EventMeta::public("politics.bill_voted", params::drama(realm, p.drama_bill_voted))
@@ -158,8 +161,13 @@ fn run(
             }),
         ),
     );
-    // When every member voted, the stage ends at once.
-    let complete = members.iter().all(|&member| bill.has_voted(member));
+    // The stage ends at once when nobody is left to vote: every member of
+    // the electorate voted, or has no seat any more.
+    let complete = bill
+        .electorate
+        .iter()
+        .flatten()
+        .all(|&member| bill.has_voted(member) || !offices::can(realm, org, member, GOV_VOTE));
     state.touch_bills(gov);
     let after = if complete { conclude(realm, p, &mut state, args.bill) } else { None };
     Ok(json!({

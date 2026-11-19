@@ -9,7 +9,7 @@ use common::{
 };
 use serde_json::{Value, json};
 use unsup_kernel::protocol::FrameOutput;
-use unsup_kernel::{Message, Money, Scope};
+use unsup_kernel::{GRANT_FAUCET, Holder, Message, Money, SUPPLY_CAP, Scope};
 use unsup_missions::{Missions, SPONSOR_FAUCET, SPONSOR_SINK, SponsorMission};
 
 /// Returns the id of the mission that the answer to a request names.
@@ -205,5 +205,41 @@ fn the_world_limit_of_open_missions_holds_for_sponsors_too() {
         })
     );
     assert_eq!(minted(&w, SPONSOR_FAUCET), 500);
+    w.assert_conserved();
+}
+
+#[test]
+fn a_sponsor_mission_is_refused_when_the_money_cannot_be_created() {
+    let mut w = world();
+    // The global realm has created all of the money that it can create but
+    // 1,000 cents. The ledger refuses to create more than that.
+    let grant = w.world.blueprint().faucet_id(GRANT_FAUCET).expect("the kernel faucet exists");
+    w.global()
+        .ledger_mut()
+        .try_mint(grant, Holder::Account(1), Money(SUPPLY_CAP - 1_000))
+        .expect("the amount is below the supply cap");
+
+    // 1,500 cents cannot be created. The mission must not open with an
+    // empty escrow, and the amount must not count against the day.
+    sponsor(&mut w, 1, "Acme", bread_mission(1_500, 1));
+    let frames = w.step(1);
+    assert_eq!(
+        one_event(&frames, "missions.sponsor_refused"),
+        json!({
+            "request": 1,
+            "code": "conflict",
+            "message": "The world cannot create 1500 cents now: the money supply is at its limit. Try again later.",
+        })
+    );
+    assert!(events(&frames, "missions.mission_posted").is_empty());
+    assert_eq!(minted(&w, SPONSOR_FAUCET), 0);
+    assert_eq!(w.global().res::<Missions>().sponsor_minted_on(0), 0);
+    assert_eq!(w.global().res::<Missions>().open_count(), 0);
+
+    // 1,000 cents can be created. Only they count against the day.
+    sponsor(&mut w, 2, "Acme", bread_mission(1_000, 1));
+    let second = posted(&w.step(1), 2);
+    assert_eq!((minted(&w, SPONSOR_FAUCET), escrow(&w, second)), (1_000, 1_000));
+    assert_eq!(w.global().res::<Missions>().sponsor_minted_on(0), 1_000);
     w.assert_conserved();
 }

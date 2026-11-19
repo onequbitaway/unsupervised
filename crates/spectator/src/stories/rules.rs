@@ -140,23 +140,32 @@ mod tests {
     #[test]
     fn the_first_complete_list_of_fields_names_the_thread() {
         let election = rule("election");
-        assert_eq!(election.threads, [vec!["election"], vec!["city", "office"], vec!["city"]]);
+        assert_eq!(
+            election.threads,
+            [vec!["election"], vec!["recall"], vec!["city", "office"], vec!["office"]]
+        );
         let event = |data: Value| test_event(1, 0, "politics.election_decided", 85, None, data);
         assert_eq!(
             thread_of(&election, &event(json!({ "election": 12, "city": 1 }))),
             Some((0, vec!["12".to_string()]))
         );
+        // A petition has no election yet.
+        assert_eq!(
+            thread_of(&election, &event(json!({ "recall": 5, "city": 1, "office": "mayor" }))),
+            Some((1, vec!["5".to_string()]))
+        );
         assert_eq!(
             thread_of(&election, &event(json!({ "city": 1, "office": "mayor" }))),
-            Some((1, vec!["1".to_string(), "mayor".to_string()]))
+            Some((2, vec!["1".to_string(), "mayor".to_string()]))
         );
+        // A national office has no city.
         assert_eq!(
-            thread_of(&election, &event(json!({ "city": 0 }))),
-            Some((2, vec!["0".to_string()]))
+            thread_of(&election, &event(json!({ "office": "president" }))),
+            Some((3, vec!["president".to_string()]))
         );
-        assert_eq!(thread_of(&election, &event(json!({ "office": "mayor" }))), None);
-        assert_eq!(thread_of(&election, &event(json!({ "city": null }))), None);
-        assert_eq!(thread_of(&election, &event(json!({ "city": [1] }))), None);
+        assert_eq!(thread_of(&election, &event(json!({ "city": 0 }))), None);
+        assert_eq!(thread_of(&election, &event(json!({ "office": null }))), None);
+        assert_eq!(thread_of(&election, &event(json!({ "election": [1] }))), None);
     }
 
     #[test]

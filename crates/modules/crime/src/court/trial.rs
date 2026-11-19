@@ -97,8 +97,9 @@ pub(crate) fn charge_ready(
 }
 
 /// Calls the jury of a trial: up to `crime.jury_size` residents of the
-/// city, drawn with the random stream of the global realm. The defendant,
-/// the victim, the officer that charged, residents of the owner of the
+/// city, drawn with the random stream of the global realm from the
+/// residents that live (`Directory::sample_alive`). The defendant, the
+/// victim, the officer that charged, residents of the owner of the
 /// defendant and residents under arrest do not sit on the jury.
 pub(crate) fn summon(realm: &Realm, h: &Handles, cases: &mut Cases, id: u64) {
     let Some(case) = cases.cases.get(&id) else {
@@ -121,16 +122,18 @@ pub(crate) fn summon(realm: &Realm, h: &Handles, cases: &mut Cases, id: u64) {
     {
         let directory = realm.directory();
         let owner = directory.get(perp).map(|entry| entry.owner);
-        // Resident ids count up from 1, so a number up to the size of the
-        // directory names a resident that lived at some time.
-        let count = directory.len() as u64;
         let mut rng = realm.rng();
         for _ in 0..h.count(realm, h.p.jury_draws) {
-            if jury.len() >= size || count == 0 {
+            if jury.len() >= size {
                 break;
             }
-            let pick = ResidentId(rng.below(count) + 1);
-            let Some(entry) = directory.get(pick).filter(|entry| entry.alive) else {
+            // Each draw names a resident that lives now. The directory
+            // knows the ids; nothing here depends on how the kernel gives
+            // them out.
+            let Some(pick) = directory.sample_alive(&mut rng) else {
+                break;
+            };
+            let Some(entry) = directory.get(pick) else {
                 continue;
             };
             let in_city = realm.layout().zone(entry.zone).is_some_and(|zone| zone.city == city);

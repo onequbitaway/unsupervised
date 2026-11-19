@@ -437,6 +437,14 @@ arrest, a charge, a verdict, or a case that goes cold. Each resident can see
 the condition with `inspect`, and the docket names the suspect of a case
 with a warrant.
 
+One function of this module sets the condition (`enforce::sync_wanted`). It
+keeps this rule after each change of a warrant and of a custody: a resident
+is `wanted` exactly while a warrant names it and it is not under arrest. No
+other module, no verb and no administrator command sets the condition. A
+warrant names only the resident that did the crime (section 19). So a
+resident cannot make another resident wanted, and each arrest that the
+condition allows has a case behind it.
+
 ### 6.6 The docket: `case_list` and `case_view` (free)
 
 `case_list { status }` lists the cases of the city where the resident is,
@@ -649,10 +657,15 @@ case), `not_found`, `conflict` (the case is not on trial), `invalid_args`
 ### 8.3 The jury and `jury_vote`
 
 The engine draws up to `jury_size` (5) residents of the city with the
-random stream of the global realm, in at most `jury_draws` (64) draws. These
+random stream of the global realm, in at most `jury_draws` (64) draws. Each
+draw is `Directory::sample_alive`: one of the residents that live now, each
+with the same chance. A resident that left the world costs no draw, and the
+draw does not depend on how the kernel numbers the residents. These
 residents do not sit on a jury: the defendant, the victim, the officer that
 charged, residents of the owner of the defendant, and residents under
-arrest. A city with too few residents has a smaller jury, or none.
+arrest. A draw that names one of them, a resident of another city or a
+juror of this trial is lost. A city with too few residents has a smaller
+jury, or none.
 
 A juror gets the notice `crime.jury_duty` and reads the case with
 `case_view`. `jury_vote { case, guilty }` gives its vote. It can vote from
@@ -725,6 +738,23 @@ first. Without `amount`, it pays all that the convict owes, or all its
 cash. It works in jail. A gift (`give`) reaches an inmate, so another
 resident can help. Result: `paid`, `owed`. Errors: `conflict` (no debt),
 `insufficient` (no cash), `invalid_args` (`amount` below 1).
+
+**Where the money goes.** A fine goes to the treasury of the city of the
+case. A restitution goes to the victim: a resident, an organization, or a
+site without an owner.
+
+- A site is reached in two ways: it is a site of the zone where the
+  convict is, or the debt names the zone of the site and the world has
+  that zone. The money then goes to the site, by wire when the site is in
+  another zone.
+- Every other site cannot be reached: the site of the zone of the convict
+  is gone, the debt names a zone that the world does not have, or the debt
+  names no zone and the site is not in the zone of the convict. That
+  restitution goes to a city treasury: that of the city of the zone that
+  the debt names, when the world has that zone, else that of the city
+  where the convict is. The ledger label stays `crime.restitution`.
+- So a payment fails only when the convict has no cash. A debt never
+  becomes jail time because its payee cannot be reached.
 
 **A debt that is not paid in time becomes jail time.** When the time is
 over, the engine takes the cash that the convict has. Then:
@@ -1016,7 +1046,13 @@ What the module needs from the others:
   gets the powers with `org_grant`.
 - **The condition `wanted`.** Another module can set it on a resident. It is
   grounds for an arrest. With no case to charge, the suspect is free after
-  `hold_ticks`.
+  `hold_ticks`. No module does this today. A module that does it gives each
+  officer, and the city watch, the right to hold that resident one time for
+  `hold_ticks` without a case: the arrest ends the condition, and this
+  module does not set it again without a warrant. The arrest counts like
+  each other arrest (`arrest_xp`, the event `crime.arrest_made`). Set the
+  condition only for a resident that the rules of that module let the
+  police hold.
 - **Laws.** Each policy parameter can be changed with `set_param`.
 
 The module also works in a world without the other modules: without a jail
@@ -1037,6 +1073,9 @@ trial has a jury at once.
 - **A released or paroled resident keeps what it has.** `law.jail` ends a
   sentence early. This is a power that an official can sell.
 - **Unpaid restitution is lost to the victim** when it becomes jail time.
+- **A zone cannot see the sites of another zone.** A restitution for a site
+  of another zone goes there by wire, also when that site is gone. The
+  money then stays on the holder of the site in the ledger of that zone.
 - **A fine comes only from cash.** The module does not take money of a bank
   account or a site of a convict.
 - **Confiscated goods stay in the police station.** A member of the city
@@ -1047,8 +1086,6 @@ trial has a jury at once.
   once when the government of the city has no judge.
 - **A juror in jail cannot vote.** The draw does not know who serves a
   sentence. Such a juror counts as one that did not vote.
-- **The jury draw uses the resident ids from 1 to the size of the
-  directory.** The kernel gives ids in that way.
 - **Walls do not stop sight.** A witness in the street can see a burglary
   in a building.
 - **The watch looks only into sites with the tag `public`.**

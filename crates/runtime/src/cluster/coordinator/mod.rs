@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use self::begin::open_global;
 use self::core::{Core, Routed, unexpected};
 use self::serve::{Server, stop_all};
+use super::auth::{self, ClusterSecret};
 use super::config::ClusterConfig;
 use super::error::ClusterError;
 use super::fingerprint::{Fingerprint, fingerprint};
@@ -34,6 +35,9 @@ use crate::settings::settings;
 #[derive(Debug)]
 pub struct Coordinator {
     listener: TcpListener,
+    /// The shared secret of the cluster. `None`: the cluster has none, and
+    /// the socket is on a loopback address.
+    secret: Option<ClusterSecret>,
 }
 
 /// A worker that passed the first step of the handshake.
@@ -72,19 +76,65 @@ fn refusal(hello: &FromWorker, own: &Fingerprint, taken: &[Option<Joined>]) -> R
 }
 
 impl Coordinator {
-    /// Opens the socket on which the workers connect. Use port 0 to let
-    /// the operating system choose a free port.
+    /// Opens the socket on which the workers connect, for a cluster
+    /// without a shared secret. Use port 0 to let the operating system
+    /// choose a free port.
+    ///
+    /// Without a secret every process that reaches the socket can join. So
+    /// the address must be a loopback address (`127.0.0.1`, `::1`): only
+    /// processes of this machine reach it. For every other address use
+    /// [`Coordinator::bind_with_secret`].
+    ///
+    /// # Errors
+    ///
+    /// [`ClusterError::Config`] when an address is not a loopback address.
+    /// Nothing listens then. [`ClusterError::Io`] when the address cannot
+    /// be used.
+    pub fn bind(address: impl ToSocketAddrs) -> Result<Coordinator, ClusterError> {
+        Coordinator::listen(address, None)
+    }
+
+    /// Opens the socket on which the workers connect, for a cluster with a
+    /// shared secret. Only a worker that proves that it knows the secret
+    /// joins ([`WorkerConfig::with_secret`](super::WorkerConfig::with_secret)).
+    /// The address can be any address of this machine.
+    ///
+    /// The secret keeps strangers out. It does not hide or protect what
+    /// the processes send: the connections have no encryption. Use a
+    /// private network.
     ///
     /// # Errors
     ///
     /// [`ClusterError::Io`] when the address cannot be used.
-    pub fn bind(address: impl ToSocketAddrs) -> Result<Coordinator, ClusterError> {
+    pub fn bind_with_secret(
+        address: impl ToSocketAddrs,
+        secret: ClusterSecret,
+    ) -> Result<Coordinator, ClusterError> {
+        Coordinator::listen(address, Some(secret))
+    }
+
+    fn listen(
+        address: impl ToSocketAddrs,
+        secret: Option<ClusterSecret>,
+    ) -> Result<Coordinator, ClusterError> {
         let io = |e: std::io::Error| ClusterError::Io(e.to_string());
-        let listener = TcpListener::bind(address).map_err(io)?;
+        let addresses: Vec<SocketAddr> = address.to_socket_addrs().map_err(io)?.collect();
+        // The check comes before the socket: a refused address never
+        // listens, not even for a moment.
+        if secret.is_none()
+            && let Some(open) = auth::not_loopback(&addresses)
+        {
+            return Err(ClusterError::Config(format!(
+                "{open} is not a loopback address, and the cluster has no shared secret; \
+                 every process that reaches the address could join. Use \
+                 `Coordinator::bind_with_secret`, or listen on 127.0.0.1"
+            )));
+        }
+        let listener = TcpListener::bind(addresses.as_slice()).map_err(io)?;
         // `start` looks for new connections and for the time limit in
         // turns.
         listener.set_nonblocking(true).map_err(io)?;
-        Ok(Coordinator { listener })
+        Ok(Coordinator { listener, secret })
     }
 
     /// Returns the address on which the workers connect.
@@ -99,6 +149,10 @@ impl Coordinator {
     /// Waits until a worker has joined for every slot. A connection that
     /// fails the handshake is refused with the reason, and its slot stays
     /// free.
+    ///
+    /// A connection first proves that it knows the shared secret
+    /// (`auth::admit`). Until then the coordinator reads one small frame
+    /// from it and nothing else.
     fn assemble(
         &self,
         own: &Fingerprint,
@@ -107,6 +161,7 @@ impl Coordinator {
     ) -> Result<Vec<Joined>, ClusterError> {
         let s = &settings().cluster;
         let deadline = Instant::now() + config.join_timeout;
+        let secret = ClusterSecret::or_open(self.secret.as_ref());
         let mut joined: Vec<Option<Joined>> = config.workers.iter().map(|_| None).collect();
         while joined.iter().any(Option::is_none) {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -123,14 +178,21 @@ impl Coordinator {
                 }
                 return Err(error);
             }
-            let stream = match self.listener.accept() {
-                Ok((stream, _)) => stream,
+            let (mut stream, peer) = match self.listener.accept() {
+                Ok(accepted) => accepted,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(s.retry_ms).min(left));
                     continue;
                 }
                 Err(error) => return Err(ClusterError::Io(error.to_string())),
             };
+            // A peer that proves nothing gets no reader thread and no
+            // large frame. A peer that says nothing must not hold the
+            // others up for longer than one answer.
+            if let Err(reason) = auth::admit(&mut stream, &secret, left.min(config.reply_timeout)) {
+                tracing::warn!(%peer, %reason, "a connection was not let in");
+                continue;
+            }
             let mut link = match Link::start(stream, s.max_frame_bytes, alarm.clone()) {
                 Ok(link) => link,
                 Err(error) => {

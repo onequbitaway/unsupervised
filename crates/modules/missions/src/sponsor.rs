@@ -3,11 +3,14 @@
 //! A sponsor is not a resident. The server sends its mission to the global
 //! realm as a typed message (`SimHandle::send_global`). The reward is new
 //! money from the faucet `sponsor.reward`, up to a limit for each game day.
-//! The module answers with a public event.
+//! The module answers with a public event. A reward that the ledger cannot
+//! create (the supply cap of the kernel) refuses the mission.
 
 use serde::{Deserialize, Serialize};
 use unsup_kernel::serde_json::json;
-use unsup_kernel::{ActionError, ErrorCode, EventMeta, Message, Money, Realm, TICKS_PER_DAY};
+use unsup_kernel::{
+    ActionError, ErrorCode, EventMeta, LedgerError, Message, Money, Realm, TICKS_PER_DAY,
+};
 
 use crate::model::{Mission, Missions, Poster};
 use crate::params::{self, Params};
@@ -34,7 +37,19 @@ impl Message for SponsorMission {
     const KIND: &'static str = "missions.sponsor_mission";
 }
 
-/// Checks a sponsor mission, creates its reward and opens it.
+/// The refusal of a mission whose reward the ledger did not create.
+fn not_created(total: i64, error: LedgerError) -> ActionError {
+    match error {
+        // The faucets of the global realm are at the supply cap.
+        LedgerError::Overflow => ActionError::conflict(format!(
+            "The world cannot create {total} cents now: the money supply is at its limit. Try again later."
+        )),
+        other => other.into(),
+    }
+}
+
+/// Checks a sponsor mission, creates its reward and opens it. A mission
+/// whose reward the ledger cannot create is refused and changes nothing.
 fn publish(realm: &Realm, p: &Params, message: &SponsorMission) -> Result<(), ActionError> {
     check::sponsor_name(realm, p, &message.sponsor)?;
     let def = check::definition(realm, p, &message.mission)?;
@@ -57,7 +72,12 @@ fn publish(realm: &Realm, p: &Params, message: &SponsorMission) -> Result<(), Ac
         ));
     }
     let id = realm.alloc_id();
-    realm.ledger_mut().mint(p.sponsor_faucet, Missions::escrow(id), Money(total));
+    // The ledger creates the whole reward or nothing. Without the money
+    // there is no mission, and nothing counts against the day.
+    realm
+        .ledger_mut()
+        .try_mint(p.sponsor_faucet, Missions::escrow(id), Money(total))
+        .map_err(|error| not_created(total, error))?;
     state.sponsor_day = day;
     state.sponsor_minted = used + total;
     let deadline = now + u64::from(def.deadline_in);
@@ -74,8 +94,9 @@ fn publish(realm: &Realm, p: &Params, message: &SponsorMission) -> Result<(), Ac
     Ok(())
 }
 
-/// Handles a [`SponsorMission`]. A refusal changes nothing and is told with
-/// the public event `missions.sponsor_refused`.
+/// Handles a [`SponsorMission`]. A refusal opens no mission, creates no
+/// money and uses nothing of the limit of the day. It is told with the
+/// public event `missions.sponsor_refused`.
 pub(crate) fn on_message(realm: &Realm, p: &Params, message: &SponsorMission) {
     if let Err(error) = publish(realm, p, message) {
         realm.emit(

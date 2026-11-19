@@ -282,9 +282,9 @@ propose_law -> vote -> sign -> law
 
 | Stage | Who acts | Ends | Then |
 | --- | --- | --- | --- |
-| `vote` | Members: `vote_law` | When every member voted, or after `bill_voting_minutes` | Passed: `sign`. Failed: `rejected` |
+| `vote` | The electorate: `vote_law` | When nobody is left to vote, or after `bill_voting_minutes` | Passed: `sign`. Failed: `rejected` |
 | `sign` | Executive: `sign_law` or `veto_law` | At the action, or after `bill_sign_minutes` | Signed: law. Vetoed: `override`. No action before the deadline: law |
-| `override` | Members: `vote_law` | When every member voted, or after `bill_override_minutes` | Two thirds: law. Else: `rejected` |
+| `override` | The electorate: `vote_law` | When nobody is left to vote, or after `bill_override_minutes` | Two thirds: law. Else: `rejected` |
 
 Rules:
 
@@ -293,19 +293,35 @@ Rules:
   is an optional text of at most `bill_text_max` bytes.
 - A government has at most `bills_open_max` open bills, and one open bill
   for one parameter.
-- `vote_law { bill, vote }` needs `gov.vote`. `vote` is `yes` or `no`. A
-  member votes one time in a stage.
+- **Electorate.** Each stage with a vote has an electorate. It is fixed
+  when the stage begins and does not change:
+  - for the stage `vote`, the residents with `gov.vote` at the proposal;
+  - for the stage `override`, the residents with `gov.vote` at the veto.
+- `vote_law { bill, vote }` needs `gov.vote` now and a place in the
+  electorate of the stage. `vote` is `yes` or `no`. A member votes one
+  time in a stage.
+  - A resident that got its seat after the stage began is not in the
+    electorate. Its vote is refused with `not_allowed`. It votes on the
+    next bill, and on the override when the veto comes after its seat.
+  - A member of the electorate that lost its seat cannot vote any more.
+- **A vote stays.** A vote that a member cast counts, also when the member
+  leaves the council or the legislature, or the world, before the count.
 - **Quorum.** A decision needs the votes of `quorum_permille` thousandths
-  of the members, rounded up, and one vote or more. The members are the
-  residents with `gov.vote` when the stage ends.
+  of the electorate, rounded up, and one vote or more. A member that
+  leaves does not make the quorum smaller.
 - **Majority.** A bill passes the stage `vote` when the votes in favour
   are more than the votes against. A tie fails.
 - **Override.** The members override a veto when the votes in favour are
   `override_num / override_den` (two thirds) of the votes cast or more,
-  with a quorum. The override is a new vote: the votes of the first stage
-  do not count in it.
-- Only the votes of the residents that are members when the stage ends
-  count.
+  with a quorum. The override is a new vote with a new electorate: the
+  votes of the first stage do not count in it.
+- **The end of a stage.** A stage ends at once when a vote comes in and
+  nobody is left to vote: each member of the electorate has voted or has
+  no seat any more. Else it ends at its deadline.
+- `members` in `politics.bill_passed` and `politics.bill_rejected` is the
+  size of the electorate of the stage.
+- A bill of a snapshot from before this rule has no electorate. It gets
+  the residents with `gov.vote` at its first vote or count.
 - `sign_law { bill }` and `veto_law { bill }` need `gov.sign`.
 - **Automatic enactment.** A bill that passed becomes law without a
   signature when nobody has `gov.sign` in the government (the executive
@@ -440,7 +456,8 @@ the field `key`.
 - A bill in `open` and `closed` has `bill`, `param`, `value`, `old`,
   `sponsor`, `reason` (untrusted or null), `proposed`, `stage`, `deadline`,
   `yes`, `no`, `passed` (the count of the first vote), `vetoed_by`, `how`
-  and `why`. The newest closed bill is first.
+  and `why`. The newest closed bill is first. `yes` and `no` are all votes
+  of the current stage, also those of members that left (section 8.2).
 - A law in `laws` has `param`, `value`, `old`, `bill`, `enacted` and `how`.
 - The frames of an election and of a bill (`opens`, `polls_open`,
   `deadline`, `enacted` and so on) are frame numbers.
@@ -636,7 +653,7 @@ The verbs are those of the row `politics` of the table in
 | `campaign` | `election`, `spend` | `election`, `spend`, `radius`, `heard` | `invalid_args`: below the least cost. `not_found`: no such open election. `conflict`: not in the campaign window. `not_here`: another city. `not_allowed`: not a candidate. `insufficient`: the fund has less |
 | `vote` | `election`, `candidate` | `election`, `office`, `candidate`, `turnout` | `not_allowed`: lived too short. `not_found`: no such open election; not a candidate there. `conflict`: the polls are not open; voted already; voted for this office in another open election. `not_here`: another city |
 | `propose_law` | `param`, `value`, `city` (optional), `reason` (optional) | the bill, `stage`, `deadline` | `not_found`: no such city; no such parameter. `not_allowed`: no `gov.propose`; not a policy parameter. `invalid_args`: value outside the bounds (details `min`, `max`); bad reason. `conflict`: too many open bills; an open bill for the parameter (details `bill`) |
-| `vote_law` | `bill`, `vote` | `bill`, `vote`, `yes`, `no`, `stage` (after the vote) | `not_found`: no such open bill. `conflict`: the bill takes no votes now; voted already in this stage. `not_allowed`: no `gov.vote` |
+| `vote_law` | `bill`, `vote` | `bill`, `vote`, `yes`, `no`, `stage` (after the vote) | `not_found`: no such open bill. `conflict`: the bill takes no votes now; voted already in this stage. `not_allowed`: no `gov.vote`; not in the electorate of the stage (section 8.2) |
 | `sign_law` | `bill` | `bill`, `stage` (`enacted`) | `not_found`. `conflict`: the bill does not wait for the executive. `not_allowed`: no `gov.sign` |
 | `veto_law` | `bill` | `bill`, `stage`, `deadline` | As `sign_law` |
 | `appoint` | `post`, `resident`, `city` (optional) | the government, `post`, `resident`, `by`, `org` | `not_found`: no such city; no such resident. `not_allowed`: no `gov.appoint` there. `invalid_args`: yourself. `conflict`: holds the post already; holds another role in the organization; the post is full (details `seats`, `holders`) |
