@@ -3,7 +3,7 @@
 use unsup_kernel::serde_json::json;
 use unsup_kernel::{EventMeta, Realm, ResidentId};
 
-use super::{ballot, facts_with};
+use super::facts_with;
 use crate::offices::{self, GOV_VOTE};
 use crate::params::{self, Params};
 use crate::state::Politics;
@@ -18,8 +18,9 @@ fn close_rejected(
     mut bill: Bill,
     why: Why,
 ) -> Stage {
-    let members = offices::members_with(realm, bill.gov.org(), GOV_VOTE);
-    let (yes, no) = ballot::tally(&bill, &members);
+    let org = bill.gov.org();
+    let members = bill.electorate(|| offices::members_with(realm, org, GOV_VOTE)).len();
+    let (yes, no) = bill.count();
     bill.stage = Stage::Rejected(why);
     bill.deadline = realm.frame();
     let facts = facts_with(
@@ -28,7 +29,7 @@ fn close_rejected(
             "why": why.name(),
             "yes": yes,
             "no": no,
-            "members": members.len(),
+            "members": members,
             "sponsor": bill.sponsor,
         }),
     );

@@ -132,6 +132,33 @@ fn with_no_judge_a_jury_is_called_and_its_votes_decide_at_the_deadline() {
 }
 
 #[test]
+fn the_jury_is_drawn_from_the_residents_that_live() {
+    let Arrested { mut w, cy, eve, case, .. } =
+        arrested(&[("crime.jury_size", 3), ("crime.jury_quorum", 2)]);
+    // 600 residents came to the town and left the world again. Their ids
+    // are between the ids of the first residents and those of the jurors.
+    let gone: Vec<ResidentId> = (0..600).map(|_| w.spawn("Visitor")).collect();
+    w.step(1);
+    for visitor in gone {
+        w.despawn(visitor);
+    }
+    let pool: Vec<ResidentId> =
+        (0..3).map(|i| resident_at(&mut w, "Juror", 0, Pos::new(70 + i, 70))).collect();
+    w.step(1);
+
+    // Six residents live: the officer, the victim, the defendant and the
+    // pool. Only the pool can sit on the jury. A draw from all ids that
+    // ever were finds a living resident one time in a hundred; a draw from
+    // the living finds the three jurors.
+    let (_, events) = run_with_events(&mut w, eve, "charge", json!({ "target": cy, "case": case }));
+    let called = of_kind(&events, "crime.jury_summoned");
+    assert_eq!(called.len(), 1);
+    assert_eq!(called[0].data, json!({ "case": case, "kind": "theft", "city": 0, "jurors": 3 }));
+    assert_eq!(jurors(&w, &pool, case), pool);
+    w.assert_conserved();
+}
+
+#[test]
 fn a_jury_that_votes_in_full_ends_the_trial_at_once_and_can_acquit() {
     let Arrested { mut w, bo, cy, eve, case, .. } =
         arrested(&[("crime.jury_size", 3), ("crime.jury_quorum", 2)]);

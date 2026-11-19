@@ -2620,9 +2620,16 @@ dependencies = [
  "toml",
  "tower-http 0.7.1",
  "tracing",
+ "unsup-crime",
+ "unsup-economy",
+ "unsup-finance",
  "unsup-kernel",
+ "unsup-life",
+ "unsup-missions",
+ "unsup-politics",
  "unsup-protocol",
  "unsup-runtime",
+ "unsup-society",
 ]
 
 [[package]]

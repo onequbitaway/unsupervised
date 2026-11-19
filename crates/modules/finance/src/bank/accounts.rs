@@ -109,22 +109,24 @@ impl Bank {
         self.accounts.remove(&resident.0);
     }
 
-    /// Creates money in an account through a faucet. Returns the cents
-    /// that were created: `amount`, or 0 when the balance or the total of
-    /// the faucet cannot hold it.
+    /// Creates money in an account through a faucet. The ledger creates
+    /// the whole amount or nothing.
+    ///
+    /// # Errors
+    ///
+    /// The ledger refuses an amount that would take the realm above the
+    /// supply cap of the kernel, and a negative amount. Nothing changes
+    /// then.
     pub(crate) fn mint_in(
         &mut self,
         realm: &Realm,
         faucet: FaucetId,
         resident: ResidentId,
         amount: i64,
-    ) -> i64 {
-        let holder = Bank::holder(resident);
-        let before = realm.ledger().money(holder).0;
-        realm.ledger_mut().mint(faucet, holder, Money(amount));
-        let created = realm.ledger().money(holder).0 - before;
-        self.deposits += created;
-        created
+    ) -> Result<(), LedgerError> {
+        realm.ledger_mut().try_mint(faucet, Bank::holder(resident), Money(amount))?;
+        self.deposits += amount;
+        Ok(())
     }
 
     /// Destroys money of an account through a sink.

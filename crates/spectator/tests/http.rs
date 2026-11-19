@@ -8,7 +8,7 @@ use unsup_kernel::{Pos, ZoneId};
 use unsup_runtime::RuntimeConfig;
 use unsup_spectator::wire::ServerMessage;
 
-use common::{Harness, Model, PLAZA, START, limits, resident};
+use common::{Harness, Model, PLAZA, START, board_data, limits, resident};
 
 /// Returns the ids of the events of a feed page.
 fn ids(page: &Value) -> Vec<&str> {
@@ -400,7 +400,7 @@ async fn published_state_is_served_by_kind_and_key() {
         board,
         json!({
             "kind": "missions.leaderboard_published", "key": "wealth", "frame": 4, "clock": clock(4),
-            "data": { "key": "wealth", "rows": [{ "resident": 1, "score": 100 }] },
+            "data": board_data("wealth", ada),
         })
     );
     assert_eq!(harness.get("/v1/leaderboards/fame").await.0, StatusCode::NOT_FOUND);

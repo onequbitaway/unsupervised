@@ -437,6 +437,7 @@ processes are a change of the deployment, not of the modules.
 | Router | `src/cluster/plan.rs` | Which zone gets which message, in which order |
 | Directory | `src/cluster/lookup.rs` | In which zone a resident is |
 | Transport | `src/cluster/wire.rs`, `proto.rs`, `link.rs` | Frames, messages, the connection to a worker |
+| Shared secret | `src/cluster/auth.rs` | Who can join: the challenge and the proofs |
 | Seals | `src/cluster/seals.rs` | The points to which the cluster can recover |
 | Handle | `src/cluster/handle.rs` | `ClusterHandle` and `ClusterJoin` |
 
@@ -456,6 +457,26 @@ join.shutdown()?; // a stop in order: every process writes its final snapshots
 is ready. A worker can start before the coordinator: it tries to connect
 until `WorkerConfig::connect_timeout` has passed.
 
+A cluster on more than one machine needs a shared secret:
+
+```rust
+let secret = ClusterSecret::new(secret_bytes)?;   // the same bytes in every process
+let coordinator = Coordinator::bind_with_secret("10.0.0.1:7000", secret.clone())?;
+// In each worker process:
+//   run_worker(plugins, WorkerConfig::new(world_config, slot, address).with_secret(secret))?;
+```
+
+- `Coordinator::bind` is for a cluster without a secret. It refuses each
+  address that is not a loopback address (`127.0.0.1`, `::1`) with
+  `ClusterError::Config`, and nothing listens. Without a secret, each
+  process that reaches the socket could join.
+- `Coordinator::bind_with_secret` takes each address of the machine.
+- A worker without a secret does not connect to a coordinator that is not
+  on a loopback address (`ClusterError::Config`).
+- Use at least 32 random bytes as the secret. Keep them in a secret store.
+  Do not put them in a log or on a command line. A `ClusterSecret` holds a
+  key that is derived from the bytes, and it does not print the key.
+
 A `ClusterHandle` is a `SimHandle` with more calls: `cluster_stats`,
 `hashes`, `snapshots` and `audit`. The coordinator sends each call to the
 process that hosts the resident or the realm. `audit` checks the ledgers
@@ -473,20 +494,66 @@ the bytes of `Envelope::to_bytes`.
 The coordinator asks and the worker answers: each message of the
 coordinator has exactly one answer. The handshake:
 
-1. The worker sends `Hello`: the protocol version, the hash of the world
+1. The coordinator sends a challenge: a fresh number of 32 bytes.
+2. The worker sends its proof: a fresh number of its own, and a keyed hash
+   over its role and both numbers.
+3. The coordinator checks the proof. A wrong proof gets a refusal, and the
+   connection ends. A right proof gets the proof of the coordinator, which
+   the worker checks in the same way.
+4. The worker sends `Hello`: the protocol version, the hash of the world
    configuration, the hash of the set of plugins, and its slot.
-2. The coordinator checks them. It answers `Welcome` with the zones of the
+5. The coordinator checks them. It answers `Welcome` with the zones of the
    slot, or `Refuse` with the reason. The reason says which of the four
    is wrong.
-3. The worker sends the seals that the storage of each zone holds.
-4. When all workers have joined, the coordinator sends `Begin`: make new
+6. The worker sends the seals that the storage of each zone holds.
+7. When all workers have joined, the coordinator sends `Begin`: make new
    worlds, or recover to one seal.
-5. The worker makes or recovers its worlds and sends `Ready`.
+8. The worker makes or recovers its worlds and sends `Ready`.
 
 The hash of the world configuration covers every field but `hosted`. The
 hash of the set of plugins covers the plugin names in their order and the
 catalogue: verbs with argument schemas, parameters with values, items,
 attributes and conditions.
+
+#### The shared secret
+
+Steps 1 to 3 are in `src/cluster/auth.rs`.
+
+- The key is `BLAKE3 derive_key` of the secret. The proof is the keyed
+  BLAKE3 hash of the role (`worker` or `coordinator`) and the two numbers.
+  The secret and the key never travel.
+- A proof holds for one pair of numbers and one role. A proof that
+  somebody recorded opens no later connection. The proof of one side is no
+  proof of the other.
+- The coordinator compares the proof in constant time.
+- Before the proof is right, the coordinator reads one frame of at most
+  1,024 bytes from the connection and nothing else. It starts no thread
+  for the connection. A connection that sends another message first, a
+  larger frame or a wrong proof is refused. Its slot stays free.
+- The refusal of a wrong proof says only that the worker did not prove the
+  secret. A worker gets `ClusterError::Refused` with that reason.
+- A coordinator that does not prove the secret stops the worker with
+  `ClusterError::Protocol`. A worker does not serve a stranger.
+- A cluster without a secret runs the same steps with a key that everybody
+  knows. The steps then prove nothing. This is why such a cluster is
+  allowed on a loopback address only.
+- A fresh number mixes two values that the standard library takes from the
+  random source of the operating system with the clock, the process id
+  and a counter.
+
+**The transport has no encryption.** The secret decides who joins. It does
+not protect what the processes send afterwards:
+
+- Each message after the handshake is plain MessagePack. Somebody that can
+  read the network reads the whole world, with everything that residents
+  cannot see.
+- No message after the handshake is signed. Somebody that can change the
+  traffic on the network can change the world.
+
+So the transport is meant for a private network: one machine, or machines
+on a network that only the operator of the cluster controls (a private
+VLAN, a VPN, or a tunnel with encryption between the machines). Do not
+open the port of the coordinator to the internet.
 
 ### The frame protocol
 
@@ -585,7 +652,8 @@ A cluster never goes on without one of its processes.
 - Before the cluster runs, a worker tries to connect until its time limit.
 - A connection that fails the handshake is refused. Its slot stays free
   for the right worker. A second worker for a slot that is taken is
-  refused.
+  refused. This is also true for a connection that does not prove the
+  shared secret.
 - When a slot is still free after `ClusterConfig::join_timeout`, the start
   fails. The workers that joined stop.
 - The coordinator closes its socket when the cluster runs. No worker joins
@@ -723,5 +791,11 @@ each test shows what one process does and what the cluster does instead.
   thread and, with the `Interval` policy, one sync thread per realm.
 - A process cannot join again after its connection broke. All processes
   start again.
-- The transport has no encryption and no login. Use it on one machine or
-  on a private network.
+- The transport has no encryption, and no message after the handshake is
+  signed. The shared secret only decides who can join. Use the cluster on
+  one machine or on a private network ("Transport and handshake").
+- One secret is for the whole cluster. A new secret needs a new start of
+  every process.
+- The coordinator takes one connection at a time through the handshake. A
+  connection that says nothing holds the others up for at most
+  `reply_timeout`, and never past `join_timeout`.

@@ -115,9 +115,19 @@ pub(crate) struct Bill {
     pub(crate) stage: Stage,
     /// Frame at which the current stage ends, or at which the bill closed.
     pub(crate) deadline: u64,
-    /// Members that voted in favour in the current stage.
+    /// The electorate of the current stage: the residents that had
+    /// `gov.vote` when the stage began. That is the proposal for the stage
+    /// `vote` and the veto for the stage `override`. Only they vote in the
+    /// stage, and the quorum counts them, also when they left afterwards.
+    ///
+    /// `None` only in a bill of a snapshot from before this rule. Such a
+    /// bill gets the members of its first use; see [`Bill::electorate`].
+    #[serde(default)]
+    pub(crate) electorate: Option<BTreeSet<ResidentId>>,
+    /// Members of the electorate that voted in favour in the current stage.
+    /// A vote stays when its member leaves.
     pub(crate) yes: BTreeSet<ResidentId>,
-    /// Members that voted against in the current stage.
+    /// Members of the electorate that voted against in the current stage.
     pub(crate) no: BTreeSet<ResidentId>,
     /// The count of the first vote, after it passed: in favour, against.
     pub(crate) passed: Option<(u32, u32)>,
@@ -129,6 +139,38 @@ impl Bill {
     /// Returns true when a member voted in the current stage.
     pub(crate) fn has_voted(&self, member: ResidentId) -> bool {
         self.yes.contains(&member) || self.no.contains(&member)
+    }
+
+    /// Starts a stage in which members vote: nobody has voted yet, and the
+    /// electorate is `members`, the residents with `gov.vote` now.
+    pub(crate) fn open_vote(&mut self, members: impl IntoIterator<Item = ResidentId>) {
+        self.yes.clear();
+        self.no.clear();
+        self.electorate = Some(members.into_iter().collect());
+    }
+
+    /// Returns the electorate of the current stage. A bill of a snapshot
+    /// from before the rule has none: it gets `members()`, the residents
+    /// with `gov.vote` now, and keeps them.
+    pub(crate) fn electorate(
+        &mut self,
+        members: impl FnOnce() -> Vec<ResidentId>,
+    ) -> &BTreeSet<ResidentId> {
+        self.electorate.get_or_insert_with(|| members().into_iter().collect())
+    }
+
+    /// Returns true when a resident is in the electorate of the current
+    /// stage. A bill without an electorate (see [`Bill::electorate`]) does
+    /// not say no.
+    pub(crate) fn admits(&self, resident: ResidentId) -> bool {
+        self.electorate.as_ref().is_none_or(|electorate| electorate.contains(&resident))
+    }
+
+    /// Returns the votes of the current stage: in favour, against. Every
+    /// vote of the electorate counts, also that of a member that left its
+    /// seat afterwards.
+    pub(crate) fn count(&self) -> (usize, usize) {
+        (self.yes.len(), self.no.len())
     }
 }
 
@@ -148,8 +190,9 @@ pub(crate) struct Law {
     pub(crate) how: How,
 }
 
-/// Returns the number of votes that a decision of `members` members needs:
-/// `permille` thousandths of them, rounded up, and at least one.
+/// Returns the number of votes that a decision needs when its electorate
+/// has `members` members: `permille` thousandths of them, rounded up, and
+/// at least one.
 pub(crate) fn quorum(members: usize, permille: i64) -> usize {
     let permille = usize::try_from(permille.clamp(0, 1000)).unwrap_or(1000);
     (members * permille).div_ceil(1000).max(1)
@@ -176,6 +219,55 @@ mod tests {
         assert_eq!(quorum(7, 0), 1);
         assert_eq!(quorum(7, 1000), 7);
         assert_eq!(quorum(7, 5000), 7);
+    }
+
+    fn bill() -> Bill {
+        Bill {
+            id: 1,
+            gov: Gov::Nation,
+            param: "x".into(),
+            value: 1,
+            old: 0,
+            sponsor: ResidentId(1),
+            reason: None,
+            proposed: 0,
+            stage: Stage::Vote,
+            deadline: 10,
+            electorate: None,
+            yes: BTreeSet::new(),
+            no: BTreeSet::new(),
+            passed: None,
+            vetoed_by: None,
+        }
+    }
+
+    #[test]
+    fn a_bill_without_an_electorate_gets_the_members_of_its_first_use() {
+        // A bill of a snapshot from before the rule.
+        let mut old = bill();
+        assert!(old.admits(ResidentId(9)), "nobody is shut out before the first use");
+        let first: Vec<u64> =
+            old.electorate(|| vec![ResidentId(2), ResidentId(1)]).iter().map(|r| r.0).collect();
+        assert_eq!(first, [1, 2]);
+        // The electorate is fixed now: a later list changes nothing.
+        let later: Vec<u64> = old.electorate(|| vec![ResidentId(7)]).iter().map(|r| r.0).collect();
+        assert_eq!(later, [1, 2]);
+        assert!(old.admits(ResidentId(2)));
+        assert!(!old.admits(ResidentId(7)));
+    }
+
+    #[test]
+    fn a_new_stage_has_a_new_electorate_and_no_votes() {
+        let mut bill = bill();
+        bill.open_vote([ResidentId(1), ResidentId(2)]);
+        bill.yes.insert(ResidentId(1));
+        bill.no.insert(ResidentId(2));
+        assert_eq!(bill.count(), (1, 1));
+        bill.open_vote([ResidentId(2), ResidentId(3)]);
+        assert_eq!(bill.count(), (0, 0));
+        assert!(!bill.admits(ResidentId(1)));
+        assert!(bill.admits(ResidentId(3)));
+        assert!(!bill.has_voted(ResidentId(2)));
     }
 
     #[test]

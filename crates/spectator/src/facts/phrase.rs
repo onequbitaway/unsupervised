@@ -290,15 +290,16 @@ mod tests {
     #[test]
     fn a_line_names_who_did_what_to_whom() {
         let atlas = TestAtlas::town();
-        let theft = test_event(
+        // The data of the crime module: an arrest by an officer.
+        let arrest = test_event(
             3,
             0,
-            "crime.theft_committed",
+            "crime.arrest_made",
             55,
             Some(2),
-            json!({ "thief": 2, "victim": 1, "amount": 4500 }),
+            json!({ "officer": 2, "target": 1, "case": 7, "cases": [7], "city": 0, "watch": false }),
         );
-        assert_eq!(book().line(&theft, &atlas), "Bo stole $45.00 from Ada");
+        assert_eq!(book().line(&arrest, &atlas), "Bo arrested Ada");
         let married = test_event(3, 1, "society.married", 30, Some(3), json!({ "a": 3, "b": 4 }));
         assert_eq!(book().line(&married, &atlas), "Cleo and Dev married");
         let signed =
@@ -309,8 +310,9 @@ mod tests {
     #[test]
     fn a_slot_without_a_value_uses_its_default() {
         let atlas = TestAtlas::town();
-        let theft = test_event(3, 0, "crime.theft_committed", 55, None, json!({}));
-        assert_eq!(book().line(&theft, &atlas), "Someone stole some money from a victim");
+        // An arrest by the city watch has no officer.
+        let arrest = test_event(3, 0, "crime.arrest_made", 55, None, json!({ "officer": null }));
+        assert_eq!(book().line(&arrest, &atlas), "The city watch arrested a suspect");
         let opened = test_event(
             3,
             0,
@@ -343,9 +345,22 @@ mod tests {
             "politics.election_decided",
             85,
             Some(4),
-            json!({ "city": 1, "office": "mayor", "winner": 4 }),
+            json!({ "gov": "city", "city": 1, "office": "mayor", "winner": 4, "winners": [4] }),
         );
         assert_eq!(book().line(&election, &atlas), "Dev won the election for mayor in Tokentown");
+        // A crime has no actor. The place of the event names where it was.
+        let mut theft = (*test_event(
+            9,
+            1,
+            "crime.theft_committed",
+            45,
+            None,
+            json!({ "case": 7, "kind": "theft", "city": 0, "site": null, "value": 4500, "attempt": false }),
+        ))
+        .clone();
+        assert_eq!(book().line(&theft, &atlas), "A theft took $45.00 in Old Town");
+        theft.zone = None;
+        assert_eq!(book().line(&theft, &atlas), "A theft took $45.00 in the city");
     }
 
     #[test]

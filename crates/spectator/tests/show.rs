@@ -27,10 +27,15 @@ fn fast() -> Config {
     config
 }
 
-fn theft(thief: u64, victim: u64) -> Value {
+/// An arrest by an officer for case 7, with the data of the crime module
+/// (`docs/design/modules/crime.md`, section 12).
+fn theft(officer: u64, target: u64) -> Value {
     json!({
-        "kind": "crime.theft_committed", "drama": 55,
-        "data": { "thief": thief, "victim": victim, "amount": 4500 },
+        "kind": "crime.arrest_made", "drama": 55,
+        "data": {
+            "officer": officer, "target": target, "case": 7, "cases": [7], "city": 0,
+            "watch": false,
+        },
     })
 }
 
@@ -78,7 +83,7 @@ async fn the_director_and_the_stories_are_on_the_feed_and_on_http() {
     assert_eq!(state["frame"], 1);
     assert_eq!(state["shot"], serde_json::to_value(wide).expect("json"));
 
-    // A theft: the director cuts to the thief, and a story opens. The show
+    // An arrest: the director cuts to the officer, and a story opens. The show
     // comes before the `frame` message of its frame.
     harness.act(ada, "report", theft(1, 2)).await;
     harness.step().await;
@@ -91,11 +96,11 @@ async fn the_director_and_the_stories_are_on_the_feed_and_on_http() {
     );
     assert_eq!(shot.focus, Focus::Resident { id: ada, name: Some("Ada".into()) });
     assert_eq!((shot.zone, shot.pos), (Some(ZoneId(0)), Some(START)));
-    assert_eq!(shot.caption, "Ada stole $45.00 from Bob");
+    assert_eq!(shot.caption, "Ada arrested Bob");
     assert_eq!(shot.event.map(|id| id.to_string()).as_deref(), Some("2-0"));
     assert_eq!(
         (shot.story, shot.label.as_deref(), shot.headline.as_deref()),
-        (Some(1), Some("Crime"), Some("Ada stole $45.00 from Bob"))
+        (Some(1), Some("Crime"), Some("Ada arrested Bob"))
     );
     let (stories, reset) = stories_of(&messages[1]);
     assert!(!reset);
@@ -103,7 +108,7 @@ async fn the_director_and_the_stories_are_on_the_feed_and_on_http() {
     let story = &stories[0];
     assert_eq!(
         (story.id, story.kind.as_str(), story.status, story.events, story.headline.as_str()),
-        (1, "crime", StoryStatus::Open, 1, "Ada stole $45.00 from Bob")
+        (1, "crime", StoryStatus::Open, 1, "Ada arrested Bob")
     );
     assert_eq!(
         story.residents.iter().map(|r| (r.id, r.name.as_str())).collect::<Vec<_>>(),
@@ -124,17 +129,20 @@ async fn the_director_and_the_stories_are_on_the_feed_and_on_http() {
     assert_eq!(page["stories"][0], serde_json::to_value(story).expect("json"));
     assert_eq!(harness.get_ok("/v1/stories/1").await, page["stories"][0]);
 
-    // The arrest joins the story. The shot of Ada stays (3 frames at
+    // The charge joins the story of the case. The shot of Ada stays (3 frames at
     // least) and gets the new words: the same number.
-    let arrest = json!({ "kind": "crime.arrest_made", "drama": 50, "data": { "suspect": 1 } });
-    harness.act(bob, "report", arrest).await;
+    let charge = json!({
+        "kind": "crime.suspect_charged", "drama": 45,
+        "data": { "case": 7, "kind": "theft", "city": 0, "target": 2, "officer": 1, "decided_in": 720 },
+    });
+    harness.act(bob, "report", charge).await;
     harness.step().await;
     let messages = viewer.until_frame(3).await;
     assert_eq!(messages.len(), 2, "{messages:?}");
     let (stories, _) = stories_of(&messages[0]);
     assert_eq!(
         (stories[0].id, stories[0].events, stories[0].latest.as_str()),
-        (1, 2, "Ada was arrested")
+        (1, 2, "Bob was charged with theft")
     );
     assert_eq!(
         stories[0].timeline.iter().map(|beat| beat.event.to_string()).collect::<Vec<_>>(),
@@ -242,7 +250,7 @@ async fn live_a_life(
     harness.act(ada, "report", loan).await;
     harness.act(bob, "report", theft(2, 1)).await;
     harness.step().await;
-    let won = json!({ "kind": "politics.election_decided", "drama": 85, "data": { "city": 0, "office": "mayor", "winner": 1 } });
+    let won = json!({ "kind": "politics.election_decided", "drama": 85, "data": { "gov": "city", "city": 0, "election": 70, "office": "mayor", "kind": "regular", "seats": 1, "winner": 1, "winners": [1], "previous": [], "turnout": 1, "tie": false } });
     harness.act(ada, "report", won).await;
     harness.step().await;
     (ada, bob)
@@ -269,7 +277,7 @@ async fn a_life_story_survives_a_restart() {
     assert_eq!(life["born"]["line"], "Ada arrived in Plaza");
     assert_eq!(lines(&life["jobs"]), ["Ada got a job at a business"]);
     assert_eq!(lines(&life["deals"]), ["Ada got a loan of $500.00"]);
-    assert_eq!(lines(&life["crimes"]), ["Bob stole $45.00 from Ada"]);
+    assert_eq!(lines(&life["crimes"]), ["Bob arrested Ada"]);
     assert_eq!(lines(&life["offices"]), ["Ada won the election for mayor in Testville"]);
     assert_eq!((life.get("death"), life.get("homes")), (None, None));
 
@@ -401,8 +409,8 @@ async fn a_clip_replays_the_frames_around_an_event() {
     let clip: Clip = serde_json::from_value(harness.get_ok("/v1/clips/5-0").await).expect("a clip");
     assert_eq!((clip.id.to_string().as_str(), clip.zone, clip.pinned), ("5-0", ZoneId(0), false));
     assert_eq!((clip.from, clip.to, clip.complete), (3, 8, true));
-    assert_eq!(clip.line, "Bob stole $45.00 from Ada");
-    assert_eq!(clip.event.kind, "crime.theft_committed");
+    assert_eq!(clip.line, "Bob arrested Ada");
+    assert_eq!(clip.event.kind, "crime.arrest_made");
     assert_eq!(clip.link, "/?clip=5-0");
     // The clip starts with the residents as they were after frame 2.
     assert_eq!(clip.residents, seen_at[&2]);
@@ -470,7 +478,7 @@ async fn a_clip_replays_the_frames_around_an_event() {
             .collect::<Vec<_>>(),
         ["10-0", "5-0"]
     );
-    assert_eq!(list["clips"][1]["line"], "Bob stole $45.00 from Ada");
+    assert_eq!(list["clips"][1]["line"], "Bob arrested Ada");
     let pinned: Clip =
         serde_json::from_value(harness.get_ok("/v1/clips/5-0").await).expect("a clip");
     assert_eq!(pinned, Clip { pinned: true, ..clip });
@@ -619,10 +627,10 @@ async fn a_delay_holds_back_everything_that_viewers_get() {
             ServerMessage::Director { shot } => Some(shot),
             _ => None,
         })
-        .expect("the director cuts to the thief");
+        .expect("the director cuts to the officer");
     // The shot has the frame of the event, not the frame of the viewers'
     // clock: the director saw the same events as without a delay.
-    assert_eq!((cut.frame, cut.caption.as_str()), (acted, "Ada stole $45.00 from resident 2"));
+    assert_eq!((cut.frame, cut.caption.as_str()), (acted, "Ada arrested resident 2"));
     assert_eq!(cut.focus, Focus::Resident { id: ada, name: Some("Ada".into()) });
     let zone = harness.get_ok("/v1/world/zones/0").await;
     assert_eq!(zone["residents"][0]["pos"], json!({ "x": 10, "y": 10 }));
@@ -631,19 +639,21 @@ async fn a_delay_holds_back_everything_that_viewers_get() {
     assert_eq!(harness.get_ok("/v1/stories").await["stories"][0]["lead"], theft_id);
     assert_eq!(harness.get_ok(&format!("/v1/clips/{theft_id}")).await["zone"], 0);
     let profile = harness.get_ok(&format!("/v1/residents/{ada}/profile")).await;
-    assert_eq!(lines(&profile["life"]["crimes"]), ["Ada stole $45.00 from resident 2"]);
+    assert_eq!(lines(&profile["life"]["crimes"]), ["Ada arrested resident 2"]);
 
     // The map of the zone waited like everything else. The first request
     // above read it again from the simulation, with the shop, in the frame
-    // of the building. The cache got that map 3 frames later: now.
-    assert_eq!(
-        zone["sites"]
-            .as_array()
-            .expect("sites")
-            .iter()
-            .map(|s| s["name"].as_str().expect("name"))
-            .collect::<Vec<_>>(),
-        ["Plaza", "Corner Shop"]
-    );
+    // of the building. A read of the simulation has no frame number, and
+    // it can show what the inputs after the last frame did. So it waits
+    // from the frame after the read: the cache gets that map one frame
+    // after the events of the frame, and never before them.
+    let names = |zone: &Value| -> Vec<String> {
+        let sites = zone["sites"].as_array().expect("sites");
+        sites.iter().map(|s| s["name"].as_str().expect("name").to_string()).collect()
+    };
+    assert_eq!(names(&zone), ["Plaza"]);
+    assert_eq!(harness.step().await, acted + DELAY + 1);
+    let zone = harness.get_ok("/v1/world/zones/0").await;
+    assert_eq!(names(&zone), ["Plaza", "Corner Shop"]);
     harness.stop().await;
 }

@@ -13,6 +13,7 @@ use crate::cache::Cache;
 use crate::config::Config;
 use crate::delay::DelayLine;
 use crate::digest::Digest;
+use crate::source::Source;
 use crate::studio::Studio;
 use crate::vault::Vault;
 use crate::wire::FeedStats;
@@ -49,8 +50,9 @@ pub(crate) struct NoWorld;
 pub(crate) struct Hub {
     /// The limits of the service.
     pub config: Config,
-    /// The door to the simulation. The service only reads through it.
-    pub sim: SimHandle,
+    /// The door to the simulation. The service only reads through it, and
+    /// what it reads goes to the delay of the stream.
+    pub source: Source,
     cache: RwLock<Cache>,
     /// The show. A task that needs the cache and the studio takes the
     /// cache first.
@@ -86,7 +88,7 @@ impl Hub {
             delay: Mutex::new(DelayLine::new(config.stream.delay_frames)),
             live: AtomicU64::new(0),
             config,
-            sim,
+            source: Source::new(sim),
             pulses,
             phase,
             loaded: AtomicBool::new(false),

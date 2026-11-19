@@ -196,6 +196,7 @@ fn issue_refuses_an_amount_that_the_treasury_cannot_hold() {
 
     let error = err(&mut w, gov, "central_bank_issue", json!({ "amount": 501 }));
     assert_eq!(error.code, ErrorCode::InvalidArgs);
+    assert_eq!(error.message, "The amount is too large for the treasury.");
     // Nothing was created, and nothing counts against the yearly limit.
     assert_eq!(minted(&w, "central_bank.issue"), 0);
     assert_eq!(w.global().res::<CentralBank>().issued_in(1), 0);

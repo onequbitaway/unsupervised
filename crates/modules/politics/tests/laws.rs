@@ -468,24 +468,6 @@ fn a_decision_needs_a_quorum_and_a_majority_of_the_votes_cast() {
 }
 
 #[test]
-fn only_the_votes_of_the_members_at_the_count_count() {
-    let Hall { mut w, council, .. } = hall(3);
-    let new: Vec<ResidentId> = (0..2).map(|i| rich(&mut w, &format!("New {i}"), 0)).collect();
-    let bill = propose(&mut w, council[0], FEE_PARAM, 2_000);
-    let deadline = w.last_report(council[0]).expect("a report").result["deadline"].as_u64();
-    cast(&mut w, council[0], bill, "yes");
-    cast(&mut w, council[1], bill, "yes");
-    // Two members lose their seats before the count.
-    seat(&mut w, CITY, roles::COUNCILLOR, &[council[2], new[0], new[1]]);
-    let frames = step_to(&mut w, deadline.expect("a frame"));
-    let rejected = event(&frames, "politics.bill_rejected");
-    assert_eq!(rejected.data["why"], "no_quorum");
-    assert_eq!((&rejected.data["yes"], &rejected.data["members"]), (&json!(0), &json!(3)));
-    assert_eq!(city_value(&w, FEE_PARAM), 1_000);
-    w.assert_conserved();
-}
-
-#[test]
 fn a_bill_becomes_law_without_a_signature() {
     let Hall { mut w, mayor, council, .. } = hall(3);
 

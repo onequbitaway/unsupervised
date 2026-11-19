@@ -166,11 +166,9 @@ fn issue(
     if central.issued.saturating_add(amount) > limit {
         return Err(over_limit("issue", limit, central.issued));
     }
-    let before = realm.ledger().money(NATION_TREASURY);
-    realm.ledger_mut().mint(p.central_issue, NATION_TREASURY, Money(amount));
-    if realm.ledger().money(NATION_TREASURY) == before {
-        // The ledger creates nothing when the treasury or the total of the
-        // faucet cannot hold the amount.
+    if realm.ledger_mut().try_mint(p.central_issue, NATION_TREASURY, Money(amount)).is_err() {
+        // The ledger creates the whole amount or nothing. It refuses an
+        // amount that would take the realm above the supply cap.
         return Err(ActionError::invalid_args("The amount is too large for the treasury."));
     }
     central.issued += amount;

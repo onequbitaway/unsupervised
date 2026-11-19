@@ -123,20 +123,57 @@ pub(crate) fn standing(state: &Missions, mission: &Mission, resident: ResidentId
         out.insert("progress".into(), progress(mission, taker));
         return Some(Value::Object(out));
     }
-    paid_to(mission, resident)
-        .map(|(cents, frame)| json!({ "status": "paid", "paid": cents, "frame": frame }))
+    payment(mission, resident).map(|payment| {
+        let mut out = Map::new();
+        out.insert("status".into(), json!("paid"));
+        payment.insert_into(&mut out);
+        Value::Object(out)
+    })
 }
 
-/// Returns the cents that a mission paid to a resident and the frame of the
-/// payment, when the resident was a taker, or a member of a team, that
-/// completed the mission. A member that added no event has 0 cents.
-pub(crate) fn paid_to(mission: &Mission, resident: ResidentId) -> Option<(i64, u64)> {
+/// Puts `short` into an answer when cents are missing. An answer without
+/// the field says that the payment was whole.
+pub(crate) fn insert_short(out: &mut Map<String, Value>, short: i64) {
+    if short > 0 {
+        out.insert("short".into(), json!(short));
+    }
+}
+
+/// What a mission paid to one resident.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Payment {
+    /// The cents that the escrow really sent.
+    pub(crate) paid: i64,
+    /// The frame of the payment.
+    pub(crate) frame: u64,
+    /// The cents of its share that the resident did not get.
+    pub(crate) short: i64,
+}
+
+impl Payment {
+    /// Puts `paid`, `frame` and, when cents are missing, `short` into an
+    /// answer.
+    pub(crate) fn insert_into(self, out: &mut Map<String, Value>) {
+        out.insert("paid".into(), json!(self.paid));
+        out.insert("frame".into(), json!(self.frame));
+        insert_short(out, self.short);
+    }
+}
+
+/// Returns what a mission paid to a resident, when the resident was a
+/// taker, or a member of a team, that completed the mission. The amounts
+/// are those of the receipt: the cents that the wires moved. A member that
+/// added no event has 0 cents.
+pub(crate) fn payment(mission: &Mission, resident: ResidentId) -> Option<Payment> {
     mission.takers.values().find_map(|taker| {
         let receipt = taker.done.as_ref()?;
         if !taker.members.contains_key(&resident) {
             return None;
         }
-        let cents = receipt.shares.iter().find(|(who, _)| *who == resident).map_or(0, |s| s.1);
-        Some((cents, receipt.frame))
+        Some(Payment {
+            paid: receipt.paid_to(resident),
+            frame: receipt.frame,
+            short: receipt.short_of(resident),
+        })
     })
 }

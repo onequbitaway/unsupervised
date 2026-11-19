@@ -8,6 +8,7 @@ use std::time::Duration;
 use unsup_kernel::WorldConfig;
 use unsup_protocol::ZoneId;
 
+use super::auth::ClusterSecret;
 use super::error::ClusterError;
 use crate::durable::DurableConfig;
 use crate::journal::{NoDilation, Pacer};
@@ -206,11 +207,15 @@ pub struct WorkerConfig {
     /// The storage of the zones of this worker. `None`: nothing is
     /// recorded.
     pub durable: Option<ClusterDurable>,
+    /// The shared secret of the cluster. It must be the one of the
+    /// coordinator. `None`: the cluster has no secret; the coordinator is
+    /// then on a loopback address.
+    pub secret: Option<ClusterSecret>,
 }
 
 impl WorkerConfig {
     /// Makes the configuration of the worker in `slot` for a coordinator at
-    /// `coordinator`. Nothing is recorded.
+    /// `coordinator`. Nothing is recorded, and the cluster has no secret.
     #[must_use]
     pub fn new(world: WorldConfig, slot: u32, coordinator: SocketAddr) -> WorkerConfig {
         let s = &settings().cluster;
@@ -221,7 +226,16 @@ impl WorkerConfig {
             connect_timeout: Duration::from_millis(s.connect_timeout_ms),
             reply_timeout: Duration::from_millis(s.reply_timeout_ms),
             durable: None,
+            secret: None,
         }
+    }
+
+    /// Gives the worker the shared secret of the cluster. A coordinator
+    /// that is not on a loopback address needs it.
+    #[must_use]
+    pub fn with_secret(mut self, secret: ClusterSecret) -> WorkerConfig {
+        self.secret = Some(secret);
+        self
     }
 }
 

@@ -108,13 +108,42 @@ impl Poster {
     }
 }
 
-/// The payment of a taker that completed a mission.
+/// The payment of a taker that completed a mission: the cents that really
+/// left the escrow, not the cents that the rules gave.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Receipt {
     /// The frame of the payment.
     pub(crate) frame: u64,
-    /// Who got how many cents, ordered by resident.
+    /// The cents that the escrow sent to each member with a share, ordered
+    /// by resident.
     pub(crate) shares: Vec<(ResidentId, i64)>,
+    /// The cents of its share that a member did not get, ordered by
+    /// resident. The escrow holds the whole reward, so the list is empty
+    /// unless something else took money out of the escrow.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) short: Vec<(ResidentId, i64)>,
+}
+
+impl Receipt {
+    /// Returns the cents that the escrow sent to a resident.
+    pub(crate) fn paid_to(&self, resident: ResidentId) -> i64 {
+        self.shares.iter().find(|(who, _)| *who == resident).map_or(0, |share| share.1)
+    }
+
+    /// Returns the cents of its share that a resident did not get.
+    pub(crate) fn short_of(&self, resident: ResidentId) -> i64 {
+        self.short.iter().find(|(who, _)| *who == resident).map_or(0, |share| share.1)
+    }
+
+    /// Returns the cents that the escrow sent to all members.
+    pub(crate) fn paid(&self) -> i64 {
+        self.shares.iter().map(|share| share.1).sum()
+    }
+
+    /// Returns the cents that the members did not get.
+    pub(crate) fn missing(&self) -> i64 {
+        self.short.iter().map(|share| share.1).sum()
+    }
 }
 
 /// One taker of a mission: a resident, or the team of an organization.

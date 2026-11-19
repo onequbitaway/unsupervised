@@ -49,10 +49,10 @@ fn veto(realm: &Realm, p: &Params, ctx: &GlobalCtx, args: &BillArgs) -> Result<V
     bill.stage = Stage::Override;
     bill.deadline = realm.frame() + minutes;
     bill.vetoed_by = Some(ctx.resident);
-    // The override is a new vote.
-    bill.yes.clear();
-    bill.no.clear();
+    // The override is a new vote, with the members of this moment.
     let gov = bill.gov;
+    let members = offices::members_with(realm, gov.org(), GOV_VOTE);
+    bill.open_vote(members.iter().copied());
     let facts = facts_with(
         bill,
         json!({
@@ -61,7 +61,7 @@ fn veto(realm: &Realm, p: &Params, ctx: &GlobalCtx, args: &BillArgs) -> Result<V
             "deadline": calendar::moment(realm, bill.deadline),
         }),
     );
-    for member in offices::members_with(realm, gov.org(), GOV_VOTE) {
+    for member in members {
         realm.notify(member, "politics.law_vetoed", Some(ctx.resident), facts.clone());
     }
     realm.emit(

@@ -30,9 +30,22 @@
 //! # }
 //! ```
 //!
-//! `README.md` in the crate directory describes the topology, the frame
-//! protocol, the failure rules, the recovery and the limits.
+//! # Who can join
+//!
+//! A cluster has a shared secret ([`ClusterSecret`]). A worker proves that
+//! it knows the secret before the coordinator reads anything else from it.
+//! Give the secret to [`Coordinator::bind_with_secret`] and to
+//! [`WorkerConfig::with_secret`]. Without a secret, a coordinator listens
+//! on a loopback address only.
+//!
+//! The connections have no encryption, and the messages after the
+//! handshake are not signed. Run a cluster on a private network.
+//!
+//! `README.md` in the crate directory describes the topology, the
+//! handshake, the frame protocol, the failure rules, the recovery and the
+//! limits.
 
+mod auth;
 pub(crate) mod call;
 mod cell;
 mod config;
@@ -40,6 +53,8 @@ mod coordinator;
 mod error;
 mod fingerprint;
 mod handle;
+#[cfg(test)]
+mod handshake_tests;
 mod link;
 mod lookup;
 mod plan;
@@ -52,6 +67,7 @@ mod totals;
 mod wire;
 mod worker;
 
+pub use self::auth::ClusterSecret;
 pub use self::config::{ClusterConfig, ClusterDurable, WorkerConfig, partition};
 pub use self::coordinator::Coordinator;
 pub use self::error::ClusterError;

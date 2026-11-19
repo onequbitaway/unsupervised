@@ -24,11 +24,11 @@ pub struct Numbers {
 pub struct Plots {
     /// Frames between two crimes with an investigation.
     pub crime_every: u64,
-    /// Frames from the crime to the investigation.
+    /// Frames from the crime to the warrant.
     pub investigation_after: u64,
     /// Frames from the crime to the arrest.
     pub arrest_after: u64,
-    /// Frames from the crime to the trial.
+    /// Frames from the crime to the verdict.
     pub trial_after: u64,
     /// Frames between two feuds.
     pub feud_every: u64,
@@ -56,13 +56,13 @@ pub struct Plots {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlotDrama {
-    /// `crime.investigation_opened`.
+    /// `crime.warrant_issued`.
     pub investigation_opened: u8,
     /// `crime.arrest_made`.
     pub arrest_made: u8,
-    /// `crime.trial_ended`.
+    /// `crime.verdict_given`.
     pub trial_ended: u8,
-    /// `crime.heist_committed`.
+    /// `crime.theft_committed` with a large loss: a heist.
     pub heist_committed: u8,
     /// `society.opinion_given`.
     pub opinion_given: u8,

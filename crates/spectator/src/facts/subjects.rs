@@ -101,10 +101,10 @@ mod tests {
         let event = test_event(
             1,
             0,
-            "crime.theft_committed",
+            "crime.arrest_made",
             55,
             Some(2),
-            json!({ "thief": 2, "victim": 1, "amount": 4500, "site": 900, "city": 1 }),
+            json!({ "officer": 2, "target": 1, "case": 7, "cases": [7], "site": 900, "city": 1 }),
         );
         assert_eq!(
             reader.facts(&event),
@@ -114,6 +114,22 @@ mod tests {
                 city: Some(CityId(1)),
             }
         );
+    }
+
+    #[test]
+    fn a_count_is_not_read_as_a_resident() {
+        // The politics module counts the candidates of an election and the
+        // members of a vote, and the crime module the jurors of a trial.
+        let reader = Reader::new(&Config::default().facts);
+        let event = test_event(
+            1,
+            0,
+            "politics.candidate_registered",
+            20,
+            Some(4),
+            json!({ "candidate": 4, "candidates": 2, "members": 3, "jurors": 1, "second": 1 }),
+        );
+        assert_eq!(reader.facts(&event).residents, vec![ResidentId(4)]);
     }
 
     #[test]

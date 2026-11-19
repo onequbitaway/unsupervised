@@ -4,41 +4,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::broadcast::error::RecvError;
-use unsup_protocol::{FrameOutput, SimError, ViewQuery, WorldView};
+use unsup_protocol::{FrameOutput, SimError};
 
 use crate::delay::{Held, WorldRead};
 use crate::hub::{Hub, Pulse};
-
-/// Reads the whole world from the simulation: the layout, then every
-/// zone. Every frame after the frame of the layout must be applied.
-///
-/// A zone view can be newer than the layout, because the simulation goes
-/// on between the calls. That does no harm: a delta sets positions and
-/// activities, it does not add to them, and the cache counts `entered` and
-/// `left` against what it holds. So a frame that a view already shows can
-/// be applied again.
-async fn read_world(hub: &Hub) -> Result<WorldRead, SimError> {
-    let WorldView::Layout { frame, clock, cities, zones } = hub.sim.view(ViewQuery::Layout).await?
-    else {
-        return Err(SimError::Invalid);
-    };
-    let mut views = Vec::with_capacity(zones.len());
-    for zone in &zones {
-        match hub.sim.view(ViewQuery::Zone { zone: zone.id }).await {
-            Ok(view) => views.push(view),
-            // Another process hosts the zone. The cache serves it empty.
-            Err(SimError::NotHosted) => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(WorldRead { frame, clock, cities, zones, views })
-}
+use crate::source::Stamped;
 
 /// Reads the world until it works. Returns `None` when the simulation
 /// stopped.
-async fn load(hub: &Hub) -> Option<WorldRead> {
+async fn load(hub: &Hub) -> Option<Stamped<WorldRead>> {
     loop {
-        match read_world(hub).await {
+        match hub.source.read_world().await {
             Ok(read) => return Some(read),
             Err(SimError::Shutdown) => return None,
             Err(error) => {
@@ -122,19 +98,30 @@ async fn release(hub: &Arc<Hub>) {
     }
 }
 
+/// Puts a world that was read from the simulation into the delay of the
+/// stream. Returns the frame of its layout: the frames up to it are in
+/// the world already.
+///
+/// The world waits from the stamp of the read, not from the frame of its
+/// layout: the views of its zones can be newer than the layout.
+fn hold_world(hub: &Hub, read: Stamped<WorldRead>) -> u64 {
+    let base = read.value.frame;
+    hub.set_live(base);
+    hub.delay().push(read.stamp, Held::World(Box::new(read.value)));
+    base
+}
+
 /// Feeds the cache until the simulation stops.
 pub(crate) async fn run(hub: Arc<Hub>) {
     // Subscribe first, so that no frame is lost between the read of the
     // world and the first frame.
-    let mut frames = hub.sim.frames();
+    let mut frames = hub.source.frames();
     let Some(read) = load(&hub).await else {
         hub.end();
         return;
     };
     // The world that the service read already holds the frames up to here.
-    let mut base = read.frame;
-    hub.set_live(base);
-    hub.delay().push(base, Held::World(Box::new(read)));
+    let mut base = hold_world(&hub, read);
     release(&hub).await;
     loop {
         match frames.recv().await {
@@ -146,11 +133,9 @@ pub(crate) async fn run(hub: Arc<Hub>) {
             }
             Err(RecvError::Lagged(lost)) => {
                 tracing::warn!(lost, "the spectator cache lost frames; it reads the world again");
-                frames = hub.sim.frames();
+                frames = hub.source.frames();
                 let Some(read) = load(&hub).await else { break };
-                base = read.frame;
-                hub.set_live(base);
-                hub.delay().push(base, Held::World(Box::new(read)));
+                base = hold_world(&hub, read);
                 release(&hub).await;
             }
             Err(RecvError::Closed) => break,

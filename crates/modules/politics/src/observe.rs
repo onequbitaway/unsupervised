@@ -174,6 +174,7 @@ fn section(realm: &Realm, p: &Params, resident: ResidentId, opts: &ObserveOpts) 
             match bill.stage {
                 Stage::Vote | Stage::Override
                     if !bill.has_voted(resident)
+                        && bill.admits(resident)
                         && offices::can(realm, org, resident, GOV_VOTE) =>
                 {
                     Some(bill_entry(realm, bill, "vote_law"))
