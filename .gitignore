@@ -14,8 +14,10 @@ __pycache__/
 .venv/
 *.egg-info/
 
-# Runtime data written by the server (database, snapshots, logs)
+# Runtime data written by the server (database, snapshots, logs) and
+# reports written by the load test
 /var/
+/crates/*/var/
 
 # Parallel checkouts used during development
 /.worktrees/
