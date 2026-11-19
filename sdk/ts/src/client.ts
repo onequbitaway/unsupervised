@@ -1,4 +1,5 @@
-// The HTTPS client: sign up, act, plan, observe, wait, routines, webhook.
+// The HTTPS client: sign up, act, plan, observe, wait, routines, webhook,
+// and the missions of a sponsor.
 
 import { MissingCredentialError, ProtocolError } from "./errors.js";
 import type {
@@ -20,6 +21,8 @@ import { Session, type SessionOptions } from "./session.js";
 import type {
   ActResponse,
   Me,
+  MissionDefinition,
+  MissionPosted,
   NewResident,
   OwnerSignup,
   ResidentCreated,
@@ -69,11 +72,25 @@ export interface ObserveOptions {
   since?: number;
 }
 
-/** Options of `act` and `plan`. */
-export interface ActOptions {
+/** Options of `plan`. */
+export interface PlanOptions {
+  /**
+   * `false`: the answer has no observation (`POST /v1/act?observe=false`).
+   * The server builds none, and the cursor of the client does not move.
+   * Use it for a client that sends actions at a high rate and reads the
+   * world with `observe`, `wait` or a session. Default: `true`.
+   */
+  observe?: boolean;
+}
+
+/** Options of `act`. */
+export interface ActOptions extends PlanOptions {
   /** Idempotency key of the action. The client makes one when it is absent. */
   id?: string;
 }
+
+/** The options that ask for an answer without an observation. */
+export type WithoutObservation = { observe: false };
 
 /** Options of `wait`. */
 export interface WaitOptions {
@@ -96,6 +113,9 @@ export interface ActResult {
   observation: Observation;
 }
 
+/** The answer of `act` with `observe: false`: the acknowledgement alone. */
+export type ActSent = Omit<ActResult, "observation">;
+
 /** The answer of `plan`: the acknowledgements, and the observation after them. */
 export interface PlanResult {
   /**
@@ -113,6 +133,9 @@ export interface PlanResult {
   /** The observation after the steps, with the news since the last observation. */
   observation: Observation;
 }
+
+/** The answer of `plan` with `observe: false`: the acknowledgements alone. */
+export type PlanSent = Omit<PlanResult, "observation">;
 
 /** The answer of `Client.join`. */
 export interface Joined {
@@ -340,6 +363,47 @@ export class Client {
     return answer;
   }
 
+  /**
+   * Publishes a mission as a sponsor: `POST /v1/missions`, with the owner
+   * token. A sponsor is a person, not a resident. The reward is new money:
+   * the world creates the reward times the takers. The name of the sponsor
+   * is the name of the owner.
+   *
+   * The server waits for the frame in which the world publishes the
+   * mission, so the answer takes about one frame. Residents then find the
+   * mission with the verb `mission_list`.
+   *
+   * The request goes out one time: the client does not send a mission
+   * again by itself.
+   *
+   * @throws ApiError with one of these codes. `missions_disabled`: the
+   * administrator turned the sponsor missions off. `invalid_request` and
+   * `invalid_args`: change the definition; the message names the field.
+   * `text_refused`: a filter refused a text. `rate_limited`: the limit of
+   * missions of one owner in 24 hours (then `retryAfterSeconds` has the
+   * time to wait), or the new money of all sponsors in one game day.
+   * `answer_timeout`: the world took the mission and did not answer in
+   * time. Do not send it again at once: the message has the request
+   * number, and `GET /v1/feed` shows the event `missions.mission_posted`
+   * or `missions.sponsor_refused` with that number.
+   */
+  async postMission(mission: MissionDefinition): Promise<MissionPosted> {
+    const answer = await this.#transport.request<MissionPosted>({
+      method: "POST",
+      path: "/v1/missions",
+      body: mission,
+      token: this.#owner(),
+      idempotent: false,
+      // A second request would be a second mission, and the limit of one
+      // owner answers with a `Retry-After` of hours.
+      retry: false,
+    });
+    if (typeof answer?.mission !== "number" || typeof answer.request !== "number") {
+      throw new ProtocolError("POST /v1/missions did not return `mission` and `request`");
+    }
+    return answer;
+  }
+
   // ---- Resident routes ------------------------------------------------------
 
   /** Checks the resident key: `GET /v1/me`. Returns the resident, its name, its model and its owner. */
@@ -362,12 +426,18 @@ export class Client {
    * so a repeat after a network failure does not act twice.
    *
    * A refusal is not thrown. Read `ack.status`, or use `assertAccepted`.
+   * With `observe: false` the answer has the acknowledgement alone, and the
+   * cursor does not move.
    */
-  async act(verb: string, args?: Value, options: ActOptions = {}): Promise<ActResult> {
-    const request = this.#request({ verb, ...(args === undefined ? {} : { args }), ...options });
-    const { acks, observation } = await this.#act(request, 1);
+  async act(verb: string, args: Value | undefined, options: ActOptions & WithoutObservation): Promise<ActSent>;
+  async act(verb: string, args?: Value, options?: ActOptions): Promise<ActResult>;
+  async act(verb: string, args?: Value, options: ActOptions = {}): Promise<ActResult | ActSent> {
+    const { observe, ...step } = options;
+    const request = this.#request({ verb, ...(args === undefined ? {} : { args }), ...step });
+    const { acks, observation } = await this.#act(request, 1, observe !== false);
     if (acks.length !== 1) throw new ProtocolError("POST /v1/act did not return one acknowledgement");
-    return { ack: acks[0] as ActionAck, observation };
+    const ack = acks[0] as ActionAck;
+    return observation === undefined ? { ack } : { ack, observation };
   }
 
   /**
@@ -377,12 +447,19 @@ export class Client {
    * simulation rejects: `acks` then ends with that refusal, and `notSent`
    * counts the steps after it. An empty plan only observes.
    *
+   * With `observe: false` the answer has the acknowledgements alone, and
+   * the cursor does not move.
+   *
    * @throws ApiError with the code `text_refused` when a filter refuses a
    * text of one step. Then no step was sent.
    */
-  async plan(steps: PlanStep[]): Promise<PlanResult> {
-    if (steps.length === 0) return { acks: [], notSent: 0, observation: await this.observe() };
-    return this.#act({ plan: steps.map((step) => this.#request(step)) }, steps.length);
+  async plan(steps: PlanStep[], options: PlanOptions & WithoutObservation): Promise<PlanSent>;
+  async plan(steps: PlanStep[], options?: PlanOptions): Promise<PlanResult>;
+  async plan(steps: PlanStep[], options: PlanOptions = {}): Promise<PlanResult | PlanSent> {
+    const observe = options.observe !== false;
+    if (steps.length === 0) return observe ? { acks: [], notSent: 0, observation: await this.observe() } : { acks: [], notSent: 0 };
+    const { acks, notSent, observation } = await this.#act({ plan: steps.map((step) => this.#request(step)) }, steps.length, observe);
+    return observation === undefined ? { acks, notSent } : { acks, notSent, observation };
   }
 
   /** Returns the current observation: `GET /v1/observe`. It moves the cursor. */
@@ -513,12 +590,17 @@ export class Client {
     return true;
   }
 
-  async #act(body: ActionRequest | { plan: ActionRequest[] }, count: number): Promise<PlanResult> {
+  async #act(
+    body: ActionRequest | { plan: ActionRequest[] },
+    count: number,
+    observe: boolean,
+  ): Promise<PlanSent & { observation?: Observation }> {
     const since = this.cursor;
     const answer = await this.#transport.request<ActResponse>({
       method: "POST",
       path: "/v1/act",
-      query: { since: since > 0 ? since : undefined },
+      // Without an observation the cursor has no use: the server would only check it.
+      query: observe ? { since: since > 0 ? since : undefined } : { observe: "false" },
       body,
       token: this.#key(),
       // Every request has an idempotency key, so a repeat is safe.
@@ -531,11 +613,9 @@ export class Client {
     if (!Array.isArray(acks) || acks.length < 1 || acks.length > count || (acks.length < count && !stopped)) {
       throw new ProtocolError(`POST /v1/act did not return the acknowledgements of ${count} request(s)`);
     }
-    return {
-      acks,
-      notSent: count - acks.length,
-      observation: this.track(answer.observation, since, "POST /v1/act"),
-    };
+    const sent = { acks, notSent: count - acks.length };
+    if (!observe) return sent;
+    return { ...sent, observation: this.track(answer.observation as Observation, since, "POST /v1/act") };
   }
 
   #request(step: PlanStep): ActionRequest {

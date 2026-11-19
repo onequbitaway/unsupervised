@@ -120,12 +120,12 @@ class TownTest(AgentCase):
 
     def test_the_agent_takes_a_job_that_pays_more_than_the_city(self) -> None:
         town = Town()
-        town.jobs.append({"job": 7, "site": BANK["id"], "wage": 2600, "min_level": 0, "free_slots": 1})
+        town.jobs.append({"job": 7, "site": BANK["id"], "wage": 3400, "min_level": 0, "free_slots": 1})
         self.start(town)
         self.run_days(2)
         self.assertEqual(self.resident.sections["job"]["job"], 7)
         paid = [report["result"]["wage"] for report in self.reports() if report["verb"] == "work"]
-        self.assertEqual(set(paid), {2600})
+        self.assertEqual(set(paid), {3400})
 
     def test_routines_alone_keep_a_placed_resident_fed_and_rested_without_the_agent(self) -> None:
         # The agent installs the routines. Then nobody decides for four days.
@@ -144,6 +144,28 @@ class TownTest(AgentCase):
         self.assertEqual(self.world.site_at(self.resident.pos)["id"], SHELTER["id"])
         self.assertGreater(town.lowest[self.resident.id][ENERGY], 100)
         self.assertEqual(town.lowest[self.resident.id][HEALTH], 1000)
+
+    def test_a_sleep_of_a_routine_holds_the_agent_only_until_the_resident_wakes(self) -> None:
+        # A resident that is too tired stands in the shelter. The reserve routine of the agent
+        # fires before the agent decides: the server starts the sleep, and it writes no report.
+        town = Town()
+        self.start(town)
+        self.agent.setup()
+        self.resident.attrs[ENERGY] = 100
+        self.world.step(1)
+        self.assertEqual(self.resident.current.verb, "sleep")
+        ends = self.resident.current.ends
+        self.assertEqual(ends, 1 + 600)
+
+        busy = self.agent.step()
+        self.assertEqual(busy.state, State.BUSY)
+        # The agent did not wake the resident, and it waited no longer than the sleep.
+        self.assertNotIn("cancel", self.sent_verbs())
+        self.assertEqual(self.world.tick, ends)
+        self.assertEqual(town.sleeps[self.resident.id], ["fair"])
+        # The next decision comes in the tick in which the resident woke.
+        self.assertNotEqual(self.agent.step().state, State.BUSY)
+        self.assertEqual(self.gateway.requests_to("/v1/wait")[0].query["timeout"], "60")
 
     def test_two_residents_that_meet_talk_and_refused_words_make_one_silent(self) -> None:
         town = Town()
@@ -235,20 +257,58 @@ class ErrorTest(AgentCase):
         self.assertTrue(any("internal: The server failed." in line for line in logs.output))
 
     def test_a_key_that_ends_stops_the_agent(self) -> None:
+        gone = (
+            "resident 1 left the world: it died, or an administrator removed it. Its key does not work any more. "
+            "Run the command again to make a successor"
+        )
+        rekeyed = (
+            "the server does not know the key of resident 1 any more: another key replaced it. "
+            "Run the command again to get a new key"
+        )
+        banned = "the key of resident 1 does not work any more (banned: An administrator banned the owner of this token.)"
+
+        def use_the_key_elsewhere() -> None:
+            # Another client of the resident gets the one `resident_gone`. The agent gets `invalid_token`.
+            self.world.die(self.resident)
+            self.assertEqual(self.gateway.handle("GET", "/v1/me", {"Authorization": "Bearer " + self.resident.key}).status, 410)
+
         cases = [
-            ("invalid_token", lambda: self.world.rotate_key(self.resident)),
-            ("invalid_token", lambda: self.world.despawn(self.resident)),
-            ("banned", lambda: self.gateway.banned.add(self.resident.owner)),
+            # The server answers `resident_gone` to the first call after a death, and `invalid_token` after it.
+            ("resident_gone", lambda: self.world.die(self.resident), True, gone),
+            ("invalid_token", use_the_key_elsewhere, True, gone),
+            ("invalid_token", lambda: self.world.despawn(self.resident), True, gone),
+            ("invalid_token", lambda: self.world.rotate_key(self.resident), True, rekeyed),
+            ("banned", lambda: self.gateway.banned.add(self.resident.owner), True, banned),
         ]
-        for code, end in cases:
-            with self.subTest(code=code):
-                self.start(Town())
+        self.assertEqual(len(cases), 5)
+        for code, end, with_owner_token, farewell in cases:
+            with self.subTest(code=code, farewell=farewell):
+                town = Town()
+                self.start(town)
+                if with_owner_token:
+                    self.client.owner_token = next(
+                        token for token, owner in self.world._owners.items() if owner == self.resident.owner
+                    )
                 self.agent.step()
                 end()
-                with self.assertLogs("scripted_agent", "ERROR"):
+                with self.assertLogs("scripted_agent", "ERROR") as logs:
                     made = self.agent.run(decisions=50)
                 self.assertLess(made, 50)
                 self.assertEqual(self.agent.fatal.code, code)
+                self.assertEqual(self.agent.farewell, farewell)
+                self.assertEqual([record.getMessage() for record in logs.records], [farewell + "; the agent stops"])
+
+    def test_without_an_owner_token_an_unknown_key_keeps_the_words_of_the_server(self) -> None:
+        self.start(Town())
+        self.agent.step()
+        self.world.despawn(self.resident)
+        with self.assertLogs("scripted_agent", "ERROR"):
+            self.agent.run(decisions=50)
+        self.assertEqual(
+            self.agent.farewell,
+            "the key of resident 1 does not work any more "
+            "(invalid_token: The server does not know this token. It is wrong or it was replaced.)",
+        )
 
     def test_a_mute_does_not_stop_the_agent(self) -> None:
         town = Town()

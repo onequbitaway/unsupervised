@@ -199,6 +199,36 @@ class RunTest(ServerCase):
         asked = [request.token for request in server.gateway.requests_to("/v1/act") if "list_jobs" in json.dumps(request.body)]
         self.assertEqual(len(set(asked)), 2)
 
+    def test_the_command_says_which_resident_died_and_the_next_run_makes_a_successor(self) -> None:
+        # A world where a resident dies in its fifth game minute.
+        def death(world: FakeWorld) -> None:
+            if world.tick == 5 and 1 in world.residents:
+                world.die(world.residents[1])
+
+        self.world.on_tick.append(death)
+        config = self.state.parent.parent / "config.json"
+        config.write_text(json.dumps({"min_decision_seconds": 0.0}))
+        output = io.StringIO()
+        argv = ["--url", self.server.url, "--residents", "2", "--state", str(self.state), "--decisions", "3"]
+        argv += ["--config", str(config)]
+        with redirect_stdout(output), self.assertLogs("scripted_agent", "ERROR"):
+            status = main(argv, client_factory=factory(self.server))
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output.getvalue().splitlines()[1:],
+            [
+                "an agent stopped: resident 1 left the world: it died, or an administrator removed it. "
+                "Its key does not work any more. Run the command again to make a successor"
+            ],
+        )
+        # The other resident made its decisions. The next run makes a successor for the dead one.
+        self.assertEqual([resident.name for resident in self.world.residents.values()], ["Bo"])
+        self.world.on_tick.clear()
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(main(argv, client_factory=factory(self.server)), 0)
+        self.assertEqual([resident.name for resident in self.world.residents.values()], ["Bo", "Ada"])
+        self.assertNotIn(1, self.world.residents)
+
     def test_the_command_says_what_to_do_when_the_owner_has_too_many_residents(self) -> None:
         output = io.StringIO()
         argv = ["--url", self.server.url, "--residents", "4", "--state", str(self.state)]

@@ -558,13 +558,76 @@ test("refused text, a mute and a ban are errors with their codes, and nothing re
   await assert.rejects(client.listResidents(), (error: unknown) => error instanceof ApiError && error.code === "banned");
   gateway.banned.clear();
 
-  // A resident that left the world: its key ends.
+  // A resident that an administrator removed: its key ends at once.
   world.despawn(resident);
   await assert.rejects(client.observe(), (error: unknown) => {
     assert.ok(error instanceof ApiError);
     assert.deepEqual([error.code, error.status, error.endsCredential], ["invalid_token", 401, true]);
     return true;
   });
+});
+
+test("the first call for a resident that died gets `resident_gone`, and each later call gets `invalid_token`", async (t) => {
+  const { client, world, resident } = await scene(t);
+  const second = world.spawn(resident.owner, { name: "Bea" });
+  world.die(resident);
+  const refused: [string, number | undefined, boolean][] = [];
+  for (const call of [() => client.observe(), () => client.act("wait", { ticks: 1 }), () => client.me()]) {
+    await assert.rejects(call(), (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      refused.push([error.code, error.status, error.endsCredential]);
+      return true;
+    });
+  }
+  assert.deepEqual(refused, [
+    ["resident_gone", 410, true],
+    ["invalid_token", 401, true],
+    ["invalid_token", 401, true],
+  ]);
+  // The owner sees who is left, and the other resident lives on.
+  assert.deepEqual((await client.listResidents()).residents.map((one) => one.id), [second.id]);
+  assert.equal((await client.forResident(second.key).me()).name, "Bea");
+});
+
+test("a long poll that is open when the resident dies gets `resident_gone`", async (t) => {
+  const { client, world, resident } = await scene(t);
+  const waiting = client.wait({ timeout: 60 });
+  await world.parked();
+  world.die(resident);
+  await assert.rejects(waiting, (error: unknown) => {
+    assert.ok(error instanceof ApiError);
+    assert.deepEqual([error.code, error.status], ["resident_gone", 410]);
+    return true;
+  });
+  // That call told the gateway of the death. The key is unknown now.
+  await assert.rejects(client.observe(), (error: unknown) => error instanceof ApiError && error.code === "invalid_token");
+});
+
+test("`observe: false` returns the acknowledgements alone and leaves the cursor where it is", async (t) => {
+  const { client, gateway, world, resident } = await scene(t);
+  world.tell(resident.id, 2, "Good day.");
+  const sent = await client.act("wait", { ticks: 2 }, { observe: false, id: "fast-1" });
+  assert.deepEqual(sent, { ack: { action_id: sent.ack.action_id, request_id: "fast-1", verb: "wait", status: { state: "started", ends_at: 2, ticks: 2 } } });
+  assert.equal("observation" in sent, false);
+  const request = gateway.requests.at(-1);
+  assert.deepEqual([request?.path, request?.query], ["/v1/act", { observe: "false" }]);
+
+  const planned = await client.plan([{ verb: "wait", args: { ticks: 1 } }, { verb: "fly" }, { verb: "wait", args: { ticks: 1 } }], { observe: false });
+  assert.deepEqual(planned.acks.map((ack) => ack.status.state), ["queued", "rejected"]);
+  assert.equal(planned.notSent, 1);
+  assert.equal("observation" in planned, false);
+  // An empty plan without an observation sends nothing.
+  const before = gateway.requests.length;
+  assert.deepEqual(await client.plan([], { observe: false }), { acks: [], notSent: 0 });
+  assert.equal(gateway.requests.length, before);
+
+  // The cursor did not move: the next observation has the notice and both reports.
+  assert.equal(client.cursor, 0);
+  world.step(3);
+  const news = await client.observe();
+  assert.deepEqual(news.notices.map((notice) => notice.kind), ["society.said"]);
+  assert.deepEqual(reportsOf(news).map((report) => report.verb), ["wait", "wait"]);
+  assert.equal(client.cursor, 4);
 });
 
 test("the fake gateway refuses what the real gateway refuses", async (t) => {

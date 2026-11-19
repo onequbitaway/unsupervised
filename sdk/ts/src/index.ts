@@ -20,13 +20,17 @@ export { Client, PLAN_MAX, WAIT_MAX_SECONDS } from "./client.js";
 export type {
   ActOptions,
   ActResult,
+  ActSent,
   ClientOptions,
   JoinOptions,
   Joined,
   ObserveOptions,
+  PlanOptions,
   PlanResult,
+  PlanSent,
   PlanStep,
   WaitOptions,
+  WithoutObservation,
 } from "./client.js";
 export { Session } from "./session.js";
 export type { SessionHost, SessionOptions, SessionState, WebSocketFactory, WebSocketLike } from "./session.js";

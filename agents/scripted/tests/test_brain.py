@@ -19,7 +19,7 @@ KNOWN_SITES = [
     for site in SITES
 ]
 HOME = {"site": SHELTER["id"], "kind": "shelter", "zone": 0, "pos": {"x": 7, "y": 7}, "sleep": "fair"}
-WORKS = {"kinds": ["city_hall", "depot"], "minutes": 240, "open": True, "wage": 2000}
+WORKS = {"kinds": ["city_hall", "depot"], "minutes": 240, "open": True, "wage": 2800}
 
 
 def observation(
@@ -33,6 +33,8 @@ def observation(
     site: Optional[Dict[str, Any]] = None,
     pos: Optional[Dict[str, int]] = None,
     activity: Optional[str] = None,
+    ends: int = 99,
+    waiting: bool = False,
     queue: int = 0,
     conditions: Optional[Dict[str, Any]] = None,
     job: Optional[Dict[str, Any]] = None,
@@ -48,7 +50,9 @@ def observation(
         "pos": pos or {"x": 20, "y": 20},
         "zone": 0,
         "city": 0,
-        "activity": None if activity is None else {"verb": activity, "action_id": 9, "started": 0, "ends": 99, "waiting": False},
+        "activity": None
+        if activity is None
+        else {"verb": activity, "action_id": 9, "started": 0, "ends": ends, "waiting": waiting},
         "queue": queue,
         "conditions": conditions or {},
         "attrs": {"need.food": food, "need.energy": energy, "need.health": 1000},
@@ -122,6 +126,22 @@ class RulesTest(BrainCase):
         self.assertEqual((busy.state, busy.steps), (State.BUSY, []))
         self.assertEqual(self.decide(queue=2).state, State.BUSY)
 
+    def test_a_busy_resident_is_left_alone_until_its_action_ends(self) -> None:
+        # A routine put the resident to sleep. A sleep that goes well writes no report, so the
+        # agent waits until the tick at which it ends: 300 game minutes from tick 720.
+        asleep = self.decide(activity="sleep", ends=1020, energy=100, food=100, items={"bread": 1})
+        self.assertEqual((asleep.state, asleep.steps, asleep.wait_ticks), (State.BUSY, [], 300))
+        # The agent does not wake the resident, also when it is hungry: no `cancel`.
+        self.assertEqual(asleep.say, None)
+        # An action that ends now, or whose end is in the past of the observation: one tick.
+        self.assertEqual(self.decide(activity="sleep", ends=720).wait_ticks, 1)
+        # An action that ends later than a plan can take: the agent looks again after 720 minutes.
+        self.assertEqual(self.decide(activity="sleep", ends=5000).wait_ticks, 720)
+        # Planned actions wait, or the action waits for an answer of the world: a report comes.
+        self.assertEqual(self.decide(activity="move_to", ends=730, queue=1).wait_ticks, 720)
+        self.assertEqual(self.decide(activity="open_account", ends=730, waiting=True).wait_ticks, 720)
+        self.assertEqual(self.decide(queue=2).wait_ticks, 720)
+
     def test_a_tired_resident_walks_home_and_sleeps_until_rested(self) -> None:
         decision = self.decide(energy=200)
         self.assertEqual(decision.state, State.SLEEP)
@@ -187,7 +207,7 @@ class RulesTest(BrainCase):
 
     def test_after_the_starter_shifts_of_the_day_the_agent_leaves_the_budget_to_others(self) -> None:
         shift = {"seq": 3, "action_id": 8, "request_id": "r", "verb": "work", "tick": 1, "ok": True}
-        shift["result"] = {"public_works": True, "wage": 2000, "net": 1800, "tax": 200}
+        shift["result"] = {"public_works": True, "wage": 2800, "net": 2520, "tax": 280}
         self.assertEqual(self.with_jobs(items={"bread": 2}).state, State.WORK)
         self.assertEqual(self.decide(items={"bread": 2}, reports=[shift]).state, State.WORK)
         self.assertEqual(self.decide(items={"bread": 2}, reports=[shift]).state, State.GATHER)
@@ -204,13 +224,13 @@ class RulesTest(BrainCase):
         self.assertNotEqual(self.with_jobs(items={"bread": 2}, hour=12, site=DEPOT).state, State.HOME)
 
     def test_a_resident_with_a_job_works_there(self) -> None:
-        job = {"job": 7, "site": SHOP["id"], "zone": 0, "kind": "shop", "wage": 2600, "shift_minutes": 240}
+        job = {"job": 7, "site": SHOP["id"], "zone": 0, "kind": "shop", "wage": 3400, "shift_minutes": 240}
         decision = self.decide(items={"bread": 2}, job=job)
         self.assertEqual((decision.state, decision.steps), (State.WORK, [walk(SHOP), {"verb": "work", "args": {}}]))
 
     def test_the_agent_takes_a_job_that_pays_more_than_a_starter_shift(self) -> None:
         offers = [
-            {"job": 3, "site": SHOP["id"], "wage": 2600, "min_level": 0, "free_slots": 1},
+            {"job": 3, "site": SHOP["id"], "wage": 3400, "min_level": 0, "free_slots": 1},
             {"job": 4, "site": FARM["id"], "wage": 9000, "min_level": 2, "free_slots": 1},
             {"job": 5, "site": FARM["id"], "wage": 1500, "min_level": 0, "free_slots": 3},
         ]

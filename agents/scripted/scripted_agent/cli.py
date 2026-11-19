@@ -278,5 +278,5 @@ def main(argv: Optional[Sequence[str]] = None, *, client_factory: ClientFactory 
         return 0
     failed = [agent for agent in result if agent.fatal is not None]
     for agent in failed:
-        print("an agent stopped: %s" % agent.fatal)
+        print("an agent stopped: %s" % (agent.farewell or agent.fatal))
     return 1 if failed else 0

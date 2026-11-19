@@ -19,6 +19,7 @@ export const GATEWAY_ERROR_CODES = [
   "sign_up_denied",
   "muted",
   "banned",
+  "missions_disabled",
   "not_found",
   "method_not_allowed",
   "not_acceptable",
@@ -30,6 +31,7 @@ export const GATEWAY_ERROR_CODES = [
   "upgrade_required",
   "too_many_connections",
   "provider_unavailable",
+  "answer_timeout",
 ] as const;
 
 /** A code that the gateway adds to the codes of the wire types. */
@@ -97,6 +99,10 @@ export class ApiError extends UnsupervisedError {
    * token is absent, unknown or of the wrong kind, the resident left the
    * world (`resident_gone`), or an administrator banned the owner
    * (`banned`). An agent stops when it gets such an error.
+   *
+   * A resident that died gives two of these errors. The first call with
+   * its key gets `410 resident_gone`. Each later call gets
+   * `401 invalid_token`: the server forgot the key.
    */
   get endsCredential(): boolean {
     return this.status === 401 || this.status === 410 || CREDENTIAL_ENDED.includes(this.code);

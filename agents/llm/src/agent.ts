@@ -75,8 +75,9 @@ export interface AgentOptions {
   /**
    * Notice kinds that end a wait early. An action report has the kind
    * `report`. Default: `["report"]`. An empty list means every kind. A
-   * report of an action that went well does not end the wait while other
-   * planned actions still run.
+   * report of an action that went well ends the wait only when it is the
+   * report of the last planned action: not while other planned actions
+   * still run, and not when a routine of the resident started the action.
    */
   wakeKinds?: string[];
   /** Decisions between two reads of the catalogue. Default: 50. */
@@ -105,7 +106,11 @@ export interface TurnResult {
    * than the actions of the decision.
    */
   acks: ActionAck[];
-  /** Greatest number of seconds that the turn waited for news at its end. News can end the wait earlier. */
+  /**
+   * Greatest number of seconds that the turn waited for news at its end.
+   * News can end the wait earlier. 0 when the answer of the server to the
+   * plan had that news already.
+   */
   waitedSeconds: number;
 }
 
@@ -125,6 +130,12 @@ const VERB_NAME = /^[a-z0-9_]{1,64}$/;
 const FOCUS_MAX = 10;
 /** Greatest number of notices and of reports that wait for the next decision. */
 const PENDING_MAX = 50;
+/** The states of an acknowledgement after which a report follows. */
+const REPORT_FOLLOWS: readonly string[] = ["started", "pending", "queued"];
+/** The parameter of the server: frames in which the world answers an action that waits for it. */
+const ANSWER_PARAM = "kernel.global_timeout";
+/** The value of that parameter when the catalogue does not have it. */
+const ANSWER_FRAMES = 60;
 
 /** An agent that asks a language model what its resident does. */
 export class LlmAgent {
@@ -145,6 +156,14 @@ export class LlmAgent {
   #focus: string[] = [];
   #last: LastTurn | undefined;
   #nextDecisionAt = 0;
+  /**
+   * The planned actions that have no report yet: the frame of the plan, by
+   * action id. The plan runs while this is not empty. The observation
+   * cannot say that: when the last planned action ends, a routine of the
+   * resident can start an action in the same tick, and the resident is
+   * busy again with an action that the agent did not plan.
+   */
+  #planned = new Map<number, number>();
 
   /** Makes an agent. It sends nothing until `turn` or `run` is called. */
   constructor(options: AgentOptions) {
@@ -210,11 +229,13 @@ export class LlmAgent {
     let decision: Decision | undefined;
     let acks: ActionAck[] = [];
     let waitSeconds: number;
+    // True when the plan of this turn ended in the answer of the server: no report can end a wait.
+    let over = false;
     const early = Math.ceil((this.#nextDecisionAt - this.#now()) / 1000);
     const decided = early <= 0 && this.#budget.take();
     if (decided) {
       decision = await this.#think(this.#catalogue);
-      if (decision !== undefined && decision.actions.length > 0) acks = await this.#act(decision.actions);
+      if (decision !== undefined && decision.actions.length > 0) ({ acks, over } = await this.#act(decision.actions));
       waitSeconds = decision?.waitSeconds ?? this.#limits.defaultWaitSeconds;
       this.#nextDecisionAt = this.#now() + (this.#options.minDecisionSeconds ?? DEFAULTS.minDecisionSeconds) * 1000;
     } else {
@@ -230,7 +251,9 @@ export class LlmAgent {
         : `no decision: wait ${waitSeconds}s | budget left ${this.#budget.left}`,
     );
 
-    await this.#wait(waitSeconds, decided, signal);
+    // After `over`, the report that ends the wait is here already. The next turn starts now.
+    if (over) waitSeconds = 0;
+    else await this.#wait(waitSeconds, decided, signal);
     return { decided, decision, acks, waitedSeconds: waitSeconds };
   }
 
@@ -245,8 +268,13 @@ export class LlmAgent {
    * and for a request of a wrong form (`invalid_request`). Then nothing
    * ran, and the next prompt says why. These are answers to what the model
    * wrote, so they do not end the turn.
+   *
+   * Returns the acknowledgements, and `over`: true when no wait must
+   * follow, because the answer of the server has the report of the last
+   * planned action already. A server that runs in real time can end a
+   * short action before it answers.
    */
-  async #act(actions: PlanStep[]): Promise<ActionAck[]> {
+  async #act(actions: PlanStep[]): Promise<{ acks: ActionAck[]; over: boolean }> {
     // A name that is not a verb name never reaches the server: it would
     // refuse the whole plan. The plan ends before it, as it ends at a
     // refusal of the server.
@@ -254,18 +282,23 @@ export class LlmAgent {
     const sendable = bad < 0 ? actions : actions.slice(0, bad);
     const told: NonNullable<LastTurn["actions"]> = [];
     let acks: ActionAck[] = [];
+    let over = false;
     if (sendable.length > 0) {
       try {
         const result = await this.#options.world.plan(sendable);
         acks = result.acks;
-        this.#take(result.observation);
+        // Before the observation is read: it can have the report of an action of this plan already.
+        for (const ack of acks) {
+          if (reportFollows(ack)) this.#planned.set(ack.action_id, result.observation.frame);
+        }
+        over = this.#take(result.observation);
       } catch (error) {
         if (!(error instanceof ApiError) || !answersTheModel(error)) throw error;
         this.#last = {
           error: `${error.message} No action of your last answer ran.`,
           actions: actions.map((action) => ({ verb: action.verb, state: NOT_SENT })),
         };
-        return [];
+        return { acks: [], over };
       }
     }
     told.push(...acks.map(summary));
@@ -277,17 +310,19 @@ export class LlmAgent {
     // Every action after the one that ended the plan.
     for (const action of actions.slice(told.length)) told.push({ verb: action.verb, state: NOT_SENT });
     this.#last = { actions: told };
-    return acks;
+    return { acks, over };
   }
 
   /**
    * Blocks in the long poll of the server for at most `seconds`.
    *
-   * After a decision, news ends the wait, with one exception: while planned
-   * actions still run and every report is a success, the agent waits on.
-   * So a plan of several actions costs one decision, not one for each
-   * action. Without a decision, the agent cannot think before the time is
-   * over, so it waits the whole time and only collects the news.
+   * After a decision, three things end the wait: the report of the last
+   * planned action, a report of an action that failed, and a notice of a
+   * kind that the owner asked for. A report of an action that went well
+   * does not end it while other planned actions still run, so a plan of
+   * several actions costs one decision, not one for each action. Without a
+   * decision, the agent cannot think before the time is over, so it waits
+   * the whole time and only collects the news.
    */
   async #wait(seconds: number, decided: boolean, signal?: AbortSignal): Promise<void> {
     const kinds = this.#options.wakeKinds ?? [REPORT_KIND];
@@ -298,11 +333,11 @@ export class LlmAgent {
         ...(kinds.length > 0 ? { kinds } : {}),
         ...(signal === undefined ? {} : { signal }),
       });
-      this.#take(observation);
+      const ended = this.#take(observation);
       // An answer without news means that the time is over. The agent trusts
       // the server here: it does not ask again, so it cannot spin.
       if (!hasNews(observation, kinds)) return;
-      if (decided && !planRunsWell(observation, kinds)) return;
+      if (decided && (ended || needsThought(observation, kinds))) return;
     }
   }
 
@@ -369,13 +404,41 @@ export class LlmAgent {
     return decision;
   }
 
-  /** Keeps an observation and collects its news for the next decision. */
-  #take(observation: Observation): void {
+  /**
+   * Keeps an observation and collects its news for the next decision.
+   * Returns true when the plan ended with this observation: a planned
+   * action had no report before it, and none is without a report now.
+   */
+  #take(observation: Observation): boolean {
     this.#observation = observation;
     this.#notices = [...this.#notices, ...observation.notices].slice(-PENDING_MAX);
     const reports = reportsOf(observation);
     this.#reports = [...this.#reports, ...reports].slice(-PENDING_MAX);
     this.#remember(reports.map((report) => report.verb));
+    const ran = this.#planned.size > 0;
+    for (const report of reports) this.#planned.delete(report.action_id);
+    this.#forgetLost(observation);
+    return ran && this.#planned.size === 0;
+  }
+
+  /**
+   * Forgets the planned actions whose report cannot come any more. The
+   * inbox of the server is bounded, so a report can be lost, and a lost
+   * report must not hold the agent in its waits for ever.
+   *
+   * When the resident does none of the planned actions and its queue is
+   * empty, only a free action that waits for an answer of the world (for
+   * example `list_jobs`) can still report. The world answers such an action
+   * in a number of frames that the catalogue has as a parameter.
+   */
+  #forgetLost(observation: Observation): void {
+    const me = selfOf(observation);
+    if (me === undefined || me.queue > 0) return;
+    if (me.activity !== null && this.#planned.has(me.activity.action_id)) return;
+    const frames = this.#catalogue?.params.find((param) => param.name === ANSWER_PARAM)?.value ?? ANSWER_FRAMES;
+    for (const [action, frame] of this.#planned) {
+      if (observation.frame - frame > frames) this.#planned.delete(action);
+    }
   }
 
   /** Puts verbs at the front of the focus list. */
@@ -385,15 +448,19 @@ export class LlmAgent {
 }
 
 /**
- * Returns true when the news of an observation is no reason to think again:
- * the resident still has planned actions, no action failed, and no notice
- * came that the owner wants to be woken for.
+ * Returns true when the news of an observation is a reason to think again
+ * before the plan ends: an action failed, or a notice came that the owner
+ * wants to be woken for. A report of an action that went well is no such
+ * reason, also when a routine of the resident started the action.
  */
-function planRunsWell(observation: Observation, kinds: string[]): boolean {
-  const me = selfOf(observation);
-  if (me === undefined || (me.activity === null && me.queue === 0)) return false;
-  if (reportsOf(observation).some((report) => !report.ok)) return false;
-  return !observation.notices.some((notice) => kinds.length === 0 || kinds.includes(notice.kind));
+function needsThought(observation: Observation, kinds: string[]): boolean {
+  if (reportsOf(observation).some((report) => !report.ok)) return true;
+  return observation.notices.some((notice) => kinds.length === 0 || kinds.includes(notice.kind));
+}
+
+/** Returns true when a report follows the acknowledgement: the action runs, waits in the queue or waits for an answer. */
+function reportFollows(ack: ActionAck): boolean {
+  return REPORT_FOLLOWS.includes(ack.status.state);
 }
 
 /** Returns true when the caller gave up. A function, because the answer changes while the agent waits. */

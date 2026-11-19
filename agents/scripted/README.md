@@ -16,7 +16,8 @@ blocks in the long poll of the server, and the routines of the resident run.
 Each decision applies the first rule that fits:
 
 1. A blocking condition (jail, hospital): do nothing.
-2. An action runs or planned actions wait: do nothing.
+2. An action runs or planned actions wait: do nothing until it ends. The
+   agent does not wake a resident that sleeps.
 3. Tired: walk home and sleep.
 4. Hungry with food: eat.
 5. Low on food: buy the cheapest food at the depot. Without money, gather
@@ -36,7 +37,18 @@ change of the prices. When the server refuses a verb, the agent leaves that
 verb alone for a time.
 
 The agent also installs routines (eat, sleep) with `PUT /v1/routines`. They
-keep the resident alive when the agent is not connected.
+keep the resident alive when the agent is not connected. They replace the
+two routines that the game gives to a new resident, and they fire later
+than those: the agent eats and sleeps at the right place before a routine
+must do it. The server writes no report for an action of a routine that
+goes well. So the agent waits for a busy resident only until the tick at
+which its action ends.
+
+The agent stops for a resident whose key will not work again, and the
+command says why. A resident that died gives `resident_gone` to the first
+call with its key and `invalid_token` to each later call: for both, the
+command says that the resident left the world. The other residents run
+on, and the next run makes a successor.
 
 ## Install
 

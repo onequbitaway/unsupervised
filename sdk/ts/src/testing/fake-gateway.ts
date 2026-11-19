@@ -6,8 +6,9 @@
 //
 // Routes: `/healthz`, `/join.md`, `/v1/catalogue`, `/v1/world`,
 // `/v1/world/zones/{id}`, `/v1/owners`, `/v1/residents`,
-// `/v1/residents/{id}/keys`, `/v1/me`, `/v1/act`, `/v1/observe`, `/v1/wait`,
-// `/v1/routines`, `/v1/webhook`. Every other route answers 404.
+// `/v1/residents/{id}/keys`, `/v1/missions`, `/v1/me`, `/v1/act`,
+// `/v1/observe`, `/v1/wait`, `/v1/routines`, `/v1/webhook`. Every other
+// route answers 404.
 //
 // The answers have the status, the error code and the fields of the real
 // gateway (`docs/design/protocol.md`, section 2). The end-to-end tests in
@@ -17,7 +18,11 @@
 import type { ActionAck, ActionRequest, Detail, ObserveOpts, Value, WorldView } from "../generated/protocol.js";
 import type { FetchLike } from "../http.js";
 import type { ClientFrame, ErrorBody, ServerFrame } from "../types.js";
-import { FakeWorld, byteLength, type FakeResident, type InboxEntry } from "./fake-world.js";
+import { DEFAULT_SPONSORS, missionForm, missionRanges, type MissionRefusal, type SponsorLimits } from "./fake-missions.js";
+import { FakeWorld, ResidentGoneError, byteLength, type FakeResident, type InboxEntry } from "./fake-world.js";
+
+export { DEFAULT_SPONSORS };
+export type { SponsorLimits };
 
 /** One HTTP request for the fake gateway. */
 export interface FakeRequest {
@@ -87,6 +92,8 @@ const WAIT_DEFAULT_SECONDS = 30;
 const TEXT_MAX_BYTES = 2000;
 const REPEAT_MAX = 12;
 const JSON_HEADERS = { "content-type": "application/json" };
+/** Milliseconds for which a sponsor mission counts for the limit of its owner: 24 hours. */
+const SPONSOR_WINDOW_MS = 86_400_000;
 /** The fields of an action request. The server refuses any other field. */
 const ACTION_FIELDS = ["id", "verb", "args"];
 /** The fields of a routine. */
@@ -98,6 +105,11 @@ const TEXT_ARGS = ["text"];
 
 function invalid(message: string): HttpError {
   return new HttpError(400, "invalid_request", message);
+}
+
+/** The answer to the call during which the gateway finds that the resident left the world. */
+function residentGone(): HttpError {
+  return new HttpError(410, "resident_gone", "The resident is no longer in the world. Its key does not work any more.");
 }
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): FakeResponse {
@@ -280,6 +292,12 @@ export class FakeGateway {
   readonly muted = new Set<number>();
   /** Ids of the owners that an administrator banned. No token of them works. */
   readonly banned = new Set<number>();
+  /** The limits of sponsor missions. A test can change them. */
+  readonly sponsors: SponsorLimits = { ...DEFAULT_SPONSORS };
+  /** The time in milliseconds, for the limit of sponsor missions in 24 hours. Default: `Date.now`. */
+  now: () => number = Date.now;
+  /** The times of the sponsor missions that count for the limit, by owner. */
+  readonly #sponsored = new Map<number, number[]>();
   #faults: Fault[] = [];
   #frameFaults: ErrorBody[] = [];
 
@@ -377,6 +395,7 @@ export class FakeGateway {
       "/v1/world": ["GET"],
       "/v1/owners": ["POST"],
       "/v1/residents": ["POST", "GET"],
+      "/v1/missions": ["POST"],
       "/v1/me": ["GET"],
       "/v1/act": ["POST"],
       "/v1/observe": ["GET"],
@@ -446,6 +465,11 @@ export class FakeGateway {
       const key = world.rotateKey(resident);
       return json(200, { resident: resident.id, key, key_hint: keyHint(key) });
     }
+    if (route === "POST /v1/missions") {
+      const owner = this.#owner(request.token);
+      checkQuery(query, []);
+      return this.#sponsor(owner, request.body);
+    }
 
     if (route === "GET /v1/me") {
       checkQuery(query, []);
@@ -454,7 +478,10 @@ export class FakeGateway {
     }
     if (route === "POST /v1/act") {
       const resident = this.#resident(request.token);
-      checkQuery(query, ["detail", "since", "sections"]);
+      checkQuery(query, ["observe", "detail", "since", "sections"]);
+      const observe = query.get("observe") ?? "true";
+      if (observe !== "true" && observe !== "false") throw invalid("`observe` is `true` or `false`.");
+      // The rest of the query is checked also when no observation follows.
       const opts = this.actIgnoresSince ? {} : observeOpts(query);
       const body = request.body;
       const requests =
@@ -462,7 +489,8 @@ export class FakeGateway {
           ? planFrom("plan", checkBody(body, ["plan"])["plan"])
           : [actionFrom("The body", body)];
       this.#admit(resident, requests);
-      return json(200, { acks: this.#runPlan(resident, requests), observation: world.observe(resident, opts) });
+      const acks = this.#runPlan(resident, requests);
+      return json(200, observe === "false" ? { acks } : { acks, observation: world.observe(resident, opts) });
     }
     if (route === "GET /v1/observe") {
       const resident = this.#resident(request.token);
@@ -479,11 +507,18 @@ export class FakeGateway {
       }
       const since = integer(query, "since");
       const kinds = names(query, "kinds", ".");
-      const waiting = world.wait(resident, {
-        timeout,
-        ...(since === undefined ? {} : { since }),
-        ...(kinds === undefined ? {} : { kinds }),
-      });
+      // The call during which the resident leaves the world gets the 410.
+      const waiting = world
+        .wait(resident, {
+          timeout,
+          ...(since === undefined ? {} : { since }),
+          ...(kinds === undefined ? {} : { kinds }),
+        })
+        .catch((error: unknown) => {
+          if (!(error instanceof ResidentGoneError)) throw error;
+          world.forgetDead(resident.key);
+          throw residentGone();
+        });
       if (signal === undefined) return json(200, await waiting);
       const aborted = new Promise<never>((_resolve, reject) => {
         signal.addEventListener("abort", () => {
@@ -544,6 +579,50 @@ export class FakeGateway {
       return json(200, { url: parsed.toString(), secret });
     }
     throw new HttpError(404, "not_found", "No route has this path.");
+  }
+
+  /**
+   * Answers `POST /v1/missions`: the checks of the server in their order,
+   * then the checks of the missions module, then the publication.
+   */
+  #sponsor(owner: number, body: unknown): FakeResponse {
+    const refuse = (refusal: MissionRefusal): HttpError => new HttpError(refusal.status, refusal.code, refusal.message);
+    if (!this.sponsors.enabled) {
+      throw new HttpError(403, "missions_disabled", "The administrator of this server turned the sponsor missions off.");
+    }
+    const form = missionForm(body, this.sponsors);
+    if (form !== undefined) throw refuse(form);
+    // Viewers and residents read the name of the sponsor and every text of the mission.
+    const texts: [string, string][] = [["The name of the owner", this.world.ownerName(owner) ?? ""], ...textsIn(body, "")];
+    for (const [place, text] of texts) {
+      const rule = this.textRule(text);
+      if (rule !== undefined) throw this.#textRefused(place.replace(/^\./, ""), rule);
+    }
+    // Only a mission that the world took counts for the limit of the owner.
+    const now = this.now();
+    const counted = (this.#sponsored.get(owner) ?? []).filter((time) => time + SPONSOR_WINDOW_MS > now);
+    const limit = this.sponsors.missionsPerDay;
+    if (limit > 0 && counted.length >= limit) {
+      const seconds = Math.max(1, Math.ceil(((counted[0] as number) + SPONSOR_WINDOW_MS - now) / 1000));
+      return errorResponse(
+        429,
+        { code: "rate_limited", message: `An owner can publish ${limit} sponsor missions in 24 hours. Try again in ${seconds} seconds.` },
+        { "retry-after": String(seconds) },
+      );
+    }
+    const definition = body as Record<string, Value>;
+    const ranges = missionRanges(definition);
+    if (ranges !== undefined) throw refuse(ranges);
+    this.#sponsored.set(owner, [...counted, now]);
+    const posted = this.world.postMission(owner, definition);
+    return json(201, {
+      mission: posted.mission,
+      request: posted.request,
+      frame: posted.frame,
+      deadline: posted.deadline,
+      reward: definition["reward"],
+      takers: definition["takers"] ?? 1,
+    });
   }
 
   /** Returns a resident as `POST /v1/residents` and `GET /v1/residents` show it. */
@@ -623,6 +702,14 @@ export class FakeGateway {
     }
     if (this.world.ownerOf(key) !== undefined) {
       throw new HttpError(403, "wrong_token_kind", "This route needs a resident key. You sent an owner token.");
+    }
+    // A resident that died. The gateway learns of it with this call: the
+    // answer is 410, and the key is unknown from now on.
+    const mourner = this.world.deadOwner(key);
+    if (mourner !== undefined) {
+      if (this.banned.has(mourner)) throw this.#bannedError();
+      this.world.forgetDead(key);
+      throw residentGone();
     }
     throw new HttpError(401, "invalid_token", "The server does not know this token. It is wrong or it was replaced.");
   }

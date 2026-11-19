@@ -17,6 +17,17 @@ The agent repeats one turn: observe, think, act, wait.
    planned action ends or when an action fails. So a plan of several
    actions costs one request to the model.
 
+**Routines.** The game gives a new resident two routines: it eats food that
+it carries when it is hungry, and it sleeps where it stands when it is
+tired. The server starts a routine in the tick in which the resident
+becomes idle, and it writes no report when the action of a routine goes
+well. So the agent does not read the end of its plan from the observation:
+it follows the action ids of its own plan, and it asks the model again in
+the frame of the last report, also when the resident sleeps by then. The
+instructions tell the model about the two routines, that new actions wait
+in the queue while the resident sleeps, that `cancel` wakes it, and that
+`set_routines` replaces the routines.
+
 The agent is cheap to run all day:
 
 - **Budget.** `AGENT_DECISIONS_PER_HOUR` bounds the requests to the model in
@@ -24,7 +35,7 @@ The agent is cheap to run all day:
 - **Long waits.** A wait costs no request to the model. The prompt tells the
   model to wait 10 minutes or more when nothing is urgent, and to use
   `set_routines` for the things that come back.
-- **Compact prompt.** The instructions have about 600 tokens. The data has
+- **Compact prompt.** The instructions have about 700 tokens. The data has
   the brief observation, the news since the last turn, the signatures of at
   most 20 verbs and the names of the others. The model asks for more
   signatures with the `describe` field of its answer.
@@ -41,9 +52,16 @@ its state: the rejected one with its error code, and the ones after it as
 `not_sent`. The server refuses a whole plan when a text filter does not let
 a text through (`text_refused`, for example a link) and when a muted
 resident speaks (`muted`). Then nothing ran; the next prompt says why, and
-the agent goes on. The agent stops when the key will not work again: the
-server does not know it, the resident died (`resident_gone`), or the owner
-is banned (`banned`).
+the agent goes on.
+
+**The end of a resident.** The agent stops, with the exit status 1 and one
+line that says why, when the key will not work again. A resident that died
+gives two answers: `resident_gone` to the first call with its key, and
+`invalid_token` to each later call. For both, the line says that the
+resident left the world. For `invalid_token` the agent asks the server
+with the owner token, because a key that another key replaced gets the
+same answer. The next run makes a new resident, with the same owner. A
+banned owner (`banned`) stops the agent too.
 
 **Memory.** The model can put one fact in the `note` field of its answer.
 The agent keeps the newest 20 notes in a small text file and shows them in
@@ -79,7 +97,8 @@ npm start
 ```
 
 The first run signs up, creates a resident and writes its key to the state
-file. The next run controls the same resident. Stop the agent with Ctrl-C.
+file. The next run controls the same resident. When that resident left the
+world, the next run makes a new one. Stop the agent with Ctrl-C.
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
@@ -133,8 +152,9 @@ The tests use a fake model and the fake server of the SDK. They need no
 network and no key.
 
 `e2e/real-server.mjs` runs the command of the agent against a real server,
-with a fake model behind a local chat endpoint. A Rust test starts the
-server and runs the script (see `crates/e2e`):
+with a fake model behind a local chat endpoint. The world runs one frame
+for each second that the agent waits, so a run is the same each time. A
+Rust test starts the server and runs the script (see `crates/e2e`):
 
 ```sh
 cargo test -p unsup-e2e -- --include-ignored

@@ -45,6 +45,12 @@ export interface TransportRequest {
    * reasons (HTTP 429 or 503).
    */
   idempotent: boolean;
+  /**
+   * `false`: the request goes out one time. No new attempt follows a
+   * refusal for load or a lost answer. Use it for a request that must not
+   * act twice and whose `Retry-After` can be hours. Default: `true`.
+   */
+  retry?: boolean;
   /** Extra milliseconds on top of `timeoutMs`, for a long poll. */
   extraTimeoutMs?: number;
   /** Stops the request when the caller gives up. */
@@ -153,7 +159,7 @@ export class Transport {
     const timeout = this.#timeoutMs + (request.extraTimeoutMs ?? 0);
 
     for (let attempt = 0; ; attempt += 1) {
-      const last = attempt >= this.#maxRetries;
+      const last = attempt >= this.#maxRetries || request.retry === false;
       let response: Response;
       try {
         const limit = AbortSignal.timeout(timeout);

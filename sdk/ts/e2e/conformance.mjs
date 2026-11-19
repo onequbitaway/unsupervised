@@ -10,7 +10,11 @@
 import { readFile } from "node:fs/promises";
 
 import { FakeGateway } from "../dist/testing/index.js";
-import { ADMIN, BASE, admin, fact, step } from "./support.mjs";
+import { ADMIN, BASE, admin, fact, step, until } from "./support.mjs";
+
+/** Game minutes of one day, and the greatest number of days that a resident without food lives in a probe. */
+const DAY = 1440;
+const DAYS_MAX = 30;
 
 const probes = JSON.parse(await readFile(new URL("../../conformance/probes.json", import.meta.url), "utf8"));
 
@@ -88,7 +92,9 @@ class Side {
   async probe(probe) {
     const path = probe.path.replace("{resident}", this.saved.resident).replace("{other}", this.saved.other);
     const raw = probe.raw === undefined ? undefined : { text: probe.raw, contentType: probe.content_type };
-    const answer = await this.request(probe.method, path, this.token(probe.auth), probe.body, raw);
+    const sent = this.request(probe.method, path, this.token(probe.auth), probe.body, raw);
+    // The answer of the real server to some requests needs a frame of the world.
+    const answer = await (probe.runs === true ? this.during(sent) : sent);
     for (const [name, where] of Object.entries(probe.save ?? {})) this.saved[name] = at(answer.body, where);
     const seen = { status: answer.status, code: answer.body?.error?.code ?? null };
     if (probe.shape === true) seen.shape = shapeOf(answer.body, "", probe);
@@ -111,6 +117,11 @@ const fake = new Side("fake", async (method, url, headers, body) => {
   return answer;
 });
 fake.advance = async (ticks) => gateway.world.step(ticks);
+// The fake answers at once: its world does not have to run.
+fake.during = (request) => request;
+fake.starve = async () => {
+  gateway.world.die(gateway.world.residents.get(fake.saved.other));
+};
 fake.tell = async (text) => {
   gateway.world.tell(fake.saved.resident, fake.saved.other, text, "society.message");
 };
@@ -132,6 +143,16 @@ const real = new Side("real", async (method, path, headers, body) => {
 });
 real.advance = async (ticks) => {
   await step(ticks);
+};
+real.during = (request) => until(request);
+real.starve = async () => {
+  // The public profile says when the resident is dead. No call with its key is made: the first one is a probe.
+  for (let days = 0; ; days += 1) {
+    const profile = await (await fetch(`${BASE}/v1/residents/${real.saved.other}/profile`)).json();
+    if (profile.alive === false) return;
+    if (days >= DAYS_MAX) throw new Error(`a resident without food died in ${DAYS_MAX} game days`);
+    await step(DAY);
+  }
 };
 real.tell = async (text) => {
   const action = { verb: "message", args: { to: real.saved.resident, text } };
@@ -178,6 +199,10 @@ for (const probe of probes) {
   } else if (probe.tell !== undefined) {
     await fake.tell(probe.tell);
     await real.tell(probe.tell);
+  } else if (probe.starve !== undefined) {
+    if (probe.starve !== "other") throw new Error(`the probes starve only the other resident, not ${probe.starve}`);
+    await fake.starve();
+    await real.starve();
   } else if (probe.sanction !== undefined) {
     // The owner id of the real side is read while the key still works.
     if (probe.sanction === "ban") real.saved.owner = (await real.request("GET", "/v1/me", real.saved.resident_key)).body.owner;

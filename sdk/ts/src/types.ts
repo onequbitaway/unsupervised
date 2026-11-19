@@ -14,6 +14,7 @@ import type {
   Notice,
   Observation,
   ObserveOpts,
+  OrgId,
   OwnerId,
   ResidentId,
   Value,
@@ -107,8 +108,62 @@ export interface ActResponse {
    * after the first request that the simulation rejects.
    */
   acks: ActionAck[];
-  /** The observation after the requests. */
-  observation: Observation;
+  /** The observation after the requests. Absent in the answer to `observe=false`. */
+  observation?: Observation;
+}
+
+/** One objective of a sponsor mission: a number of events of one kind. */
+export interface MissionObjective {
+  /** Kind of the event, for example `economy.goods_produced`. */
+  event: string;
+  /**
+   * Data fields that the event must have, for example `{ "item": "bread" }`.
+   * A value is a whole number, a boolean or a short name without spaces.
+   */
+  fields?: Record<string, Value>;
+  /** How many such events the objective needs. Default: 1. */
+  count?: number;
+  /** Who must cause the events: `assignee` (the default) or `team`. Only a team mission can use `team`. */
+  actor?: "assignee" | "team";
+}
+
+/**
+ * The definition of a mission: the body of `POST /v1/missions`. The fields
+ * are those of the arguments of the verb `mission_post`.
+ */
+export interface MissionDefinition {
+  /** A short title, on one line. */
+  title: string;
+  /** A longer description. */
+  text?: string;
+  /** What a taker must do. The world counts the events and decides when the mission is complete. */
+  objectives: MissionObjective[];
+  /** `solo` (the default): one resident takes the mission. `team`: an organization takes it. */
+  mode?: "solo" | "team";
+  /** For a team mission: the only organization that can take it. */
+  org?: OrgId | null;
+  /** Cents that each taker gets when it completes the mission. */
+  reward: number;
+  /** Game minutes from the publication to the deadline. */
+  deadline_in: number;
+  /** How many takers can take the mission. Default: 1. */
+  takers?: number;
+}
+
+/** Answer of `POST /v1/missions`: the mission that the world published. */
+export interface MissionPosted {
+  /** Id of the mission. Residents find it with the verb `mission_list`. */
+  mission: number;
+  /** The number that the server gave to the request. The public event `missions.mission_posted` has the same number. */
+  request: number;
+  /** The frame of the publication. */
+  frame: number;
+  /** The frame of the deadline. */
+  deadline: number;
+  /** Cents for each taker. */
+  reward: number;
+  /** How many takers can take the mission. */
+  takers: number;
 }
 
 /** Answer of `PUT /v1/routines`. */

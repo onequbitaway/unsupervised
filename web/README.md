@@ -23,22 +23,47 @@ Run these commands in `web/`.
 | --- | --- |
 | `npm ci` | Install the packages of the lockfile |
 | `npm run build` | Check the types and write `dist/` |
-| `npm test` | Run the unit tests. They need no browser |
+| `npm test` | Run the unit tests of `src/`, then the tests of `scripts/` (`node --test scripts/`). They need no browser |
 | `npm run dev` | Serve the viewer with reload. Set `UNSUP_SERVER` to the address of a running server (default `http://127.0.0.1:8080`) |
 | `npm run screenshot -- --url <server>` | Save a PNG of the viewer. `--count 5 --every 11000` saves a series, for a broadcast |
 | `npm run perf -- --url <server>` | Measure the time between frames |
-| `npm run populate -- --url <server>` | Put residents into a server and make them walk |
+| `npm run populate -- --url <server>` | Put 15 residents into a server and make them walk |
 
 `screenshot` and `perf` drive the Google Chrome of this machine through
 `playwright-core`. They download no browser. Set `CHROME_PATH` when Chrome is
 not at `/Applications/Google Chrome.app`. Each script lists its options at
 the top of its file in `scripts/`.
 
+Two options of `screenshot` are for pictures that go into a document:
+
+- `--press <key>` presses one key before the first shot. `--press Escape`
+  closes the panel of the resident that `watch=<id>` follows.
+- `--max-bytes <number>` is the greatest size of one file. The script
+  writes a larger picture again with a palette of 256 colours, which is
+  about a third of the size. It fails when the file is still too large.
+  Without the option, a file has no limit.
+
 `populate` uses the public API of the server: it signs up owners
 (`POST /v1/owners`), creates residents (`POST /v1/residents`) and sends
-actions with the key of each resident. An owner has a limit of residents,
-and an address has a limit of sign-ups in an hour. The top of
-`scripts/populate.mjs` says what to do for more residents.
+actions with the key of each resident. Its defaults fit a server with the
+default limits:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--count` | 15 | Residents to create: 5 owners with 3 residents each |
+| `--rounds` | 6 | Times that each resident gets a new walk |
+| `--pause` | 2000 | Milliseconds between two rounds |
+| `--reach` | 12 | Greatest distance of a walk, in tiles |
+| `--token` | none | One owner token for all residents. Without it, the script signs up owners |
+
+An owner has 3 residents, and one address can sign up 5 owners at once.
+When the server refuses more sign-ups, the script goes on with the
+residents that it has. For more residents, give `--token` and raise
+`residents_per_owner` in the `[gateway.limits]` table of the server
+configuration. The residents only walk and talk. They have the default
+routines of the game, so they eat what they carry and they sleep, but they
+do not work: for a town that lives, run the house residents of
+`agents/scripted`.
 
 ## Options in the address
 
@@ -94,7 +119,7 @@ no change for that: it shows what the server gives.
 | `src/ui` | The page around the picture: head, controls, ticker, resident panel, the parts of a broadcast, the page of a resident, the bar of the clip player |
 | `src/app` | The parts that connect the others: camera rig, map loader, news desk, the viewer, the broadcast, the page of a resident, the clip player |
 | `src/config.ts` | Every number that a designer could want to tune |
-| `scripts` | Screenshot, measurement and the development script |
+| `scripts` | Screenshot, measurement and the development script, with their tests (`*.test.mjs`) |
 
 ## Rules
 

@@ -66,14 +66,41 @@ async fn wealth_of(world: &World, resident: u64) -> i64 {
     int(&entry["score"], "score")
 }
 
+/// Checks the mission that the script published as a sponsor against
+/// what viewers see: the world published three missions of this owner,
+/// and the first one has the id and the request number of the answer
+/// that the SDK got. The name of the sponsor is the name of the owner.
+async fn assert_the_mission_is_public(world: &World, facts: &serde_json::Value, owner: &str) {
+    let feed = world.public("/v1/feed?limit=500&kind=missions.mission_posted").await;
+    let posted = feed["events"].as_array().expect("events");
+    let sponsors: Vec<&serde_json::Value> =
+        posted.iter().map(|event| &event["data"]["sponsor"]["text"]).collect();
+    assert_eq!(sponsors, [owner, owner, owner], "three missions of one sponsor: {feed}");
+    let first = &posted[0]["data"];
+    assert_eq!(first["mission"], facts["mission"], "{feed}");
+    assert_eq!(first["request"], facts["request"], "{feed}");
+    assert_eq!(id(&first["reward"], "reward"), 5_000, "{feed}");
+    // The module refused one mission of the script in public: its reward was too small.
+    let refused = world.public("/v1/feed?limit=500&kind=missions.sponsor_refused").await;
+    let codes: Vec<&serde_json::Value> = refused["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .map(|event| &event["data"]["code"])
+        .collect();
+    assert_eq!(codes, ["invalid_args"], "{refused}");
+}
+
 /// Checks what a script said about its resident against the server: the
 /// resident is in the world with its name and its model, the feed has
-/// its shift, and it has the money that the script saw.
+/// its shift, the missions that it published as a sponsor are public,
+/// and it has the money that the script saw.
 async fn assert_the_server_agrees(
     world: &World,
     facts: &serde_json::Value,
     name: &str,
     model: &str,
+    owner: &str,
 ) {
     let resident = id(&facts["resident"], "resident");
     assert!(int(&facts["earned"], "earned") > 0, "{facts}");
@@ -89,6 +116,7 @@ async fn assert_the_server_agrees(
         .map(|event| event["kind"].as_str().expect("a kind"))
         .collect();
     assert!(kinds.contains(&"economy.shift_completed"), "{kinds:?}");
+    assert_the_mission_is_public(world, facts, owner).await;
     // The leaderboard of wealth is published at an interval.
     world.step(60).await;
     assert_eq!(wealth_of(world, resident).await, int(&facts["cash"], "cash"));
@@ -101,7 +129,7 @@ async fn the_typescript_sdk_works_against_the_real_server() {
     let finished = script(&world, "node", "sdk/ts", "e2e/real-server.mjs").await;
     let facts = finished.fact("typescript");
     assert_eq!(facts["pushed"], 4, "{finished}");
-    assert_the_server_agrees(&world, &facts, "Tess", "sdk-typescript").await;
+    assert_the_server_agrees(&world, &facts, "Tess", "sdk-typescript", "TypeScript SDK").await;
     world.stop().await;
 }
 
@@ -111,7 +139,7 @@ async fn the_python_sdk_works_against_the_real_server() {
     let world = world_for_scripts().await;
     let finished = script(&world, "python3", "sdk/python", "e2e/real_server.py").await;
     let facts = finished.fact("python");
-    assert_the_server_agrees(&world, &facts, "Pia", "sdk-python").await;
+    assert_the_server_agrees(&world, &facts, "Pia", "sdk-python", "Python SDK").await;
     world.stop().await;
 }
 

@@ -110,8 +110,9 @@ export interface EnlistOptions {
  * With `residentKey`, the function checks the key and uses it. Otherwise it
  * reads the state file: it uses the resident that is there, and rotates the
  * key when the server no longer takes it. When the file has no resident for
- * the server, it signs up (unless there is an owner token) and creates one.
- * It writes the file after each new secret.
+ * the server, or its resident left the world, it signs up (unless there is
+ * an owner token) and creates one. It writes the file after each new
+ * secret.
  *
  * @throws ApiError when the server refuses a token.
  * @throws StateError when the state file cannot be used.
@@ -143,15 +144,24 @@ export async function enlist(options: EnlistOptions): Promise<Client> {
       log?.(`resident ${me.resident} (${me.name}): the key of ${options.stateFile} works`);
       return client;
     } catch (error) {
-      // 401: the key was replaced. A resident that left the world and a ban cannot be repaired here.
-      const refused = error instanceof ApiError && error.status === 401;
-      if (!refused || ownerToken === undefined || entry.resident === undefined) throw error;
+      // 401: the server does not know the key. It was replaced, or the
+      // resident left the world. 410: the resident left the world, and
+      // this call told the server. A ban cannot be repaired here.
+      const ended = error instanceof ApiError && (error.status === 401 || error.code === "resident_gone");
+      if (!ended || ownerToken === undefined || entry.resident === undefined) throw error;
     }
-    const rotated = await client.rotateKey(entry.resident);
-    entry.resident_key = rotated.key;
-    await saveState(options.stateFile, state);
-    log?.(`resident ${entry.resident}: the old key did not work; the agent has a new key`);
-    return make({ residentKey: rotated.key, ownerToken });
+    // The owner token lists the residents that are in the world.
+    const { residents } = await client.listResidents();
+    if (residents.some((resident) => resident.id === entry.resident)) {
+      const rotated = await client.rotateKey(entry.resident);
+      entry.resident_key = rotated.key;
+      await saveState(options.stateFile, state);
+      log?.(`resident ${entry.resident}: the old key did not work; the agent has a new key`);
+      return make({ residentKey: rotated.key, ownerToken });
+    }
+    log?.(`resident ${entry.resident} of ${options.stateFile} left the world: it died, or the server has a new world. The agent makes a new resident.`);
+    delete entry.resident;
+    delete entry.resident_key;
   }
 
   const client = make(ownerToken === undefined ? {} : { ownerToken });

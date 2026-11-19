@@ -2,9 +2,9 @@
 
 `FakeGateway.handle` answers one HTTP request. Routes: `/healthz`,
 `/join.md`, `/v1/catalogue`, `/v1/world`, `/v1/world/zones/{id}`,
-`/v1/owners`, `/v1/residents`, `/v1/residents/{id}/keys`, `/v1/me`,
-`/v1/act`, `/v1/observe`, `/v1/wait`, `/v1/routines`, `/v1/webhook`. Every
-other route answers 404.
+`/v1/owners`, `/v1/residents`, `/v1/residents/{id}/keys`, `/v1/missions`,
+`/v1/me`, `/v1/act`, `/v1/observe`, `/v1/wait`, `/v1/routines`,
+`/v1/webhook`. Every other route answers 404.
 
 The answers have the status, the error code and the fields of the real
 gateway (`docs/design/protocol.md`, section 2). The end-to-end tests in
@@ -13,11 +13,14 @@ compare the answers.
 """
 
 import json
+import math
 import re
 import threading
+import time
 import urllib.parse
 from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
+from .missions import DEFAULT_SPONSORS, mission_form, mission_ranges
 from .world import NAME_MAX, FakeResident, FakeWorld, byte_length
 
 WAIT_MAX_SECONDS = 60
@@ -34,6 +37,8 @@ ROUTINE_FIELDS = ("name", "when", "then")
 TEXT_VERBS = ("say", "message", "org_say", "post", "org_create")
 #: Names of arguments that are speech in every verb.
 TEXT_ARGS = ("text",)
+#: Seconds for which a sponsor mission counts for the limit of its owner: 24 hours.
+SPONSOR_WINDOW_SECONDS = 86400
 #: The methods of each path. A path with another method answers 405.
 METHODS: Dict[str, Tuple[str, ...]] = {
     "/healthz": ("GET",),
@@ -42,6 +47,7 @@ METHODS: Dict[str, Tuple[str, ...]] = {
     "/v1/world": ("GET",),
     "/v1/owners": ("POST",),
     "/v1/residents": ("POST", "GET"),
+    "/v1/missions": ("POST",),
     "/v1/me": ("GET",),
     "/v1/act": ("POST",),
     "/v1/observe": ("GET",),
@@ -124,6 +130,11 @@ class _HttpError(Exception):
 
 def _invalid(message: str) -> _HttpError:
     return _HttpError(400, "invalid_request", message)
+
+
+def _resident_gone() -> _HttpError:
+    """The answer to the call during which the gateway finds that the resident left the world."""
+    return _HttpError(410, "resident_gone", "The resident is no longer in the world. Its key does not work any more.")
 
 
 def _json(status: int, body: Any, headers: Optional[Dict[str, str]] = None) -> Response:
@@ -303,6 +314,12 @@ class FakeGateway:
         self.muted: Set[int] = set()
         #: Ids of the owners that an administrator banned. No token of them works.
         self.banned: Set[int] = set()
+        #: The limits of sponsor missions: `enabled`, `missions_per_day`, `max_mission_cents`. A test can change them.
+        self.sponsors: Dict[str, Any] = dict(DEFAULT_SPONSORS)
+        #: The time in seconds, for the limit of sponsor missions in 24 hours.
+        self.now: Callable[[], float] = time.time
+        #: The times of the sponsor missions that count for the limit, by owner.
+        self._sponsored: Dict[int, List[float]] = {}
         self._faults: List[_Fault] = []
         self._lock = threading.Lock()
 
@@ -431,6 +448,10 @@ class FakeGateway:
                 raise _HttpError(404, "not_found", "You have no resident with this id.")
             key = world.rotate_key(target)
             return _json(200, {"resident": target.id, "key": key, "key_hint": key_hint(key)})
+        if route == "POST /v1/missions":
+            owner = self._owner(request.token)
+            _check_query(query, ())
+            return self._sponsor(owner, body)
 
         if route == "GET /v1/me":
             _check_query(query, ())
@@ -440,7 +461,11 @@ class FakeGateway:
             )
         if route == "POST /v1/act":
             resident = self._resident(request.token)
-            _check_query(query, ("detail", "since", "sections"))
+            _check_query(query, ("observe", "detail", "since", "sections"))
+            observe = query.get("observe", "true")
+            if observe not in ("true", "false"):
+                raise _invalid("`observe` is `true` or `false`.")
+            # The rest of the query is checked also when no observation follows.
             opts = {} if self.act_ignores_since else _observe_opts(query)
             if isinstance(body, dict) and "plan" in body:
                 requests = _plan_from("plan", _check_body(body, ("plan",))["plan"])
@@ -449,6 +474,8 @@ class FakeGateway:
             self._admit(resident, requests)
             with world.lock:
                 acks = self._run_plan(resident, requests)
+                if observe == "false":
+                    return _json(200, {"acks": acks})
                 return _json(200, {"acks": acks, "observation": world.observe(resident, opts)})
         if route == "GET /v1/observe":
             resident = self._resident(request.token)
@@ -465,8 +492,11 @@ class FakeGateway:
             if not 0 <= timeout <= WAIT_MAX_SECONDS:
                 raise _invalid("`timeout` is a number of seconds from 0 to %d." % WAIT_MAX_SECONDS)
             observation = world.wait(resident, timeout, _integer(query, "since"), _names(query, "kinds", "."))
-            # The resident can leave the world during the wait.
-            self._resident(request.token)
+            # The resident can leave the world during the wait. This call
+            # tells the gateway of it: the answer is 410.
+            if world.is_gone(resident):
+                world.forget_dead(resident.key)
+                raise _resident_gone()
             return _json(200, observation)
         if route == "PUT /v1/routines":
             resident = self._resident(request.token)
@@ -511,6 +541,54 @@ class FakeGateway:
             secret = world.set_webhook(resident, target_url)
             return _json(200, {"url": target_url, "secret": secret})
         raise _HttpError(404, "not_found", "No route has this path.")
+
+    def _sponsor(self, owner: int, body: Any) -> Response:
+        """Answers `POST /v1/missions`.
+
+        The checks of the server come in their order, then the checks of
+        the missions module, then the publication.
+        """
+        if not self.sponsors["enabled"]:
+            raise _HttpError(
+                403, "missions_disabled", "The administrator of this server turned the sponsor missions off."
+            )
+        form = mission_form(body, self.sponsors)
+        if form is not None:
+            raise _HttpError(*form)
+        # Viewers and residents read the name of the sponsor and every text of the mission.
+        texts = [("The name of the owner", self.world.owner_name(owner) or "")] + _texts_in(body, "", [])
+        for place, text in texts:
+            rule = self.text_rule(text)
+            if rule is not None:
+                raise self._text_refused(place.lstrip("."), rule)
+        with self._lock:
+            # Only a mission that the world took counts for the limit of the owner.
+            now = self.now()
+            counted = [at for at in self._sponsored.get(owner, []) if at + SPONSOR_WINDOW_SECONDS > now]
+            limit = self.sponsors["missions_per_day"]
+            if limit > 0 and len(counted) >= limit:
+                seconds = max(1, int(math.ceil(counted[0] + SPONSOR_WINDOW_SECONDS - now)))
+                message = "An owner can publish %d sponsor missions in 24 hours. Try again in %d seconds." % (
+                    limit,
+                    seconds,
+                )
+                return _error(429, "rate_limited", message, {"Retry-After": str(seconds)})
+            ranges = mission_ranges(body)
+            if ranges is not None:
+                raise _HttpError(*ranges)
+            self._sponsored[owner] = counted + [now]
+            posted = self.world.post_mission(owner, body)
+        return _json(
+            201,
+            {
+                "mission": posted["mission"],
+                "request": posted["request"],
+                "frame": posted["frame"],
+                "deadline": posted["deadline"],
+                "reward": body["reward"],
+                "takers": body.get("takers", 1),
+            },
+        )
 
     def _record(self, resident: FakeResident) -> Dict[str, Any]:
         """Returns a resident as `POST /v1/residents` and `GET /v1/residents` show it."""
@@ -584,6 +662,14 @@ class FakeGateway:
             return resident
         if self.world.owner_of(key) is not None:
             raise _HttpError(403, "wrong_token_kind", "This route needs a resident key. You sent an owner token.")
+        # A resident that died. The gateway learns of it with this call: the
+        # answer is 410, and the key is unknown from now on.
+        mourner = self.world.dead_owner(key)
+        if mourner is not None:
+            if mourner in self.banned:
+                raise self._banned()
+            self.world.forget_dead(key)
+            raise _resident_gone()
         raise _HttpError(401, "invalid_token", "The server does not know this token. It is wrong or it was replaced.")
 
     @staticmethod

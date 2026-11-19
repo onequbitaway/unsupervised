@@ -84,9 +84,9 @@ test("the prompt stays compact with a full catalogue and a full inbox", () => {
   assert.equal(data["news"].length, DEFAULT_PROMPT_LIMITS.maxNotices);
   assert.equal(data["reports"].length, DEFAULT_PROMPT_LIMITS.maxReports);
 
-  // About four characters are one token: the instructions stay below 600
+  // About four characters are one token: the instructions stay below 700
   // tokens and the worst data block below 4,000.
-  assert.ok(SYSTEM_PROMPT.length < 2400, `the instructions have ${SYSTEM_PROMPT.length} characters`);
+  assert.ok(SYSTEM_PROMPT.length < 2800, `the instructions have ${SYSTEM_PROMPT.length} characters`);
   const size = messages[1]?.content.length ?? 0;
   assert.ok(size < 16_000, `the data block has ${size} characters`);
 });

@@ -132,6 +132,15 @@ impl World {
         self.server.sim.step(frames).await.expect("the world steps")
     }
 
+    /// Returns the number of long polls (`GET /v1/wait`) that are open on
+    /// the server now. A test that runs the world only while its clients
+    /// wait reads it before each frame.
+    pub async fn open_waits(&self) -> u64 {
+        let (status, stats) = self.get("/admin/stats", ADMIN).await;
+        assert_eq!(status, StatusCode::OK, "{stats}");
+        id(&stats["gateway"]["open_waits"], "open_waits")
+    }
+
     /// Runs the world, one frame at a time, until `future` is done.
     /// Returns what the future gave. The future is a call that waits for
     /// news of the world: a long poll, a pushed frame, a delivery.

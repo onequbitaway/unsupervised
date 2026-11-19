@@ -224,8 +224,110 @@ test("the command returns 1 when the server refuses the key", async (t) => {
   assert.equal(provider.calls.length, 0);
   assert.equal(
     log.at(-1),
-    "the agent cannot go on: invalid_token: The server does not know this token. It is wrong or it was replaced.",
+    "the agent cannot go on: invalid_token: The server does not know this token. It is wrong or it was replaced. " +
+      "Or its resident left the world: it died, or an administrator removed it. " +
+      "Check UNSUPERVISED_RESIDENT_KEY, or remove it to start a new resident.",
   );
+});
+
+/** A model that plans one long action and waits for it. */
+function patient(): FakeProvider {
+  return new FakeProvider(answer({ actions: [{ verb: "wait", args: { ticks: 500 } }], wait_seconds: 600 }));
+}
+
+test("a resident that dies stops the command with one clear line, and the next run makes a new resident", async (t) => {
+  const { world, gateway, stateFile, log, env } = await bench(t);
+  const provider = patient();
+  // The resident dies while the agent waits in the long poll: that call gets `resident_gone`.
+  provider.onCall = () => {
+    const resident = world.residents.get(1);
+    assert.ok(resident !== undefined);
+    world.addVerb({
+      info: { verb: "starve", module: "life", summary: "Die.", free: false, scope: "zone", args_schema: { type: "object" } },
+      begin: () => ({ busy: 3, finish: () => (world.die(resident), null) }),
+    });
+    world.submit(resident, { verb: "starve" });
+  };
+  const options = { fetch: gateway.fetch, provider, log: (line: string) => log.push(line) };
+  assert.equal(await main(env({ AGENT_TURNS: "5" }), options), 1);
+  assert.equal(provider.calls.length, 1);
+  assert.equal(
+    log.at(-1),
+    "the agent cannot go on: resident 1 left the world: it died, or an administrator removed it. " +
+      "Its key does not work any more. Start the agent again to make a new resident.",
+  );
+
+  // The next run finds that the resident of the state file is gone and makes a new one.
+  provider.onCall = undefined;
+  log.length = 0;
+  assert.equal(await main(env({ AGENT_TURNS: "1", UNSUPERVISED_NAME: "Ada the second" }), options), 0);
+  assert.equal(log[0], `resident 1 of ${stateFile} left the world: it died, or the server has a new world. The agent makes a new resident.`);
+  const reborn = [...world.residents.values()];
+  assert.deepEqual(reborn.map((resident) => resident.name), ["Ada the second"]);
+  assert.notEqual(reborn[0]?.id, 1);
+  assert.equal((await loadState(stateFile)).servers[FAKE_URL]?.resident, reborn[0]?.id);
+  assert.equal((await loadState(stateFile)).servers[FAKE_URL]?.resident_key, reborn[0]?.key);
+  // One owner made both residents.
+  assert.equal(posts(gateway, "/v1/owners"), 1);
+});
+
+test("the second answer of the server for a dead resident, `invalid_token`, gets the same clear line", async (t) => {
+  const { world, gateway, log, env } = await bench(t);
+  const provider = patient();
+  const options = { fetch: gateway.fetch, provider, log: (line: string) => log.push(line) };
+  assert.equal(await main(env({ AGENT_TURNS: "1" }), options), 0);
+  const resident = world.residents.get(1);
+  assert.ok(resident !== undefined);
+  // Another client of the resident gets the one `resident_gone`. This agent gets `invalid_token` from now on.
+  world.die(resident);
+  const first = await gateway.handle({ method: "GET", url: "/v1/me", headers: { authorization: `Bearer ${resident.key}` } });
+  assert.equal(first.status, 410);
+  log.length = 0;
+
+  // The key of the environment: the agent has no owner token, so the server cannot tell it more.
+  assert.equal(await main(env({ UNSUPERVISED_RESIDENT_KEY: resident.key }), options), 1);
+  assert.match(log.at(-1) ?? "", /^the agent cannot go on: invalid_token: .* Or its resident left the world: .* remove it to start a new resident\.$/);
+
+  // With the owner token the agent asks who is left, and says what happened.
+  const owner = world.ownerOf((await loadState(env()["AGENT_STATE_FILE"] as string)).servers[FAKE_URL]?.owner_token);
+  assert.equal(owner, 1);
+  const { farewell } = await import("../src/index.js");
+  const { ApiError: SdkError, Client } = await import("@unsupervised/sdk");
+  const token = (await loadState(env()["AGENT_STATE_FILE"] as string)).servers[FAKE_URL]?.owner_token as string;
+  const client = new Client({ baseUrl: FAKE_URL, fetch: gateway.fetch, residentKey: resident.key, ownerToken: token });
+  client.resident = 1;
+  const refused = await client.observe().then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  assert.ok(refused instanceof SdkError);
+  assert.equal(refused.code, "invalid_token");
+  assert.equal(
+    await farewell(refused, client, false),
+    "resident 1 left the world: it died, or an administrator removed it. Its key does not work any more. Start the agent again to make a new resident.",
+  );
+  // A key that another key replaced is not a death.
+  const second = world.spawn(1, { name: "Bea" });
+  const stale = new Client({ baseUrl: FAKE_URL, fetch: gateway.fetch, residentKey: second.key, ownerToken: token });
+  stale.resident = second.id;
+  world.rotateKey(second);
+  const replaced = await stale.observe().then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  assert.ok(replaced instanceof SdkError);
+  assert.equal(
+    await farewell(replaced, stale, false),
+    `the server does not know the key of resident ${second.id} any more: another key replaced it. Start the agent again to get a new key.`,
+  );
+  // Another refusal keeps the words of the server.
+  gateway.banned.add(1);
+  const banned = await stale.listResidents().then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  assert.ok(banned instanceof SdkError);
+  assert.equal(await farewell(banned, stale, false), "banned: An administrator banned the owner of this token.");
 });
 
 test("the command stops with 0 when the caller aborts", async (t) => {

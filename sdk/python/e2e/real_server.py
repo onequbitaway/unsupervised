@@ -82,6 +82,12 @@ me = self_of(first)
 assert (me["id"], me["name"], me["activity"]) == (joined.resident, "Pia", None)
 assert not has_news(first)
 start_cash = me["cash"]
+# A new resident has the default routines of the game: they keep it alive when its owner is away.
+born = self_of(client.observe(detail="full", sections=["self"]))
+assert [(one["name"], one["then"]["verb"]) for one in born["routines"]] == [
+    ("eat when hungry", "eat"),
+    ("sleep when tired", "sleep"),
+]
 
 # Find paid work: the list of jobs is a free verb of the global realm. Its answer is a report.
 works = done(client, "list_jobs", {})["result"]["public_works"]
@@ -117,6 +123,60 @@ once = client.act("wait", {"ticks": 3}, id="py-sdk-once")
 twice = client.act("wait", {"ticks": 3}, id="py-sdk-once")
 assert twice.ack == once.ack
 report_of(client, once.ack)
+
+# ---- Actions without an observation -----------------------------------------
+
+cursor = client.cursor
+fast = client.act("wait", {"ticks": 2}, observe=False)
+assert fast._fields == ("ack",) and fast.ack["status"]["state"] == "started"
+fast_plan = client.plan(
+    [{"verb": "wait", "args": {"ticks": 1}}, {"verb": "no_such_verb"}, {"verb": "wait", "args": {"ticks": 1}}],
+    observe=False,
+)
+assert fast_plan._fields == ("acks", "not_sent")
+assert [ack["status"]["state"] for ack in fast_plan.acks] == ["queued", "rejected"]
+assert fast_plan.not_sent == 1
+# The cursor did not move, so the long poll brings both reports.
+assert client.cursor == cursor
+assert report_of(client, fast_plan.acks[0])["ok"] is True
+both = [report["action_id"] for report in reports_of(client.observe(since=cursor))]
+assert both == [fast.ack["action_id"], fast_plan.acks[0]["action_id"]], both
+
+# ---- A sponsor publishes a mission -------------------------------------------
+
+mission = {
+    "title": "Bread for the fair",
+    "text": "The town needs bread.",
+    "objectives": [{"event": "economy.goods_produced", "fields": {"item": "bread"}, "count": 10}],
+    "reward": 5000,
+    "deadline_in": 2880,
+    "takers": 2,
+}
+# The world publishes the mission in the frame after the request: the world runs while the call is open.
+posted = until(lambda: client.post_mission(mission))
+assert posted == {
+    "mission": posted["mission"],
+    "request": posted["request"],
+    "frame": posted["frame"],
+    "deadline": posted["frame"] + 2880,
+    "reward": 5000,
+    "takers": 2,
+}, posted
+# A resident finds the mission. The name of the sponsor is the name of the owner.
+found = done(client, "mission_list", {"mission": posted["mission"]})["result"]["mission"]
+assert found["title"] == {"untrusted": True, "from": 0, "text": "Bread for the fair"}, found
+assert found["sponsor"] == {"untrusted": True, "from": 0, "text": "Python SDK"}, found
+# The server refuses these before the world sees them.
+raises("invalid_request", 400, lambda: client.post_mission(dict(mission, reward=400000)))
+raises("text_refused", 422, lambda: client.post_mission(dict(mission, title="read www.example.com")))
+raises("wrong_token_kind", 403, lambda: Client(BASE, owner_token=joined.resident_key, **OPTIONS).post_mission(mission))
+# The missions module refuses this one, in the frame after the request.
+raises("invalid_args", 400, lambda: until(lambda: client.post_mission(dict(mission, reward=1))))
+# An owner publishes three missions in 24 hours. The refusals did not count.
+until(lambda: client.post_mission(mission))
+until(lambda: client.post_mission(mission))
+limited = raises("rate_limited", 429, lambda: client.post_mission(mission))
+assert 86000 < limited.retry_after <= 86400, limited.retry_after
 
 # ---- Routines ---------------------------------------------------------------
 
@@ -187,4 +247,12 @@ assert client.set_webhook(None) == {"url": None}
 receiver.shutdown()
 
 last = self_of(client.observe(sections=["self"]))
-fact("python", resident=joined.resident, cash=last["cash"], earned=shift["net"], next_notice=client.cursor)
+fact(
+    "python",
+    resident=joined.resident,
+    mission=posted["mission"],
+    request=posted["request"],
+    cash=last["cash"],
+    earned=shift["net"],
+    next_notice=client.cursor,
+)

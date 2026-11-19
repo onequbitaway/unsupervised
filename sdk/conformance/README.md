@@ -25,12 +25,14 @@ A probe is one JSON object. The scripts read these fields:
 | `body` | The JSON body. `raw` and `content_type` send a body that is not JSON |
 | `save` | Values of the answer to keep: `owner_token`, `resident_key`, `resident`. The value is the path in the answer |
 | `shape` | `true`: compare the names and the types of all fields of the answer |
-| `ignore` | Paths that the game decides, for example `sections.self.attrs`. They are not compared. A list adds nothing to a path |
+| `ignore` | Paths that the game decides, for example `sections.self.attrs`, or the routines that the game gives to a new resident. They are not compared. A list adds nothing to a path |
 | `lists` | `first`: compare each list by its first entry. Without it, the lists have the same length and each entry is compared |
 | `count` | The path of a list. The two lists have the same length |
 | `advance` | No request: this number of game minutes pass |
 | `tell` | No request: another resident sends this text to the resident, as a private message |
 | `sanction` | No request: an administrator acts on the resident or on its owner: `mute`, `unmute`, `ban`, `unban`, `despawn` |
+| `runs` | `true`: the real world runs while the real server answers. The answer to a sponsor mission needs a frame of the world |
+| `starve` | No request: game days pass until a resident dies of hunger. `other` is the resident of the second owner. The fake calls `die` |
 
 Each probe compares the HTTP status and the `code` of an error answer. A
 probe with `shape` also compares the form of the body: the names of the

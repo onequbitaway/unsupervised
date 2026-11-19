@@ -6,7 +6,9 @@ the actions to plan. It does no input or output, so tests call it directly.
 The rules, in priority order:
 
 1. A blocking condition (jail, hospital): do nothing.
-2. An action runs or planned actions wait: do nothing.
+2. An action runs or planned actions wait: do nothing until it ends. This
+   is also the rule for an action that a routine started, for example a
+   sleep: the agent does not wake the resident.
 3. Tired: walk home and sleep.
 4. Hungry with food: eat.
 5. Low on food: buy the cheapest food at the depot, or gather it on a farm.
@@ -180,12 +182,27 @@ class Brain:
             return Decision(State.BLOCKED, [], self._idle_ticks(senses), "the resident is %s" % blocked)
         if senses.activity is not None or senses.queue > 0:
             verb = senses.activity["verb"] if senses.activity else "the plan"
-            return Decision(State.BUSY, [], PLAN_TICKS, "the resident does `%s`" % verb)
+            return Decision(State.BUSY, [], self._busy_ticks(senses), "the resident does `%s`" % verb)
         for rule in (self._sleep, self._eat, self._food, self._save, self._work, self._home):
             decision = rule(senses, sites)
             if decision is not None:
                 return decision
         return Decision(State.IDLE, [], self._idle_ticks(senses), "nothing to do; the routines run")
+
+    def _busy_ticks(self, senses: Senses) -> int:
+        """Returns the game minutes to wait for a resident that is busy.
+
+        The report of an action ends the wait of the agent. An action that
+        a routine started writes no report when it goes well: the sleep of
+        the reserve routine, for example. So the agent waits until the tick
+        at which the running action ends, and no longer. With planned
+        actions in the queue, or with an action that waits for an answer of
+        the world, a report comes: the agent waits for it.
+        """
+        activity = senses.activity
+        if senses.queue > 0 or activity is None or activity.get("waiting") or not isinstance(activity.get("ends"), int):
+            return PLAN_TICKS
+        return max(1, min(PLAN_TICKS, activity["ends"] - senses.tick))
 
     def _idle_ticks(self, senses: Senses) -> int:
         """Returns the game minutes to the next full hour: the needs and the clock change then."""
