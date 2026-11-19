@@ -336,12 +336,19 @@ class FakeWorld:
         self.time = time
         #: Rules of a test. Each runs once per tick, before the actions advance.
         self.on_tick: List[Callable[["FakeWorld"], None]] = []
+        #: The missions that sponsors published, oldest first. Each has
+        #: `mission`, `request`, `owner`, `frame`, `deadline` and `definition`.
+        self.missions: List[Dict[str, Json]] = []
         self._verbs: Dict[str, FakeVerb] = {}
         self._owners: Dict[str, int] = {}
+        self._owner_names: Dict[int, str] = {}
         self._keys: Dict[str, int] = {}
         self._waiters: List[_Waiter] = []
         #: Ids of the residents that left the world.
         self._gone: Set[int] = set()
+        #: The keys of the residents that died, with their owners, until the gateway learns of the death.
+        self._dead: Dict[str, int] = {}
+        self._requests = 0
         self._spawn = spawn or {"x": ZONE_SIZE // 2, "y": ZONE_SIZE // 2}
         self._ids = 0
         self._owner = 0
@@ -387,6 +394,7 @@ class FakeWorld:
             self._owner += 1
             token = make_token("unsup_own_", self._owner)
             self._owners[token] = self._owner
+            self._owner_names[self._owner] = name
             return {"owner": {"id": self._owner, "name": name, "created_at": CREATED_AT}, "token": token}
 
     def residents_of(self, owner: int) -> List[FakeResident]:
@@ -395,12 +403,67 @@ class FakeWorld:
             return sorted((one for one in self.residents.values() if one.owner == owner), key=lambda one: one.id)
 
     def despawn(self, resident: FakeResident) -> None:
-        """Removes a resident from the world, as a death does. Its key ends."""
+        """Removes a resident from the world, as an administrator does.
+
+        Its key ends at once: the next call with it gets `401 invalid_token`.
+        """
         with self.lock:
             self.residents.pop(resident.id, None)
             self._keys.pop(resident.key, None)
             self._gone.add(resident.id)
             self._changed.notify_all()
+
+    def die(self, resident: FakeResident) -> None:
+        """Removes a resident from the world, as a death does.
+
+        The gateway learns of a death with the next call of the key: that
+        call gets `410 resident_gone`, and each later call gets
+        `401 invalid_token`. A long poll of the resident that is open gets
+        the 410.
+        """
+        with self.lock:
+            if resident.id not in self.residents:
+                return
+            self._dead[resident.key] = resident.owner
+            self.despawn(resident)
+
+    def is_gone(self, resident: FakeResident) -> bool:
+        """Returns true when the resident left the world."""
+        with self.lock:
+            return resident.id in self._gone
+
+    def dead_owner(self, key: Optional[str]) -> Optional[int]:
+        """Returns the owner of a resident that died, when the gateway did not yet learn of the death with this key."""
+        with self.lock:
+            return None if key is None else self._dead.get(key)
+
+    def forget_dead(self, key: str) -> None:
+        """Notes that the gateway learned of a death with a key. The key is unknown from now on."""
+        with self.lock:
+            self._dead.pop(key, None)
+
+    def owner_name(self, owner: int) -> Optional[str]:
+        """Returns the name of an owner."""
+        return self._owner_names.get(owner)
+
+    def post_mission(self, owner: int, definition: Dict[str, Json]) -> Dict[str, Json]:
+        """Publishes a mission of a sponsor, as the missions module does after its checks.
+
+        The fake publishes at once: it does not wait for a frame.
+        """
+        with self.lock:
+            self._ids += 1
+            self._requests += 1
+            mission = {
+                "mission": self._ids,
+                "request": self._requests,
+                "owner": owner,
+                "frame": self.tick,
+                "deadline": self.tick + definition["deadline_in"],
+                "definition": definition,
+            }
+            self.missions.append(mission)
+            return mission
 
     def owner_of(self, token: Optional[str]) -> Optional[int]:
         """Returns the owner of a token, if the token is known."""

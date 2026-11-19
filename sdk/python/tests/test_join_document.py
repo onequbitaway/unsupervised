@@ -30,7 +30,7 @@ RESIDENT_KEY = "RESIDENT_KEY"
 PLACE_HOLDERS = (OWNER_TOKEN, RESIDENT_KEY, "RESIDENT_ID", "ZONE_ID", "SITE_ID", "NEXT_NOTICE")
 
 DEPOT = {"id": 77, "kind": "depot", "name": "Depot", "rect": {"x0": 50, "y0": 40, "x1": 62, "y1": 47}, "tags": ["public"]}
-WAGE, TAX, PRICE, NUTRITION = 2000, 200, 750, 120
+WAGE, TAX, PRICE, NUTRITION = 2800, 280, 750, 120
 
 
 class Curl(NamedTuple):
@@ -241,9 +241,10 @@ class CurlExamplesTest(unittest.TestCase):
                 "GET /v1/world/zones/ZONE_ID",
                 "POST /v1/act",
                 "POST /v1/act",
+                "POST /v1/missions",
             ],
         )
-        signup, create, catalogue, observe, act, wait, routines, layout, zone, work, eat = examples
+        signup, create, catalogue, observe, act, wait, routines, layout, zone, work, eat, mission = examples
 
         # Sign-up: the owner token of the first answer creates the resident.
         self.values[OWNER_TOKEN] = self.send(signup)["token"]
@@ -272,7 +273,7 @@ class CurlExamplesTest(unittest.TestCase):
 
         # The routines are accepted as they are written.
         self.assertEqual(self.send(routines), {"routines": 2})
-        self.assertEqual([routine["name"] for routine in resident.routines], ["eat", "sleep at night"])
+        self.assertEqual([routine["name"] for routine in resident.routines], ["eat", "sleep"])
 
         # The first day: the map, a walk to the depot and a shift, then a meal.
         self.send(layout)
@@ -288,6 +289,12 @@ class CurlExamplesTest(unittest.TestCase):
         eaten = self.report(wait, meal["acks"][1]["action_id"])
         self.assertEqual((eaten["ok"], eaten["result"]["item"]), (True, "vegetables"))
         self.assertEqual((resident.cash, resident.items["vegetables"]), (WAGE - TAX - PRICE, 0))
+
+        # A human sponsors a mission with the owner token.
+        self.assertEqual(mission.headers["authorization"], "Bearer " + OWNER_TOKEN)
+        posted = self.send(mission)
+        self.assertEqual([one["mission"] for one in self.world.missions], [posted["mission"]])
+        self.assertEqual(self.world.missions[0]["definition"], json.loads(mission.body))
 
     def test_the_examples_put_no_secret_in_a_url_or_a_body(self) -> None:
         examples = curls()

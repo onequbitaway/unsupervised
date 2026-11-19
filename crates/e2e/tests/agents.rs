@@ -9,49 +9,65 @@
 
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::child::{run, start};
-use common::{World, config, id, int, no_rate_limits, repo_root, soon};
-use futures::StreamExt;
+use common::{PATIENCE, World, config, id, int, no_rate_limits, repo_root};
 use serde_json::{Value, json};
-use tokio_tungstenite::tungstenite::Message;
 
-/// Real time of one game minute in these tests.
+/// Real time of one game minute in the test of the house residents, while
+/// every one of them waits.
 const TICK: Duration = Duration::from_millis(4);
 /// Number of house residents of the test.
 const RESIDENTS: u64 = 6;
 /// Game days that the house residents live.
 const DAYS: u64 = 3;
 const DAY: u64 = 1_440;
+/// Real time after which a house resident that does not come back to its
+/// long poll fails the test.
+const STUCK: Duration = Duration::from_secs(60);
 
-/// Starts a world that runs by itself, fast, with room for many residents
-/// of one owner.
-async fn fast_world() -> World {
+/// Starts a world that moves only when the test steps it, with room for
+/// many residents of one owner.
+async fn stepped_world() -> World {
     let mut config = config();
     no_rate_limits(&mut config);
-    config.tick_interval = TICK;
     config.gateway.limits.residents_per_owner = 0;
     World::with(config).await
 }
 
-/// Watches the world as a viewer does, until the world reaches a frame.
-/// The feed of the viewers has one `frame` message at the end of each
-/// frame. `alive` is called for each frame: it stops the test when the
-/// process under test is gone.
-async fn watch_until(world: &World, frame: u64, mut alive: impl FnMut()) {
-    let address = format!("ws://{}/v1/spectate", world.addr);
-    let (mut feed, _) =
-        tokio_tungstenite::connect_async(address).await.expect("the viewer connects");
+/// Runs the world up to a frame, as a clock that stops while a client
+/// thinks.
+///
+/// One frame runs for each [`TICK`] of real time, and only while each of
+/// the `clients` blocks in its long poll: `GET /v1/wait`. A client that
+/// got news decides and plans with the world at a stand. So a slow
+/// machine makes the test longer, and it does not take game time from a
+/// client. The clients still wait in real time: `TICK` is the speed that
+/// they are told. `alive` is called before each frame: it stops the test
+/// when the process under test is gone.
+///
+/// # Panics
+///
+/// Panics when the clients do not all wait again after [`STUCK`].
+async fn run_while_they_wait(world: &World, clients: u64, frame: u64, mut alive: impl FnMut()) {
+    let mut pace = tokio::time::interval(TICK);
+    pace.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut moved = Instant::now();
     loop {
-        let message = feed.next().await.expect("the feed is open").expect("a message");
-        let Message::Text(text) = message else { continue };
-        let message: Value = serde_json::from_str(&text).expect("a feed message is JSON");
-        if message["op"] == "frame" {
-            alive();
-            if id(&message["frame"], "frame") >= frame {
-                return;
-            }
+        pace.tick().await;
+        alive();
+        let waiting = world.open_waits().await;
+        if waiting < clients {
+            assert!(
+                moved.elapsed() < STUCK,
+                "{waiting} of {clients} clients wait after {STUCK:?}: one does not come back to its long poll"
+            );
+            continue;
+        }
+        moved = Instant::now();
+        if world.step(1).await >= frame {
+            return;
         }
     }
 }
@@ -65,7 +81,7 @@ async fn events(world: &World, kind: &str) -> Vec<Value> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs python3 and runs three game days: run with --include-ignored"]
 async fn house_residents_stay_alive_earn_and_eat_for_days() {
-    let world = fast_world().await;
+    let world = stepped_world().await;
     let (_, owner_token) = world.owner("Operator").await;
     let dir = repo_root().join("agents/scripted");
     let state = std::env::temp_dir().join(format!("unsup-e2e-house-{}.json", std::process::id()));
@@ -96,10 +112,10 @@ async fn house_residents_stay_alive_earn_and_eat_for_days() {
     let mut house =
         start("python3", &args, &dir, &[("UNSUPERVISED_OWNER_TOKEN", owner_token.clone())]);
 
-    // The world runs by itself. The test watches it until the game days are over.
-    soon(watch_until(&world, DAYS * DAY, || {
-        assert!(house.is_running(), "the house residents run")
-    }))
+    // The game days pass while the house residents wait for news.
+    run_while_they_wait(&world, RESIDENTS, DAYS * DAY, || {
+        assert!(house.is_running(), "the house residents run");
+    })
     .await;
     let finished = house.stop().await;
     let _ = std::fs::remove_file(&state);
@@ -181,7 +197,7 @@ async fn the_llm_agent_lives_in_the_real_world_with_a_fake_model() {
     let clock = world.clock().await;
     let dir = repo_root().join("agents/llm");
     let env = [("UNSUPERVISED_URL", world.base.clone()), ("E2E_CLOCK_URL", clock.url.clone())];
-    let finished = run("node", ["e2e/real-server.mjs"], &dir, &env, Duration::from_secs(240)).await;
+    let finished = run("node", ["e2e/real-server.mjs"], &dir, &env, PATIENCE).await;
     assert!(finished.success, "`node e2e/real-server.mjs` works:\n{finished}");
     let facts = finished.fact("llm");
     let resident = id(&facts["resident"], "resident");
@@ -200,6 +216,21 @@ async fn the_llm_agent_lives_in_the_real_world_with_a_fake_model() {
     assert_eq!(shifts, id(&facts["shifts"], "shifts"), "{finished}");
     assert!(shifts >= 2);
     assert_eq!(of_resident(events(&world, "life.meal_eaten").await), 1);
+    // The world ran only while the agent waited: one frame for each
+    // second of a wait. So the frame of the server is the time that the
+    // script counted, and a run is the same each time.
+    let frame = id(&world.public("/v1/world").await["frame"], "frame");
+    assert_eq!(frame, id(&facts["frames"], "frames") + 1, "{finished}");
+    // The default routine of the game put the tired resident to sleep at
+    // its workplace. The agent woke it and sent it to its bed: the one
+    // sleep that ended by itself was in the shelter.
+    let nights: Vec<Value> = events(&world, "life.slept")
+        .await
+        .into_iter()
+        .filter(|event| event["actor"] == resident)
+        .map(|event| event["data"]["quality"].clone())
+        .collect();
+    assert_eq!(nights, ["fair"], "{finished}");
     // It spoke one time: the server refused its second text, the link.
     let said = events(&world, "society.said").await;
     let texts: Vec<&Value> = said

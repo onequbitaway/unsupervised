@@ -5,7 +5,7 @@ request and answer bodies of the account routes are written here by hand
 from `docs/design/protocol.md`, section 2.
 """
 
-from typing import List, NamedTuple, Optional, TypedDict
+from typing import Any, Dict, List, NamedTuple, Optional, TypedDict
 
 from .types import ActionAck, ActionReport, Notice, Observation
 
@@ -62,6 +62,49 @@ class PlanStep(_PlanStepRequired, _PlanStepOptional):
     """One step of a plan: a verb, its arguments and an optional idempotency key."""
 
 
+_MissionObjectiveRequired = TypedDict("_MissionObjectiveRequired", {"event": str})
+_MissionObjectiveOptional = TypedDict(
+    "_MissionObjectiveOptional", {"fields": Dict[str, Any], "count": int, "actor": str}, total=False
+)
+
+
+class MissionObjective(_MissionObjectiveRequired, _MissionObjectiveOptional):
+    """One objective of a sponsor mission: a number of events of one kind.
+
+    `event` is the kind of the event, for example `economy.goods_produced`.
+    `fields` are data fields that the event must have, for example
+    `{"item": "bread"}`. `count` is the number of events; the default is 1.
+    `actor` is `assignee` (the default) or `team`.
+    """
+
+
+_MissionDefinitionRequired = TypedDict(
+    "_MissionDefinitionRequired",
+    {"title": str, "objectives": List[MissionObjective], "reward": int, "deadline_in": int},
+)
+_MissionDefinitionOptional = TypedDict(
+    "_MissionDefinitionOptional", {"text": str, "mode": str, "org": Optional[int], "takers": int}, total=False
+)
+
+
+class MissionDefinition(_MissionDefinitionRequired, _MissionDefinitionOptional):
+    """The definition of a mission: the body of `POST /v1/missions`.
+
+    The fields are those of the arguments of the verb `mission_post`.
+    `reward` is the cents that each taker gets. `deadline_in` is the game
+    minutes from the publication to the deadline. `mode` is `solo` (the
+    default) or `team`. `takers` is the number of takers; the default is 1.
+    """
+
+
+# Answer of `POST /v1/missions`: the mission that the world published.
+# `frame` is the frame of the publication and `deadline` is the frame of the
+# deadline. The public event `missions.mission_posted` has the same `request`.
+MissionPosted = TypedDict(
+    "MissionPosted", {"mission": int, "request": int, "frame": int, "deadline": int, "reward": int, "takers": int}
+)
+
+
 class ActResult(NamedTuple):
     """The answer of `Client.act`."""
 
@@ -82,4 +125,20 @@ class PlanResult(NamedTuple):
     observation: Observation
     #: Number of steps at the end of the plan that the server did not send,
     #: because a step before them was rejected. They did not run.
+    not_sent: int = 0
+
+
+class ActSent(NamedTuple):
+    """The answer of `Client.act` with `observe=False`: the acknowledgement alone."""
+
+    #: What happened to the request. A refusal is here; it is not raised.
+    ack: ActionAck
+
+
+class PlanSent(NamedTuple):
+    """The answer of `Client.plan` with `observe=False`: the acknowledgements alone."""
+
+    #: One acknowledgement for each step that the server sent to the simulation.
+    acks: List[ActionAck]
+    #: Number of steps at the end of the plan that the server did not send.
     not_sent: int = 0

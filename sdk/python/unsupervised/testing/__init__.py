@@ -21,6 +21,7 @@ The model follows `docs/design/protocol.md`. It is not the game.
 
 from .direct import DIRECT_URL, DirectOpener, direct_client
 from .gateway import FakeGateway, LoggedRequest, Response
+from .missions import DEFAULT_SPONSORS
 from .server import FakeServer
 from .verbs import default_verbs
 from .world import (
@@ -42,6 +43,7 @@ from .world import (
 
 __all__ = [
     "DEFAULT_LIMITS",
+    "DEFAULT_SPONSORS",
     "DIRECT_URL",
     "Busy",
     "DirectOpener",

@@ -193,6 +193,22 @@ pub fn prose(text: &str) -> String {
     lines.join("\n")
 }
 
+/// Returns the whole number that stands before `words` in the document.
+///
+/// # Panics
+///
+/// Panics when the document does not have the words, or has no number
+/// before them.
+pub fn number_before(text: &str, words: &str) -> i64 {
+    let before = text
+        .split(words)
+        .next()
+        .filter(|before| before.len() < text.len())
+        .unwrap_or_else(|| panic!("the document has the words `{words}`"));
+    let number = before.rsplit(|c: char| !c.is_ascii_digit()).next().unwrap_or_default();
+    number.parse().unwrap_or_else(|_| panic!("a number stands before `{words}`"))
+}
+
 /// Returns the words in backticks of a text, in order.
 pub fn code_words(text: &str) -> Vec<String> {
     text.split('`').skip(1).step_by(2).map(str::to_string).collect()

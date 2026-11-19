@@ -18,12 +18,15 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from support import ADMIN, BASE, OPENER, admin, fact, step
+from support import ADMIN, BASE, OPENER, admin, fact, step, until
 
 from unsupervised.testing import FakeGateway
 
 PROBES = json.loads((Path(__file__).resolve().parents[2] / "conformance" / "probes.json").read_text(encoding="utf-8"))
 UNKNOWN_KEY = "unsup_res_00000000000000000000000000000000000000000000000000000000000000ff"
+#: Game minutes of one day, and the greatest number of days that a resident without food lives in a probe.
+DAY = 1440
+DAYS_MAX = 30
 
 Send = Callable[[str, str, Dict[str, str], Optional[str]], Tuple[int, str]]
 
@@ -67,9 +70,11 @@ def at(value: Any, path: str) -> Any:
 class Side:
     """One side of the comparison: the fake or the real server."""
 
-    def __init__(self, name: str, send: Send) -> None:
+    def __init__(self, name: str, send: Send, during: Callable[[Callable[[], Any]], Any]) -> None:
         self.name = name
         self.send = send
+        #: Runs a request whose answer needs a frame of the world.
+        self.during = during
         self.saved: Dict[str, Any] = {}
 
     def request(self, method: str, path: str, token: Optional[str], body: Any = None, raw: Any = None) -> Tuple[int, Any]:
@@ -109,7 +114,11 @@ class Side:
         path = probe["path"].replace("{resident}", str(self.saved.get("resident")))
         path = path.replace("{other}", str(self.saved.get("other")))
         raw = (probe["raw"], probe["content_type"]) if "raw" in probe else None
-        status, body = self.request(probe["method"], path, self.token(probe["auth"]), probe.get("body"), raw)
+
+        def send() -> Tuple[int, Any]:
+            return self.request(probe["method"], path, self.token(probe["auth"]), probe.get("body"), raw)
+
+        status, body = self.during(send) if probe.get("runs") is True else send()
         for name, where in probe.get("save", {}).items():
             self.saved[name] = at(body, where)
         error = body.get("error") if isinstance(body, dict) else None
@@ -149,7 +158,8 @@ def sanction_fake(kind: str) -> None:
         raise ValueError("the sanction %s is not known" % kind)
 
 
-fake = Side("fake", send_fake)
+# The fake answers at once: its world does not have to run.
+fake = Side("fake", send_fake, lambda request: request())
 
 # ---- The real server --------------------------------------------------------
 
@@ -182,7 +192,21 @@ def sanction_real(kind: str) -> None:
         admin("/admin/owners/%s/%s" % (real.saved["owner"], kind))
 
 
-real = Side("real", send_real)
+def starve_real() -> None:
+    """Runs game days until the other resident is dead. The public profile says when.
+
+    No call with the key of the resident is made: the first one is a probe.
+    """
+    for days in range(DAYS_MAX + 1):
+        with OPENER.open("%s/v1/residents/%s/profile" % (BASE, real.saved["other"]), timeout=30) as response:
+            if json.loads(response.read())["alive"] is False:
+                return
+        if days < DAYS_MAX:
+            step(DAY)
+    raise AssertionError("a resident without food died in %d game days" % DAYS_MAX)
+
+
+real = Side("real", send_real, until)
 
 # ---- Compare ----------------------------------------------------------------
 
@@ -197,6 +221,11 @@ for probe in PROBES:
     elif "tell" in probe:
         gateway.world.tell(fake.saved["resident"], fake.saved["other"], probe["tell"], "society.message")
         tell_real(probe["tell"])
+    elif "starve" in probe:
+        if probe["starve"] != "other":
+            raise ValueError("the probes starve only the other resident, not %s" % probe["starve"])
+        gateway.world.die(gateway.world.residents[fake.saved["other"]])
+        starve_real()
     elif "sanction" in probe:
         if probe["sanction"] == "ban":
             # The owner id of the real side is read while the key still works.

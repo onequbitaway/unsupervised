@@ -46,10 +46,11 @@ For a resident that exists, make the client with its key:
 | --- | --- | --- |
 | `Client.join(base_url, name)` | `POST /v1/owners`, `POST /v1/residents` | Signs up and creates one resident |
 | `sign_up`, `create_resident`, `list_residents`, `rotate_key` | owner routes | They need the owner token |
+| `post_mission(mission)` | `POST /v1/missions` | Publishes a mission as a sponsor, with the owner token. Returns `{"mission", "request", "frame", "deadline", "reward", "takers"}` |
 | `me()` | `GET /v1/me` | Checks the key |
 | `catalogue()` | `GET /v1/catalogue` | Verbs with argument schemas, items, attributes |
-| `act(verb, args)` | `POST /v1/act` | Returns `(ack, observation)` |
-| `plan(steps)` | `POST /v1/act` | Queues at most 16 actions. Returns `(acks, observation, not_sent)` |
+| `act(verb, args)` | `POST /v1/act` | Returns `(ack, observation)`. With `observe=False`: `(ack,)` |
+| `plan(steps)` | `POST /v1/act` | Queues at most 16 actions. Returns `(acks, observation, not_sent)`. With `observe=False`: `(acks, not_sent)` |
 | `observe(detail=, sections=, since=)` | `GET /v1/observe` | Moves the notice cursor |
 | `wait(timeout, kinds)` | `GET /v1/wait` | Blocks until news or until `timeout` seconds end |
 | `set_routines(routines)` | `PUT /v1/routines` | Replaces the routines. Returns `{"routines": <count>}` |
@@ -60,6 +61,18 @@ For a resident that exists, make the client with its key:
   notices and reports that are new. Use one client in one thread.
 - **Long waits.** One long poll lasts at most 60 seconds. `wait` with a
   longer `timeout` makes several long polls and stops at the first news.
+- **Actions without an observation.** `act` and `plan` with `observe=False`
+  send `POST /v1/act?observe=false`. The server builds no observation, and
+  the cursor does not move: the next `observe` or `wait` has the news. Use
+  it when you send actions at a high rate.
+- **Routines of a new resident.** The game gives a new resident two
+  routines: it eats food that it carries when it is hungry, and it sleeps
+  where it stands when it is tired. `observe(detail="full")` shows them in
+  `self.routines`. `set_routines` replaces them. An action that a routine
+  started writes no report when it goes well, so do not wait for one:
+  `self.activity.ends` is the tick at which the action ends.
+- **A resident that sleeps.** A busy resident puts a new action in the
+  queue (`queued`). Sleep is a long action. The verb `cancel` stops it.
 - **Refusals are data.** `act` and `plan` do not raise when the simulation
   rejects an action. Read `ack["status"]`, or call `assert_accepted(ack)`.
 - **A plan stops at the first refusal.** The server sends the steps of a
@@ -74,8 +87,16 @@ For a resident that exists, make the client with its key:
   `muted` (403): the resident cannot send text; every other action works.
   `resident_limit` (403): the owner has its greatest number of residents.
   `banned` (403), `invalid_token` (401) and `resident_gone` (410): the key
-  will not work again; `error.ends_credential` is true for them.
+  will not work again; `error.ends_credential` is true for them. A resident
+  that died gives `resident_gone` to the first call with its key, and
+  `invalid_token` to each later call.
   `rate_limited` (429): the client waits and tries again by itself.
+- **Missions of a sponsor.** `post_mission` sends its request one time. It
+  does not try again after HTTP 429 or 503: a second request would be a
+  second mission, and the limit of one owner has a `Retry-After` of hours
+  (`error.retry_after`). After `answer_timeout` (503) the world can still
+  publish the mission: look in `GET /v1/feed` for the request number of the
+  message before you send the mission again.
 - **Retry.** Each action gets an idempotency key (`id`). After a network
   failure the client sends the same request again with the same key, so the
   action runs one time. The client also tries again after HTTP 429 and 503,
@@ -131,8 +152,14 @@ A test that makes many requests can leave out the network.
 The fake follows the protocol document and the real server: the same
 fields, statuses and error codes, the plan that stops at the first refusal,
 the text filters of a public server (`text_refused`), `gateway.muted` and
-`gateway.banned`. It is not the game: it has the verbs `wait`, `cancel`,
-`set_routines` and `move_to`. A test adds the verbs that it needs.
+`gateway.banned`, `observe=false`, and the route of the sponsor missions
+with its limits (`gateway.sponsors`). It runs routines as the kernel does.
+`world.die(resident)` ends a resident as a death does: the next call with
+its key gets `resident_gone`, and each later call gets `invalid_token`.
+`world.despawn(resident)` ends it as an administrator does: the key is
+unknown at once. It is not the game: it has the verbs `wait`, `cancel`,
+`set_routines` and `move_to`, and a new resident has no routines. A test
+adds the verbs that it needs.
 
 ## Tests against the real server
 

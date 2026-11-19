@@ -9,6 +9,8 @@ export type { MainOptions } from "./cli.js";
 export { CONFIG_DEFAULTS, ConfigError, VARIABLES, readConfig } from "./config.js";
 export type { AgentConfig } from "./config.js";
 export { DecisionError, parseDecision } from "./decision.js";
+export { farewell, fateOf } from "./farewell.js";
+export type { Fate } from "./farewell.js";
 export type { Decision, DecisionLimits } from "./decision.js";
 export { DEFAULT_NOTES_MAX, FileNotes } from "./notes.js";
 export type { NotesStore } from "./notes.js";

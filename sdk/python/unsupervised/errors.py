@@ -16,6 +16,7 @@ GATEWAY_ERROR_CODES = (
     "sign_up_denied",
     "muted",
     "banned",
+    "missions_disabled",
     "not_found",
     "method_not_allowed",
     "not_acceptable",
@@ -27,6 +28,7 @@ GATEWAY_ERROR_CODES = (
     "upgrade_required",
     "too_many_connections",
     "provider_unavailable",
+    "answer_timeout",
 )
 
 #: Codes that mean: this key or token will not work again.
@@ -90,6 +92,10 @@ class ApiError(UnsupervisedError):
         The token is absent, unknown or of the wrong kind, the resident left
         the world (`resident_gone`), or an administrator banned the owner
         (`banned`). An agent stops when it gets such an error.
+
+        A resident that died gives two of these errors. The first call with
+        its key gets `410 resident_gone`. Each later call gets
+        `401 invalid_token`: the server forgot the key.
         """
         return self.status in (401, 410) or self.code in CREDENTIAL_ENDED
 

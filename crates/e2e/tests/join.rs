@@ -15,9 +15,10 @@ use common::child::run;
 use common::game::{Catalogue, attr, carried};
 use common::joindoc::{self, EXAMPLE_BASE, Example, PLACE_HOLDERS};
 use common::mcp::Mcp;
-use common::{ADMIN, World, code, config, id, int, no_rate_limits, repo_root, soon};
+use common::{World, code, config, id, int, no_rate_limits, repo_root, soon};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
+use unsup_server::ServerConfig;
 
 /// Time limit of one command of the document.
 const LIMIT: Duration = Duration::from_secs(100);
@@ -40,13 +41,6 @@ fn read_output(command: &str, finished: common::child::Finished) -> Value {
         .unwrap_or_else(|error| panic!("the command prints JSON ({error}):\n{command}\n{finished}"))
 }
 
-/// Returns the number of long polls that are open on the server.
-async fn open_waits(world: &World) -> u64 {
-    let (status, stats) = world.get("/admin/stats", ADMIN).await;
-    assert_eq!(status, StatusCode::OK, "{stats}");
-    id(&stats["gateway"]["open_waits"], "open_waits")
-}
-
 /// Runs a command that blocks in the long poll of the server. The world
 /// runs, one frame at a time, while the call of the command is open on
 /// the server. So the game time passes only while the reader waits.
@@ -58,7 +52,7 @@ async fn shell_wait(world: &World, command: &str) -> Value {
             tokio::select! {
                 biased;
                 finished = &mut child => break finished,
-                waits = open_waits(world) => {
+                waits = world.open_waits() => {
                     if waits > 0 {
                         world.step(1).await;
                     }
@@ -91,10 +85,14 @@ impl Reader<'_> {
             assert!(!command.contains(name), "the command has no place holder left:\n{command}");
         }
         assert!(!command.contains(EXAMPLE_BASE), "only `BASE` has the address:\n{command}");
-        let answer = if example.route() == "GET /v1/wait" {
-            shell_wait(self.world, &command).await
-        } else {
-            shell(self.world, &command).await
+        let answer = match example.route().as_str() {
+            "GET /v1/wait" => shell_wait(self.world, &command).await,
+            // The world publishes a mission in the frame after the
+            // request, and the route waits for that frame.
+            "POST /v1/missions" => {
+                read_output(&command, self.world.until(shell_run(self.world, &command)).await)
+            }
+            _ => shell(self.world, &command).await,
         };
         if let Some(sample) = &example.sample {
             let difference = joindoc::differs(sample, &answer, "answer");
@@ -172,10 +170,11 @@ async fn every_curl_example_works_in_the_order_of_the_document() {
             "GET /v1/world/zones/ZONE_ID",
             "POST /v1/act",
             "POST /v1/act",
+            "POST /v1/missions",
         ]
     );
-    let [signup, create, catalogue, observe, act, wait, routines, layout, zone, work, eat] =
-        <[Example; 11]>::try_from(examples).expect("eleven examples");
+    let [signup, create, catalogue, observe, act, wait, routines, layout, zone, work, eat, mission] =
+        <[Example; 12]>::try_from(examples).expect("twelve examples");
     let mut reader = Reader { world: &world, values: BTreeMap::new(), wait: wait.clone() };
 
     // ---- Section 1: sign up and get a key.
@@ -212,6 +211,16 @@ async fn every_curl_example_works_in_the_order_of_the_document() {
     assert!(["station", "shelter"].contains(&me["site"]["kind"].as_str().expect("a site")), "{me}");
     let home = first["sections"]["home"].clone();
     assert_eq!(home["kind"], "shelter", "{home}");
+    // It has two routines, and `detail=full` shows them: it eats carried
+    // food when it is hungry, and it sleeps when it is tired.
+    let born = reader.observe("?detail=full&sections=self").await;
+    let orders: Vec<(&str, &str)> = born["self"]["routines"]
+        .as_array()
+        .expect("routines")
+        .iter()
+        .filter_map(|routine| Some((routine["name"].as_str()?, routine["then"]["verb"].as_str()?)))
+        .collect();
+    assert_eq!(orders, [("eat when hungry", "eat"), ("sleep when tired", "sleep")]);
 
     // One action. Its answer comes in a report, and the long poll brings it.
     let acted = reader.run(&act).await;
@@ -228,7 +237,8 @@ async fn every_curl_example_works_in_the_order_of_the_document() {
         works["kinds"].as_array().expect("kinds").iter().filter_map(Value::as_str).collect();
     assert!(kinds.contains(&"depot"), "the depot has shifts of the city: {works}");
 
-    // The routines of the example are those of the resident now.
+    // The call replaces all routines: those of the example are the
+    // routines of the resident now.
     let set = reader.run(&routines).await;
     assert_eq!(set, json!({ "routines": 2 }));
     let full = reader.observe("?detail=full&sections=self").await;
@@ -238,7 +248,7 @@ async fn every_curl_example_works_in_the_order_of_the_document() {
         .iter()
         .filter_map(|r| r["name"].as_str())
         .collect();
-    assert_eq!(names, ["eat", "sleep at night"]);
+    assert_eq!(names, ["eat", "sleep"]);
 
     // ---- Section 6: the first day. Find the depot on the public map.
     let map = reader.run(&layout).await;
@@ -266,11 +276,10 @@ async fn every_curl_example_works_in_the_order_of_the_document() {
     let planned = reader.run(&work).await;
     let acks = planned["acks"].as_array().expect("acks");
     assert_eq!(acks.len(), 2, "{planned}");
+    // The shift waits in the queue behind the walk.
     let walk = acks[0]["status"]["state"].as_str().expect("a state");
-    assert!(
-        ["started", "pending"].contains(&walk),
-        "the walk is `started` or `pending`: {planned}"
-    );
+    assert!(["started", "pending"].contains(&walk), "the walk runs: {planned}");
+    assert_eq!(acks[1]["status"], json!({ "state": "queued", "position": 1 }), "{planned}");
     let shift = reader.report(&acks[1]["action_id"]).await;
     assert_eq!(shift["ok"], true, "{shift}");
     let result = &shift["result"];
@@ -321,6 +330,48 @@ async fn every_curl_example_works_in_the_order_of_the_document() {
     assert_eq!(rested["self"]["site"]["id"], home["site"]);
     assert_eq!(rested["self"]["cash"], fed["self"]["cash"], "the shelter costs nothing");
 
+    // ---- Section 10: a human sponsors a mission with the owner token.
+    let posted = reader.run(&mission).await;
+    let sent: Value = serde_json::from_str(
+        mission
+            .command
+            .split("-d '")
+            .nth(1)
+            .and_then(|body| body.split('\'').next())
+            .expect("a body"),
+    )
+    .expect("the body of the example is JSON");
+    assert_eq!(posted["reward"], sent["reward"], "{posted}");
+    assert_eq!(posted["takers"], sent["takers"], "{posted}");
+    assert_eq!(
+        id(&posted["deadline"], "deadline"),
+        id(&posted["frame"], "frame") + id(&sent["deadline_in"], "deadline_in"),
+        "`deadline_in` is game minutes: {posted}"
+    );
+    // Residents find the mission with the verb `mission_list`. The name of
+    // the owner is the name of the sponsor, and the reward is for each taker.
+    let ask = json!({ "verb": "mission_list", "args": { "mission": posted["mission"] } });
+    let (status, asked) = world.post("/v1/act", reader.key(), &ask).await;
+    assert_eq!(status, StatusCode::OK, "{asked}");
+    let listed = reader.report(&asked["acks"][0]["action_id"]).await;
+    let found = &listed["result"]["mission"];
+    assert_eq!(found["title"]["text"], sent["title"], "{listed}");
+    assert_eq!(found["sponsor"]["text"], owner["owner"]["name"], "{listed}");
+    assert_eq!(found["reward"], sent["reward"], "{listed}");
+    // The reward is new money: nobody paid for it.
+    assert_eq!(reader.observe("?sections=self").await["self"]["cash"], rested["self"]["cash"]);
+    // An owner has the number of missions in 24 hours that the document
+    // says. The mission of the example is the first one.
+    let limit = joindoc::number_before(&text, " missions in 24 hours");
+    assert_eq!(limit, i64::from(ServerConfig::default().sponsors.missions_per_day));
+    let token = reader.values["OWNER_TOKEN"].clone();
+    for number in 1..=limit {
+        let (status, answer) = world.until(world.post("/v1/missions", &token, &sent)).await;
+        let expected =
+            if number < limit { StatusCode::CREATED } else { StatusCode::TOO_MANY_REQUESTS };
+        assert_eq!(status, expected, "mission {} of the owner: {answer}", number + 1);
+    }
+
     // Each verb that the examples and the list of useful verbs name is a verb of the game.
     let useful = joindoc::code_words(&joindoc::paragraph(&text, "Useful verbs:"));
     assert!(useful.len() >= 10, "{useful:?}");
@@ -331,6 +382,9 @@ async fn every_curl_example_works_in_the_order_of_the_document() {
         "buy",
         "eat",
         "sleep",
+        "cancel",
+        "wait",
+        "mission_list",
     ]) {
         assert!(verbs.contains(verb), "the game has the verb `{verb}`");
     }
@@ -388,6 +442,55 @@ async fn the_numbers_of_the_first_day_are_the_parameters_of_the_catalogue() {
     for name in named {
         assert!(catalogue.param(name) >= 0, "`{name}` is a parameter");
     }
+    world.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_numbers_of_the_examples_are_the_numbers_of_the_game() {
+    let world = World::start().await;
+    let catalogue = Catalogue::read(&world).await;
+    let text = joindoc::text();
+    let wage = catalogue.param("economy.public_works_wage");
+    let tax = wage * catalogue.param("economy.income_tax_bp") / 10_000;
+
+    // The answer of `list_jobs` that the `wait` example shows.
+    let wait = joindoc::examples(&text)
+        .into_iter()
+        .find(|example| example.route() == "GET /v1/wait")
+        .and_then(|example| example.sample)
+        .expect("the `wait` example shows an answer");
+    let works = &wait["sections"]["reports"][0]["result"]["public_works"];
+    assert_eq!(int(&works["wage"], "wage"), wage, "{works}");
+    assert_eq!(int(&works["minutes"], "minutes"), catalogue.param("economy.shift_minutes"));
+
+    // The report of a shift in the example observation: the wage, the tax
+    // and the pay. The cash of the example is that pay less some
+    // vegetables at the price of the depot.
+    let observation = joindoc::blocks(&text, "json")
+        .iter()
+        .map(|block| serde_json::from_str::<Value>(block).expect("JSON"))
+        .find(|example| example.get("sections").is_some())
+        .expect("an observation");
+    let shift = &observation["sections"]["reports"][0];
+    assert_eq!(shift["verb"], "work");
+    assert_eq!(shift["result"], json!({ "wage": wage, "tax": tax, "net": wage - tax }));
+    let spent = wage - tax - int(&observation["sections"]["self"]["cash"], "cash");
+    let price = catalogue.param("economy.depot_ceiling.vegetables");
+    assert!(spent > 0 && spent % price == 0, "{spent} cents are a number of vegetables at {price}");
+    assert!(catalogue.nutrition("vegetables").is_some(), "vegetables are food");
+    // The needs of the example are needs of the game, in their range.
+    for (need, value) in observation["sections"]["self"]["attrs"].as_object().expect("attrs") {
+        let full = catalogue.attr_default(need);
+        assert!((0..=full).contains(&int(value, need)), "`{need}` is from 0 to {full}");
+    }
+
+    // The times: one tick is one game minute and, at the default speed,
+    // one real second. So the 1,440 minutes of a game day are the number
+    // of real minutes that the document says.
+    let tick = ServerConfig::default().tick_interval;
+    assert_eq!(tick, Duration::from_secs(1), "one tick is one real second");
+    let day = tick * (24 * 60);
+    assert_eq!(joindoc::number_before(&text, " real minutes"), (day.as_secs() / 60) as i64);
     world.stop().await;
 }
 
@@ -505,6 +608,9 @@ async fn each_error_of_the_table_comes_with_its_status_and_its_code() {
         days += 1;
     }
     seen.insert(refusal(&world, Method::GET, "/v1/observe", Some(&hungry_key), None).await);
+    // Its key then gets `invalid_token`, as the table says.
+    let again = refusal(&world, Method::GET, "/v1/observe", Some(&hungry_key), None).await;
+    assert_eq!(again, (401, "invalid_token".to_string()));
 
     // A banned owner: no token of it works.
     let (status, _) = world.admin(&format!("/admin/owners/{owner}/ban"), &Value::Null).await;
@@ -673,6 +779,89 @@ async fn the_statements_about_keys_plans_and_waits_are_true() {
     assert_eq!(world.get("/v1/me", new_key).await.0, StatusCode::OK);
     let (status, old) = world.get("/v1/me", &key).await;
     assert_eq!((status, code(&old)), (StatusCode::UNAUTHORIZED, "invalid_token"));
+    world.stop().await;
+}
+
+/// Reads the section `self` with full detail and the reports since a
+/// cursor.
+async fn full_self(world: &World, key: &str, since: u64) -> (Value, Vec<Value>) {
+    let path = format!("/v1/observe?detail=full&sections=self,reports&since={since}");
+    let (status, observation) = world.get(&path, key).await;
+    assert_eq!(status, StatusCode::OK, "{observation}");
+    let reports = observation["sections"]["reports"].as_array().expect("reports").clone();
+    (observation["sections"]["self"].clone(), reports)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_statements_about_routines_sleep_and_the_queue_are_true() {
+    let world = world_of_the_document().await;
+    let (_, key) = world.newcomer("Ada").await;
+    let act = |path: &'static str, body: Value| {
+        let (world, key) = (&world, key.clone());
+        async move {
+            let (status, answer) = world.post(path, &key, &body).await;
+            assert_eq!(status, StatusCode::OK, "{body}: {answer}");
+            answer
+        }
+    };
+
+    // With the query `observe=false`, the answer has `acks` alone.
+    let fast = act("/v1/act?observe=false", json!({ "verb": "cancel" })).await;
+    let names: Vec<&String> = fast.as_object().expect("an object").keys().collect();
+    assert_eq!(names, ["acks"], "{fast}");
+    assert_eq!(fast["acks"][0]["status"]["state"], "done");
+
+    // A routine is a standing order: the server starts it when the
+    // resident is idle. A routine action that goes well writes no report.
+    let order = json!({ "routines": [
+        { "name": "pause", "when": { "type": "always" }, "then": { "verb": "wait", "args": { "ticks": 3 } } },
+    ] });
+    assert_eq!(
+        world.put("/v1/routines", &key, &order).await,
+        (StatusCode::OK, json!({ "routines": 1 }))
+    );
+    world.step(1).await;
+    let (me, _) = full_self(&world, &key, 0).await;
+    assert_eq!(me["activity"]["verb"], "wait", "the routine started: {me}");
+    world.step(3).await;
+    let (me, reports) = full_self(&world, &key, 0).await;
+    assert_eq!(me["routines"][0]["runs"], 1, "{me}");
+    assert_eq!(reports, Vec::<Value>::new(), "the action of the routine went well");
+    assert_eq!(world.put("/v1/routines", &key, &json!({ "routines": [] })).await.0, StatusCode::OK);
+    act("/v1/act", json!({ "verb": "cancel" })).await;
+
+    // While the resident sleeps, a new action waits in the queue. A
+    // resident with full energy cannot sleep: one game hour passes first.
+    world.step(60).await;
+    let slept = act("/v1/act", json!({ "verb": "sleep", "args": { "ticks": 120 } })).await;
+    let sleep = slept["acks"][0].clone();
+    assert_eq!(sleep["status"]["state"], "started", "{slept}");
+    let cursor = id(&slept["observation"]["next_notice"], "next_notice");
+    let walk = act("/v1/act", json!({ "verb": "wait", "args": { "ticks": 1 } })).await;
+    assert_eq!(walk["acks"][0]["status"], json!({ "state": "queued", "position": 1 }), "{walk}");
+    world.step(30).await;
+    let (me, reports) = full_self(&world, &key, cursor).await;
+    assert_eq!(me["activity"]["verb"], "sleep", "the resident sleeps on: {me}");
+    assert_eq!((id(&me["queue"], "queue"), reports.len()), (1, 0), "the action waits: {me}");
+
+    // The verb `cancel` stops the running action and clears the queue:
+    // it wakes the resident.
+    let woke = act("/v1/act", json!({ "verb": "cancel" })).await;
+    let result = &woke["acks"][0]["status"]["result"];
+    assert_eq!(result, &json!({ "cancelled": sleep["action_id"], "cleared": 1 }), "{woke}");
+    let (me, reports) = full_self(&world, &key, cursor).await;
+    assert_eq!((&me["activity"], &me["queue"]), (&Value::Null, &json!(0)), "{me}");
+    assert_eq!(me["conditions"].get("asleep"), None, "the resident is awake: {me}");
+    let ended: Vec<(&Value, &Value, &Value)> = reports
+        .iter()
+        .map(|report| (&report["verb"], &report["ok"], &report["error"]["code"]))
+        .collect();
+    let stopped = (&json!(false), &json!("interrupted"));
+    assert_eq!(
+        ended,
+        [(&json!("wait"), stopped.0, stopped.1), (&json!("sleep"), stopped.0, stopped.1)],
+        "{reports:?}"
+    );
     world.stop().await;
 }
 

@@ -31,12 +31,18 @@ export async function step(frames) {
   return (await response.json()).frame;
 }
 
-/** Runs the world, one frame at a time, until `promise` is done. Returns what it gave. */
+/**
+ * Runs the world, one frame at a time, until `promise` is done. Returns
+ * what it gave. A promise that fails is thrown at the end, when the world
+ * stands still again.
+ */
 export async function until(promise, limit = 5_000) {
   let done = false;
   const marked = promise.finally(() => {
     done = true;
   });
+  // The caller gets the failure from `marked`. Until then it is not unhandled.
+  marked.catch(() => undefined);
   for (let frames = 0; !done; frames += 1) {
     assert.ok(frames < limit, `the awaited news came in ${limit} frames`);
     await step(1);

@@ -32,7 +32,7 @@ SLEEP_MAX_TICKS = 720
 EAT_TICKS = 10
 #: One starter shift: its length, its wage before tax and the income tax in basis points.
 SHIFT_MINUTES = 240
-WAGE = 2000
+WAGE = 2800
 INCOME_TAX_BP = 1000
 #: Energy that one hour of work costs.
 WORK_ENERGY_PER_HOUR = 20

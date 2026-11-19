@@ -397,6 +397,69 @@ class ClientTest(ServerCase):
         self.assertEqual((error.code, error.status), ("http_error", 400))
         self.assertEqual(str(error), "http_error: HTTP 400: Failed to parse the request body")
 
+    def test_the_first_call_for_a_resident_that_died_gets_resident_gone_and_each_later_call_gets_invalid_token(self) -> None:
+        second = self.world.spawn(self.resident.owner, "Bea")
+        self.world.die(self.resident)
+        refused = []
+        for call in (self.client.observe, lambda: self.client.act("wait", {"ticks": 1}), self.client.me):
+            with self.assertRaises(ApiError) as raised:
+                call()
+            error = raised.exception
+            refused.append((error.code, error.status, error.ends_credential))
+        self.assertEqual(
+            refused, [("resident_gone", 410, True), ("invalid_token", 401, True), ("invalid_token", 401, True)]
+        )
+        # The owner sees who is left, and the other resident lives on.
+        self.assertEqual([one["id"] for one in self.client.list_residents()["residents"]], [second.id])
+        self.assertEqual(self.client.for_resident(second.key).me()["name"], "Bea")
+
+    def test_a_resident_that_an_administrator_removed_has_no_key_at_once(self) -> None:
+        self.world.despawn(self.resident)
+        with self.assertRaises(ApiError) as raised:
+            self.client.observe()
+        self.assertEqual((raised.exception.code, raised.exception.status), ("invalid_token", 401))
+
+    def test_a_long_poll_that_is_open_when_the_resident_dies_gets_resident_gone(self) -> None:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            waiting = pool.submit(self.client.wait, 60)
+            self.world.parked()
+            self.world.die(self.resident)
+            with self.assertRaises(ApiError) as raised:
+                waiting.result(RESULT_TIMEOUT_SECONDS)
+        self.assertEqual((raised.exception.code, raised.exception.status), ("resident_gone", 410))
+        # That call told the gateway of the death. The key is unknown now.
+        with self.assertRaises(ApiError) as raised:
+            self.client.observe()
+        self.assertEqual(raised.exception.code, "invalid_token")
+
+    def test_observe_false_returns_the_acknowledgements_alone_and_leaves_the_cursor_where_it_is(self) -> None:
+        self.world.tell(self.resident.id, 2, "Good day.")
+        sent = self.client.act("wait", {"ticks": 2}, id="fast-1", observe=False)
+        self.assertEqual(sent._fields, ("ack",))
+        status = {"state": "started", "ends_at": 2, "ticks": 2}
+        ack = {"action_id": sent.ack["action_id"], "request_id": "fast-1", "verb": "wait", "status": status}
+        self.assertEqual(sent.ack, ack)
+        request = self.last_request()
+        self.assertEqual((request.path, request.query), ("/v1/act", {"observe": "false"}))
+
+        steps = [{"verb": "wait", "args": {"ticks": 1}}, {"verb": "fly"}, {"verb": "wait", "args": {"ticks": 1}}]
+        planned = self.client.plan(steps, observe=False)
+        self.assertEqual(planned._fields, ("acks", "not_sent"))
+        self.assertEqual([one["status"]["state"] for one in planned.acks], ["queued", "rejected"])
+        self.assertEqual(planned.not_sent, 1)
+        # An empty plan without an observation sends nothing.
+        before = len(self.gateway.requests)
+        self.assertEqual(self.client.plan([], observe=False), ([], 0))
+        self.assertEqual(len(self.gateway.requests), before)
+
+        # The cursor did not move: the next observation has the notice and both reports.
+        self.assertEqual(self.client.cursor, 0)
+        self.world.step(3)
+        news = self.client.observe()
+        self.assertEqual([notice["kind"] for notice in news["notices"]], ["society.said"])
+        self.assertEqual([report["verb"] for report in reports_of(news)], ["wait", "wait"])
+        self.assertEqual(self.client.cursor, 4)
+
 
 class LongWaitTest(ServerCase):
     world_options = {"time": "auto"}

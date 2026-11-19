@@ -50,6 +50,8 @@ class Agent:
         self.decisions = 0
         #: The last error that stopped the agent, if one did.
         self.fatal: Optional[Exception] = None
+        #: One sentence that says why the agent stopped, when `fatal` is set.
+        self.farewell: Optional[str] = None
         self._sleep = sleep
         self._clock = clock
         self._observation: Optional[Dict[str, Any]] = None
@@ -194,24 +196,59 @@ class Agent:
         An error of the network or the server does not stop the agent: it
         waits `error_seconds` and goes on. An error that ends the key stops
         it: the key is unknown, the resident left the world, or the owner
-        is banned. Returns the number of decisions.
+        is banned. `fatal` then has the error and `farewell` has one
+        sentence that says what happened. Returns the number of decisions.
         """
         while (decisions is None or self.decisions < decisions) and not (stop is not None and stop.is_set()):
             try:
                 self.step()
             except unsupervised.ApiError as error:
                 if error.ends_credential:
-                    LOG.error("the key does not work any more (%s); the agent stops", error)
-                    self.fatal = error
+                    self._stop(error, self._why_the_key_ended(error))
                     break
                 self._recover(error)
             except unsupervised.MissingCredentialError as error:
-                LOG.error("%s; the agent stops", error)
-                self.fatal = error
+                self._stop(error, str(error))
                 break
             except unsupervised.UnsupervisedError as error:
                 self._recover(error)
         return self.decisions
+
+    def _stop(self, error: Exception, farewell: str) -> None:
+        LOG.error("%s; the agent stops", farewell)
+        self.fatal = error
+        self.farewell = farewell
+
+    def _why_the_key_ended(self, error: Any) -> str:
+        """Returns one sentence for an error that ends the key of the resident.
+
+        A resident that left the world gives two answers. The first call
+        with its key gets `410 resident_gone`. Each later call gets
+        `401 invalid_token`: the server forgot the key. A key that another
+        key replaced gets the same 401. The owner token tells the two
+        apart: it lists the residents that are in the world.
+        """
+        resident = getattr(self.client, "resident", None)
+        who = "the resident" if resident is None else "resident %s" % resident
+        fate = "gone" if error.code == "resident_gone" else None
+        if fate is None and error.status == 401 and resident is not None and getattr(self.client, "owner_token", None):
+            try:
+                alive = [record["id"] for record in self.client.list_residents()["residents"]]
+                fate = "rekeyed" if resident in alive else "gone"
+            except unsupervised.UnsupervisedError:
+                # The reason stays unknown. The first error is the one that the user must see.
+                pass
+        if fate == "gone":
+            return (
+                "%s left the world: it died, or an administrator removed it. Its key does not work any more. "
+                "Run the command again to make a successor" % who
+            )
+        if fate == "rekeyed":
+            return (
+                "the server does not know the key of %s any more: another key replaced it. "
+                "Run the command again to get a new key" % who
+            )
+        return "the key of %s does not work any more (%s)" % (who, error)
 
     def _recover(self, error: Exception) -> None:
         LOG.warning("%s; the agent waits %s seconds", error, self.config.error_seconds)

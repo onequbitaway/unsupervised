@@ -1,9 +1,10 @@
 // The command: read the environment, join the world, run the loop.
 
-import { ApiError, type FetchLike } from "@unsupervised/sdk";
+import { ApiError, type Client, type FetchLike } from "@unsupervised/sdk";
 
 import { LlmAgent, type AgentOptions } from "./agent.js";
 import { ConfigError, VARIABLES, readConfig } from "./config.js";
+import { farewell } from "./farewell.js";
 import { FileNotes } from "./notes.js";
 import { OpenAICompatibleProvider } from "./openai.js";
 import type { ChatProvider } from "./provider.js";
@@ -36,6 +37,11 @@ export function usage(): string {
  * Runs the command with the environment `env`. Returns the exit status: 0
  * after a clean stop, 1 when the agent stopped on an error, 2 when the
  * environment cannot be used.
+ *
+ * A resident that left the world stops the command with the status 1 and
+ * one line that says so, for both answers of the server: `resident_gone`
+ * for the first call after the death, and `invalid_token` for each later
+ * call.
  */
 export async function main(env: Record<string, string | undefined>, options: MainOptions = {}): Promise<number> {
   const log = options.log ?? ((line: string) => console.log(line));
@@ -48,8 +54,9 @@ export async function main(env: Record<string, string | undefined>, options: Mai
     log(usage());
     return 2;
   }
+  let world: Client | undefined;
   try {
-    const world = await enlist({
+    world = await enlist({
       serverUrl: config.serverUrl,
       stateFile: config.stateFile,
       residentName: config.residentName,
@@ -84,9 +91,13 @@ export async function main(env: Record<string, string | undefined>, options: Mai
     log(`the agent stopped after ${agent.decisions} decision(s)`);
     return 0;
   } catch (error) {
-    if (error instanceof ApiError || error instanceof StateError) {
-      // The message of the server never holds a token.
+    if (error instanceof StateError) {
       log(`the agent cannot go on: ${error.message}`);
+      return 1;
+    }
+    if (error instanceof ApiError) {
+      // The message of the server never holds a token.
+      log(`the agent cannot go on: ${await farewell(error, world, config.residentKey !== undefined)}`);
       return 1;
     }
     throw error;

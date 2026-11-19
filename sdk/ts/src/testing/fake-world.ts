@@ -4,10 +4,12 @@
 // accounts and keys, the action engine (idempotency keys, the queue, free
 // verbs, reports), the inbox with one sequence for notices and reports,
 // observations and the long poll. The end-to-end tests in `crates/e2e`
-// compare its answers with those of the real server. It is not the game:
-// it has four verbs (`wait`, `cancel`, `set_routines`, `move_to`), it
-// stores routines but does not run them, and a test adds the verbs that it
-// needs with `addVerb`.
+// compare its answers with those of the real server. It runs routines as
+// the kernel does: the first routine of an idle resident whose condition
+// holds starts its action, and only a failure of that action writes a
+// report. It is not the game: it has four verbs (`wait`, `cancel`,
+// `set_routines`, `move_to`), a new resident has no routines, and a test
+// adds the verbs that it needs with `addVerb`.
 
 import type {
   ActionAck,
@@ -38,6 +40,33 @@ import type {
   ZoneId,
 } from "../generated/protocol.js";
 import { defaultVerbs } from "./verbs.js";
+
+/**
+ * The resident of a long poll left the world while the call was open. The
+ * gateway answers that call with `410 resident_gone`.
+ */
+export class ResidentGoneError extends Error {
+  /** Makes the error for a resident. */
+  constructor(readonly resident: ResidentId) {
+    super(`the resident ${resident} left the world`);
+  }
+}
+
+/** A mission that a sponsor published: an owner, not a resident. */
+export interface FakeMission {
+  /** Id of the mission. */
+  mission: number;
+  /** The number of the request of the sponsor. */
+  request: number;
+  /** The owner that is the sponsor. */
+  owner: OwnerId;
+  /** The frame of the publication. */
+  frame: number;
+  /** The frame of the deadline. */
+  deadline: number;
+  /** The definition as the sponsor sent it. */
+  definition: Record<string, Value>;
+}
 
 /** An action error that a fake verb throws to refuse or to fail. */
 export class FakeActionError extends Error {
@@ -88,6 +117,18 @@ interface Running {
   ends: number;
   waiting: boolean;
   finish: (() => Value) | undefined;
+  /** The place of the routine that started the action, in the list of routines. */
+  routine?: number | undefined;
+}
+
+/** The counters of one routine. */
+export interface RoutineStats {
+  /** The routine does not fire before this tick. */
+  retryAt: number;
+  /** Failures in a row. */
+  failures: number;
+  /** How many times the action of the routine went well. */
+  runs: number;
 }
 
 interface Queued {
@@ -119,7 +160,12 @@ export interface FakeResident {
   conditions: Record<string, number | null>;
   /** Extra observation sections, as a game module writes them. */
   sections: Record<string, Value>;
+  /** The routines as the owner wrote them, in priority order. Change them with `FakeWorld.setRoutines`. */
   routines: Routine[];
+  /** The counters of each routine, at the place of the routine. */
+  routineStats: RoutineStats[];
+  /** The tick of the last routine that fired. At most one routine fires in one tick. */
+  routineTick: number;
   current: Running | undefined;
   /** Free actions that wait for an answer. They do not occupy the resident. */
   background: Running[];
@@ -145,6 +191,8 @@ export interface FakeLimits {
   sight_radius: number;
   nearby_max: number;
   wait_max: number;
+  /** Ticks before a routine fires again after it failed or finished at once. The delay doubles with each failure in a row. */
+  routine_backoff: number;
   /** Greatest number of residents of one owner. 0: no limit. This is a limit of the gateway, not a kernel parameter. */
   residents_per_owner: number;
 }
@@ -158,6 +206,7 @@ export const DEFAULT_LIMITS: FakeLimits = {
   sight_radius: 12,
   nearby_max: 12,
   wait_max: 1440,
+  routine_backoff: 30,
   residents_per_owner: 3,
 };
 
@@ -170,6 +219,7 @@ const KERNEL_LIMITS = [
   "sight_radius",
   "nearby_max",
   "wait_max",
+  "routine_backoff",
 ] as const;
 
 /** The time of every sign-up in the fake world, in seconds since 1970. */
@@ -214,6 +264,8 @@ const ZONE_SIZE = 64;
 const DAYS_PER_YEAR = 28;
 const MINUTES_PER_DAY = 1440;
 const REPORT_KIND = "report";
+/** Greatest number of times that the backoff of a failed routine doubles. */
+const BACKOFF_DOUBLINGS_MAX = 16;
 
 const textEncoder = new TextEncoder();
 
@@ -227,6 +279,7 @@ interface Waiter {
   since: number;
   kinds: string[] | undefined;
   resolve: (observation: Observation) => void;
+  reject: (error: Error) => void;
 }
 
 /** A listener for the inbox of one resident: a WebSocket connection. `gone` says that the resident left the world. */
@@ -243,6 +296,11 @@ export class FakeWorld {
   readonly items: ItemInfo[];
   readonly conditions: CondInfo[];
   readonly time: "manual" | "auto";
+  /** The missions that sponsors published, oldest first. */
+  readonly missions: FakeMission[] = [];
+  /** The keys of the residents that died, with their owners, until the gateway learns of the death. */
+  readonly #dead = new Map<string, OwnerId>();
+  #requests = 0;
   readonly #verbs = new Map<string, FakeVerb>();
   readonly #owners = new Map<string, OwnerId>();
   readonly #ownerNames = new Map<OwnerId, string>();
@@ -312,13 +370,68 @@ export class FakeWorld {
     return [...this.residents.values()].filter((resident) => resident.owner === owner).sort((a, b) => a.id - b.id);
   }
 
-  /** Removes a resident from the world, as a death does. Its key ends. */
+  /**
+   * Removes a resident from the world, as an administrator does. Its key
+   * ends at once: the next call with it gets `401 invalid_token`.
+   */
   despawn(resident: FakeResident): void {
+    this.#remove(resident);
+  }
+
+  /**
+   * Removes a resident from the world, as a death does. The gateway learns
+   * of a death with the next call of the key: that call gets
+   * `410 resident_gone`, and each later call gets `401 invalid_token`. A
+   * long poll of the resident that is open gets the 410.
+   */
+  die(resident: FakeResident): void {
+    if (!this.residents.has(resident.id)) return;
+    this.#dead.set(resident.key, resident.owner);
+    this.#remove(resident);
+  }
+
+  #remove(resident: FakeResident): void {
     this.residents.delete(resident.id);
     this.#keys.delete(resident.key);
-    this.abandonWaits(resident);
+    const open = this.#waiters.filter((waiter) => waiter.resident === resident);
+    this.#waiters = this.#waiters.filter((waiter) => waiter.resident !== resident);
+    for (const waiter of open) waiter.reject(new ResidentGoneError(resident.id));
     for (const listener of this.#listeners.get(resident.id) ?? []) listener("gone");
     this.#listeners.delete(resident.id);
+  }
+
+  /** Returns the owner of a resident that died, when the gateway did not yet learn of the death with this key. */
+  deadOwner(key: string | undefined): OwnerId | undefined {
+    return key === undefined ? undefined : this.#dead.get(key);
+  }
+
+  /** Notes that the gateway learned of a death with a key. The key is unknown from now on. */
+  forgetDead(key: string): void {
+    this.#dead.delete(key);
+  }
+
+  /** Returns the name of an owner. */
+  ownerName(owner: OwnerId): string | undefined {
+    return this.#ownerNames.get(owner);
+  }
+
+  /**
+   * Publishes a mission of a sponsor, as the missions module does after its
+   * checks. The fake publishes at once: it does not wait for a frame.
+   */
+  postMission(owner: OwnerId, definition: Record<string, Value>): FakeMission {
+    this.#ids += 1;
+    this.#requests += 1;
+    const mission: FakeMission = {
+      mission: this.#ids,
+      request: this.#requests,
+      owner,
+      frame: this.tick,
+      deadline: this.tick + (definition["deadline_in"] as number),
+      definition,
+    };
+    this.missions.push(mission);
+    return mission;
   }
 
   /** Returns the owner of a token, if the token is known. */
@@ -350,6 +463,8 @@ export class FakeWorld {
       conditions: {},
       sections: {},
       routines: [],
+      routineStats: [],
+      routineTick: -1,
       current: undefined,
       background: [],
       queue: [],
@@ -482,6 +597,7 @@ export class FakeWorld {
     request_id: string | undefined,
     args: Record<string, Value>,
     action_id: number,
+    routine?: number,
   ): ActionStatus {
     const outcome = verb.begin(resident, args, this);
     if ("done" in outcome) return doneStatus(outcome.done);
@@ -495,6 +611,7 @@ export class FakeWorld {
       ends: this.tick + ticks,
       waiting,
       finish: outcome.finish,
+      routine,
     };
     return waiting ? { state: "pending" } : { state: "started", ends_at: this.tick + ticks, ticks };
   }
@@ -537,6 +654,9 @@ export class FakeWorld {
       const { id: _id, ...then } = routine.then;
       return { ...routine, then };
     });
+    resident.routineStats = routines.map(() => ({ retryAt: 0, failures: 0, runs: 0 }));
+    // The running action goes on, but it no longer counts for a routine.
+    if (resident.current !== undefined) resident.current.routine = undefined;
     return { routines: routines.length };
   }
 
@@ -571,7 +691,7 @@ export class FakeWorld {
 
   // ---- Time -----------------------------------------------------------------
 
-  /** Runs a number of ticks: actions end, reports are written, queued actions start. */
+  /** Runs a number of ticks: actions end, reports are written, queued actions start, routines fire. */
   step(ticks = 1): void {
     for (let i = 0; i < ticks; i += 1) {
       this.tick += 1;
@@ -606,17 +726,96 @@ export class FakeWorld {
         this.#report(resident, queued, error);
       }
     }
+    this.#tryRoutines(resident);
   }
 
   #finish(resident: FakeResident, running: Running): void {
+    let result: Value | FakeActionError;
     try {
-      const result = running.waiting && running.finish === undefined
+      result = running.waiting && running.finish === undefined
         ? new FakeActionError("timeout", "The action waited too long for an answer.")
         : (running.finish?.() ?? null);
-      this.#report(resident, running, result);
     } catch (error) {
       if (!(error instanceof FakeActionError)) throw error;
-      this.#report(resident, running, error);
+      result = error;
+    }
+    const failed = result instanceof FakeActionError;
+    if (running.routine !== undefined) this.#noteRoutine(resident, running.routine, !failed, false);
+    // A routine action that goes well is only counted. A failure reports.
+    if (running.routine === undefined || failed) this.#report(resident, running, result);
+  }
+
+  /** Returns true when a routine condition holds for a resident. */
+  holds(resident: FakeResident, condition: Condition): boolean {
+    switch (condition.type) {
+      case "always":
+        return true;
+      case "attr_below":
+        return (resident.attrs[condition.attr] ?? 0) < condition.value;
+      case "attr_above":
+        return (resident.attrs[condition.attr] ?? 0) > condition.value;
+      case "clock_between":
+        return hourBetween(this.clock().hour, condition.from_hour, condition.to_hour);
+      case "has_item":
+        return (resident.items[condition.item] ?? 0) >= condition.qty;
+      case "all":
+        return condition.of.every((part) => this.holds(resident, part));
+      case "any":
+        return condition.of.some((part) => this.holds(resident, part));
+      default:
+        return false;
+    }
+  }
+
+  /** Fires the first routine of an idle resident whose condition holds. At most one routine fires in one tick. */
+  #tryRoutines(resident: FakeResident): void {
+    if (resident.routines.length === 0 || resident.current !== undefined || resident.queue.length > 0) return;
+    if (resident.routineTick === this.tick || this.#isFrozen(resident)) return;
+    const index = resident.routines.findIndex(
+      (routine, place) => this.#stats(resident, place).retryAt <= this.tick && this.holds(resident, routine.when),
+    );
+    if (index < 0) return;
+    resident.routineTick = this.tick;
+    this.#ids += 1;
+    const action_id = this.#ids;
+    const then = (resident.routines[index] as Routine).then;
+    const action = { action_id, verb: then.verb, request_id: undefined };
+    try {
+      const verb = this.#verbs.get(then.verb);
+      if (verb === undefined) throw new FakeActionError("unknown_verb", `No verb is named \`${then.verb}\`.`);
+      this.#checkConditions(resident, then.verb);
+      const status = this.#begin(resident, verb, undefined, checkArgs(verb.info, then.args), action_id, index);
+      // An action that finished at once holds the routine back, so that it cannot fire every tick.
+      if (status.state === "done") this.#noteRoutine(resident, index, true, true);
+    } catch (error) {
+      if (!(error instanceof FakeActionError)) throw error;
+      this.#noteRoutine(resident, index, false, true);
+      this.#report(resident, action, error);
+    }
+  }
+
+  #isFrozen(resident: FakeResident): boolean {
+    const until = resident.conditions["frozen"];
+    return until !== undefined && (until === null || until > this.tick);
+  }
+
+  /** Returns the counters of the routine at a place of the list. */
+  #stats(resident: FakeResident, place: number): RoutineStats {
+    return (resident.routineStats[place] ??= { retryAt: 0, failures: 0, runs: 0 });
+  }
+
+  #noteRoutine(resident: FakeResident, place: number, ok: boolean, instant: boolean): void {
+    if (place >= resident.routines.length) return;
+    const stats = this.#stats(resident, place);
+    const backoff = Math.max(1, this.limits.routine_backoff);
+    if (ok) {
+      stats.failures = 0;
+      stats.runs += 1;
+      if (instant) stats.retryAt = this.tick + backoff;
+    } else {
+      const doublings = Math.min(stats.failures, BACKOFF_DOUBLINGS_MAX);
+      stats.failures += 1;
+      stats.retryAt = this.tick + backoff * 2 ** doublings;
     }
   }
 
@@ -761,7 +960,10 @@ export class FakeWorld {
       out["model"] = resident.model ?? null;
       out["born"] = 0;
       out["queued"] = resident.queue.map((queued) => ({ verb: queued.verb, action_id: queued.action_id }));
-      out["routines"] = resident.routines.map((routine) => ({ ...routine, runs: 0, failures: 0 })) as unknown as Value;
+      out["routines"] = resident.routines.map((routine, place) => {
+        const stats = this.#stats(resident, place);
+        return { ...routine, runs: stats.runs, failures: stats.failures };
+      }) as unknown as Value;
       out["memberships"] = [];
     }
     return out;
@@ -806,7 +1008,8 @@ export class FakeWorld {
   /**
    * The long poll. Resolves with an observation when the resident has news
    * from `since`, or without news when the timeout ends. Without `since`,
-   * only news after the call counts.
+   * only news after the call counts. Rejects with `ResidentGoneError` when
+   * the resident leaves the world while the call is open.
    */
   wait(
     resident: FakeResident,
@@ -820,11 +1023,13 @@ export class FakeWorld {
     if (this.time === "auto") {
       for (let i = 0; i < options.timeout && !this.hasNews(resident, since, options.kinds); i += 1) {
         this.step(1);
+        // A rule of the test can end the life of the resident in a tick.
+        if (!this.residents.has(resident.id)) return Promise.reject(new ResidentGoneError(resident.id));
       }
       return Promise.resolve(answer());
     }
-    return new Promise((resolve) => {
-      this.#waiters.push({ resident, since, kinds: options.kinds, resolve });
+    return new Promise((resolve, reject) => {
+      this.#waiters.push({ resident, since, kinds: options.kinds, resolve, reject });
       for (const parked of this.#parked.splice(0)) parked();
     });
   }
@@ -899,6 +1104,15 @@ function checkArgs(info: VerbInfo, args: Value | undefined): Record<string, Valu
 /** Distance in tiles. A diagonal step counts as one. */
 export function distance(a: Pos, b: Pos): number {
   return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+}
+
+/**
+ * Returns true when `hour` is in the range from `from` (inclusive) to `to`
+ * (exclusive). The range wraps past midnight when `from` is greater than
+ * `to`. It is empty when the two are equal.
+ */
+function hourBetween(hour: number, from: number, to: number): boolean {
+  return from < to ? from <= hour && hour < to : from > to && (hour >= from || hour < to);
 }
 
 function contains(rect: Rect, pos: Pos): boolean {

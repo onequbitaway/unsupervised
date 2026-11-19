@@ -1,16 +1,20 @@
-"""The HTTPS client: sign up, act, plan, observe, wait, routines, webhook."""
+"""The HTTPS client: sign up, act, plan, observe, wait, routines, webhook, and the missions of a sponsor."""
 
 import math
 import uuid
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence
+from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Tuple, Union, overload
 
 from .errors import MissingCredentialError, ProtocolError
 from .observation import has_news, reports_of
 from .shapes import (
     ActResult,
+    ActSent,
     Me,
+    MissionDefinition,
+    MissionPosted,
     OwnerSignup,
     PlanResult,
+    PlanSent,
     PlanStep,
     ResidentCreated,
     ResidentList,
@@ -228,6 +232,48 @@ class Client:
             self.resident = resident
         return answer  # type: ignore[return-value]
 
+    def post_mission(self, mission: MissionDefinition) -> MissionPosted:
+        """Publishes a mission as a sponsor: `POST /v1/missions`, with the owner token.
+
+        A sponsor is a person, not a resident. The reward is new money: the
+        world creates the reward times the takers. The name of the sponsor
+        is the name of the owner. The server waits for the frame in which
+        the world publishes the mission, so the answer takes about one
+        frame. Residents then find the mission with the verb `mission_list`.
+
+        The request goes out one time: the client does not send a mission
+        again by itself.
+
+        Raises `ApiError` with one of these codes. `missions_disabled`: the
+        administrator turned the sponsor missions off. `invalid_request`
+        and `invalid_args`: change the definition; the message names the
+        field. `text_refused`: a filter refused a text. `rate_limited`: the
+        limit of missions of one owner in 24 hours (then `retry_after` has
+        the seconds to wait), or the new money of all sponsors in one game
+        day. `answer_timeout`: the world took the mission and did not
+        answer in time. Do not send it again at once: the message has the
+        request number, and `GET /v1/feed` shows the event
+        `missions.mission_posted` or `missions.sponsor_refused` with that
+        number.
+        """
+        answer = self._transport.request(
+            "POST",
+            "/v1/missions",
+            body=mission,
+            token=self._owner(),
+            idempotent=False,
+            # A second request would be a second mission, and the limit of
+            # one owner answers with a `Retry-After` of hours.
+            retry=False,
+        )
+        if (
+            not isinstance(answer, dict)
+            or not isinstance(answer.get("mission"), int)
+            or not isinstance(answer.get("request"), int)
+        ):
+            raise ProtocolError("POST /v1/missions did not return `mission` and `request`")
+        return answer  # type: ignore[return-value]
+
     # ---- Resident routes --------------------------------------------------
 
     def me(self) -> Me:
@@ -238,24 +284,44 @@ class Client:
         self.resident = answer["resident"]
         return answer  # type: ignore[return-value]
 
-    def act(self, verb: str, args: Any = None, *, id: Optional[str] = None) -> ActResult:
+    @overload
+    def act(self, verb: str, args: Any = None, *, id: Optional[str] = None, observe: Literal[True] = True) -> ActResult: ...
+
+    @overload
+    def act(self, verb: str, args: Any = None, *, id: Optional[str] = None, observe: Literal[False]) -> ActSent: ...
+
+    def act(
+        self, verb: str, args: Any = None, *, id: Optional[str] = None, observe: bool = True
+    ) -> Union[ActResult, ActSent]:
         """Asks for one action: `POST /v1/act`.
 
         The request has an idempotency key, so a repeat after a network
         failure does not act twice. A refusal is not raised. Read
         `ack["status"]`, or use `assert_accepted`.
+
+        With `observe=False` the answer has the acknowledgement alone
+        (`POST /v1/act?observe=false`): the server builds no observation,
+        and the cursor of the client does not move. Use it for a client
+        that sends actions at a high rate and reads the world with
+        `observe` or `wait`.
         """
         step: PlanStep = {"verb": verb}
         if args is not None:
             step["args"] = args
         if id is not None:
             step["id"] = id
-        acks, observation, _ = self._act(self._request(step), 1)
+        acks, observation, _ = self._act(self._request(step), 1, observe)
         if len(acks) != 1:
             raise ProtocolError("POST /v1/act did not return one acknowledgement")
-        return ActResult(acks[0], observation)
+        return ActSent(acks[0]) if observation is None else ActResult(acks[0], observation)
 
-    def plan(self, steps: Sequence[PlanStep]) -> PlanResult:
+    @overload
+    def plan(self, steps: Sequence[PlanStep], *, observe: Literal[True] = True) -> PlanResult: ...
+
+    @overload
+    def plan(self, steps: Sequence[PlanStep], *, observe: Literal[False]) -> PlanSent: ...
+
+    def plan(self, steps: Sequence[PlanStep], *, observe: bool = True) -> Union[PlanResult, PlanSent]:
         """Asks for several actions in order: `POST /v1/act` with a plan.
 
         A plan has at most 16 steps. The first step starts and the others
@@ -264,12 +330,16 @@ class Client:
         refusal, and `not_sent` counts the steps after it. An empty plan
         only observes.
 
+        With `observe=False` the answer has the acknowledgements alone, and
+        the cursor of the client does not move.
+
         Raises `ApiError` with the code `text_refused` when a filter refuses
         a text of one step. Then no step was sent.
         """
         if not steps:
-            return PlanResult([], self.observe(), 0)
-        return self._act({"plan": [self._request(step) for step in steps]}, len(steps))
+            return PlanResult([], self.observe(), 0) if observe else PlanSent([], 0)
+        acks, observation, not_sent = self._act({"plan": [self._request(step) for step in steps]}, len(steps), observe)
+        return PlanSent(acks, not_sent) if observation is None else PlanResult(acks, observation, not_sent)
 
     def observe(
         self,
@@ -354,12 +424,17 @@ class Client:
 
     # ---- Private ----------------------------------------------------------
 
-    def _act(self, body: Any, count: int) -> PlanResult:
+    def _act(self, body: Any, count: int, observe: bool) -> Tuple[List[Any], Optional[Observation], int]:
+        """Sends one request or a plan. Returns the acknowledgements, the observation and the steps that were not sent.
+
+        The observation is `None` when the caller asked for none.
+        """
         since = self.cursor
         answer = self._transport.request(
             "POST",
             "/v1/act",
-            query={"since": since if since > 0 else None},
+            # Without an observation the cursor has no use: the server would only check it.
+            query={"since": since if since > 0 else None} if observe else {"observe": "false"},
             body=body,
             token=self._key(),
             # Every request has an idempotency key, so a repeat is safe.
@@ -372,8 +447,9 @@ class Client:
         # be shorter than the plan. Then its last entry is that refusal.
         if len(acks) < count and acks[-1].get("status", {}).get("state") != "rejected":
             raise ProtocolError("POST /v1/act did not return the acknowledgements of %d request(s)" % count)
-        observation = self._track(answer.get("observation"), since, "POST /v1/act")
-        return PlanResult(acks, observation, count - len(acks))
+        if not observe:
+            return acks, None, count - len(acks)
+        return acks, self._track(answer.get("observation"), since, "POST /v1/act"), count - len(acks)
 
     def _request(self, step: PlanStep) -> ActionRequest:
         request: ActionRequest = {"id": step.get("id") or self._request_id(), "verb": step["verb"]}

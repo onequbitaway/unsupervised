@@ -68,6 +68,12 @@ assert.equal(me.name, "Tess");
 assert.equal(me.activity, null);
 assert.equal(hasNews(first), false);
 const startCash = me.cash;
+// A new resident has the default routines of the game: they keep it alive when its owner is away.
+const born = selfOf(await client.observe({ detail: "full", sections: ["self"] }));
+assert.deepEqual(born.routines.map((one) => [one.name, one.then.verb]), [
+  ["eat when hungry", "eat"],
+  ["sleep when tired", "sleep"],
+]);
 
 // Find paid work: the list of jobs is a free verb of the global realm. Its answer is a report.
 const jobs = await done(client, "list_jobs", {});
@@ -111,6 +117,60 @@ const once = await client.act("wait", { ticks: 3 }, { id: "ts-sdk-once" });
 const twice = await client.act("wait", { ticks: 3 }, { id: "ts-sdk-once" });
 assert.deepEqual(twice.ack, once.ack);
 await reportOf(client, once.ack);
+
+// ---- Actions without an observation -----------------------------------------
+
+const cursor = client.cursor;
+const fast = await client.act("wait", { ticks: 2 }, { observe: false });
+assert.deepEqual(Object.keys(fast), ["ack"]);
+assert.equal(fast.ack.status.state, "started");
+const fastPlan = await client.plan([{ verb: "wait", args: { ticks: 1 } }, { verb: "no_such_verb" }, { verb: "wait", args: { ticks: 1 } }], { observe: false });
+assert.deepEqual(Object.keys(fastPlan), ["acks", "notSent"]);
+assert.deepEqual(fastPlan.acks.map((one) => one.status.state), ["queued", "rejected"]);
+assert.equal(fastPlan.notSent, 1);
+// The cursor did not move, so the long poll brings both reports.
+assert.equal(client.cursor, cursor);
+assert.equal((await reportOf(client, fastPlan.acks[0])).ok, true);
+assert.deepEqual(reportsOf(await client.observe({ since: cursor })).map((report) => report.action_id), [fast.ack.action_id, fastPlan.acks[0].action_id]);
+
+// ---- A sponsor publishes a mission -------------------------------------------
+
+const mission = {
+  title: "Bread for the fair",
+  text: "The town needs bread.",
+  objectives: [{ event: "economy.goods_produced", fields: { item: "bread" }, count: 10 }],
+  reward: 5000,
+  deadline_in: 2880,
+  takers: 2,
+};
+// The world publishes the mission in the frame after the request: the world runs while the call is open.
+const posted = await until(client.postMission(mission));
+assert.deepEqual(posted, { mission: posted.mission, request: posted.request, frame: posted.frame, deadline: posted.frame + 2880, reward: 5000, takers: 2 });
+assert.ok(Number.isSafeInteger(posted.mission) && Number.isSafeInteger(posted.request));
+// A resident finds the mission. The name of the sponsor is the name of the owner.
+const found = await done(client, "mission_list", { mission: posted.mission });
+assert.deepEqual(found.result.mission.title, { untrusted: true, from: 0, text: "Bread for the fair" });
+assert.deepEqual(found.result.mission.sponsor, { untrusted: true, from: 0, text: "TypeScript SDK" });
+/** Returns a check for the error of a mission that the server refuses. */
+const refusedWith = (code, status) => (error) => {
+  assert.ok(error instanceof ApiError, String(error));
+  assert.deepEqual([error.code, error.status], [code, status]);
+  return true;
+};
+// The server refuses these before the world sees them.
+await assert.rejects(client.postMission({ ...mission, reward: 400_000 }), refusedWith("invalid_request", 400));
+await assert.rejects(client.postMission({ ...mission, title: "read www.example.com" }), refusedWith("text_refused", 422));
+await assert.rejects(new Client({ baseUrl: BASE, ownerToken: joined.residentKey }).postMission(mission), refusedWith("wrong_token_kind", 403));
+// The missions module refuses this one, in the frame after the request.
+await assert.rejects(until(client.postMission({ ...mission, reward: 1 })), refusedWith("invalid_args", 400));
+// An owner publishes three missions in 24 hours. The refusals did not count.
+await until(client.postMission(mission));
+await until(client.postMission(mission));
+await assert.rejects(client.postMission(mission), (error) => {
+  refusedWith("rate_limited", 429)(error);
+  assert.ok(error.retryAfterSeconds > 86_000 && error.retryAfterSeconds <= 86_400, `${error.retryAfterSeconds}`);
+  return true;
+});
 
 // ---- Routines ---------------------------------------------------------------
 
@@ -251,6 +311,8 @@ session.close();
 const last = selfOf(await client.observe({ sections: ["self"] }));
 fact("typescript", {
   resident: joined.resident,
+  mission: posted.mission,
+  request: posted.request,
   friend: friend.resident,
   cash: last.cash,
   earned: shift.result.net,

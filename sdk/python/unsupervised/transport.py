@@ -122,13 +122,16 @@ class Transport:
         token: Optional[str] = None,
         extra_timeout: float = 0.0,
         text: bool = False,
+        retry: bool = True,
     ) -> Any:
         """Sends a request and returns the parsed JSON answer.
 
         `idempotent` says that a repeat of the request cannot change the
         world twice. Such a request is sent again after a network failure. A
         request that is not idempotent is sent again only when the server
-        refused it for load reasons (HTTP 429 or 503). `extra_timeout` adds
+        refused it for load reasons (HTTP 429 or 503). With `retry=False`
+        the request goes out one time: use it for a request that must not
+        act twice and whose `Retry-After` can be hours. `extra_timeout` adds
         seconds to the timeout, for a long poll. With `text`, the body comes
         back as a string.
 
@@ -149,7 +152,7 @@ class Transport:
 
         attempt = 0
         while True:
-            last = attempt >= self._max_retries
+            last = attempt >= self._max_retries or not retry
             request = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
                 opened = self._opener.open(request, timeout=timeout) if self._opener else urllib.request.urlopen(request, timeout=timeout)
