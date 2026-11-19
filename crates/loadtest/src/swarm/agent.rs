@@ -61,6 +61,11 @@ pub struct Shared {
     pub pool: reqwest::Client,
     /// How the HTTP agents hold connections.
     pub http_connections: HttpConnections,
+    /// True: an HTTP agent sends `POST /v1/act?observe=false`. The answer
+    /// has no observation, and the agent keeps the view that it has. It
+    /// looks again with the chance `observe_share` of the profile, and
+    /// when it waits for the end of an action.
+    pub acks_only: bool,
 }
 
 /// What one agent does in a run.
@@ -334,8 +339,12 @@ impl Agent {
         let link = self.link();
         let (acks, latency) = match &mut self.transport {
             Transport::Http(http) => {
-                let (answer, latency) = http.act(requests, self.cursor).await?;
-                self.see(&answer.observation);
+                let acks_only = self.shared.acks_only;
+                let (answer, latency) = http.act(requests, self.cursor, acks_only).await?;
+                // Without an observation the agent keeps its view.
+                if let Some(observation) = &answer.observation {
+                    self.see(observation);
+                }
                 (answer.acks, latency)
             }
             Transport::Ws(ws) => {

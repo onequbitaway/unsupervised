@@ -32,6 +32,12 @@ pub struct BenchConfig {
     /// example only `nearby`, to measure the cost of one section. Empty:
     /// all sections.
     pub observe_sections: Vec<String>,
+    /// How the observations of one frame are built. 0: one call of
+    /// `World::observe` for each observation, on one thread. N: calls of
+    /// `World::observe_batch` with at most N requests each, on all
+    /// processor cores, as the runtime builds the observations of the
+    /// `observe` calls of one batch of its mailbox.
+    pub observe_batch: usize,
     /// The run stops when the process holds more than this many bytes: the
     /// larger of its resident set size and its footprint. `None`: the
     /// limit of the data file
@@ -106,6 +112,11 @@ pub struct BenchRun {
     /// sections.
     #[serde(default)]
     pub observe_sections: Vec<String>,
+    /// Greatest number of requests in one call of `World::observe_batch`.
+    /// 0: the observations were built one by one with `World::observe`, on
+    /// one thread.
+    #[serde(default)]
+    pub observe_batch: usize,
     /// Seconds to build the empty world.
     pub build_secs: f64,
     /// Seconds to create and place the residents.
@@ -119,10 +130,16 @@ pub struct BenchRun {
     pub frame_ms: Millis,
     /// Time to apply the action requests of one frame (`World::apply`).
     pub inputs_ms: Millis,
-    /// Time to build the observations of one frame (`World::observe`).
+    /// Time to build the observations of one frame: with `World::observe`
+    /// on one thread, or with `World::observe_batch` on all processor
+    /// cores (`observe_batch`). It is the time that the calling thread
+    /// waits for them.
     pub observe_ms: Millis,
-    /// `inputs + observe + frame`: the work of the simulation thread of a
-    /// server for one frame.
+    /// `inputs + observe + frame`: the time that one thread needs for the
+    /// work of one frame. With `observe_batch` it is the work of the
+    /// simulation thread of a server whose `observe` calls come in full
+    /// batches. Without, it is an upper limit: the server builds the
+    /// observations of a batch on all cores.
     pub server_ms: Millis,
     /// Time that the load driver itself needed for one frame: it chooses
     /// actions and makes arguments. A server does not do this work.
@@ -140,8 +157,10 @@ pub struct BenchRun {
     /// sum of `inputs_ms` divided by the requests that were sent.
     #[serde(default)]
     pub micros_per_request: f64,
-    /// Mean time of one observation in `World::observe`, in microseconds:
-    /// the sum of `observe_ms` divided by the observations.
+    /// Mean time of one observation, in microseconds: the sum of
+    /// `observe_ms` divided by the observations. With `observe_batch` it is
+    /// time of the calling thread, not processor time: the cores share the
+    /// work.
     #[serde(default)]
     pub micros_per_observation: f64,
     /// Position changes for each measured frame.
@@ -199,8 +218,15 @@ impl BenchRun {
             thousands(self.actions_per_wall_second.round() as u64),
             thousands(self.actions_per_server_second.round() as u64),
         ));
+        let observe_how = match self.observe_batch {
+            0 => "in World::observe on one thread".to_string(),
+            batch => format!(
+                "of the calling thread in World::observe_batch on all cores, at most {} requests in one call",
+                thousands(batch as u64)
+            ),
+        };
         out.push_str(&format!(
-            "  one request costs {:.2} microseconds in World::apply, one observation {:.2} microseconds in World::observe{}\n",
+            "  one request costs {:.2} microseconds in World::apply, one observation {:.2} microseconds {observe_how}{}\n",
             self.micros_per_request,
             self.micros_per_observation,
             if self.observe_sections.is_empty() {
@@ -290,6 +316,7 @@ pub fn run(config: &BenchConfig, extra: &[&dyn Plugin]) -> anyhow::Result<BenchR
         seed: config.world.seed,
         request_ids: config.request_ids,
         observe_sections: config.observe_sections.clone(),
+        observe_batch: config.observe_batch,
     };
     let mut driver = Driver::new(&world, population.map, population.ids, profile, options);
     probe.populated();
@@ -331,7 +358,7 @@ pub fn run(config: &BenchConfig, extra: &[&dyn Plugin]) -> anyhow::Result<BenchR
         let t1 = Instant::now();
         driver.apply(&mut world);
         let t2 = Instant::now();
-        driver.observe(&world);
+        driver.observe(&mut world);
         let t3 = Instant::now();
         let output = world.step();
         let t4 = Instant::now();
@@ -380,6 +407,7 @@ pub fn run(config: &BenchConfig, extra: &[&dyn Plugin]) -> anyhow::Result<BenchR
         profile: profile_use,
         request_ids: config.request_ids,
         observe_sections: config.observe_sections.clone(),
+        observe_batch: config.observe_batch,
         build_secs: build_time.as_secs_f64(),
         populate_secs: populate_time.as_secs_f64(),
         warmup_frames: config.warmup,

@@ -87,6 +87,9 @@ pub struct BenchDefaults {
     pub pressure_percent: u64,
     /// Seconds between two progress lines of a long run.
     pub progress_secs: u64,
+    /// Greatest number of requests in one call of `World::observe_batch`.
+    /// 0: one `World::observe` for each observation, on one thread.
+    pub observe_batch: usize,
 }
 
 /// Defaults of `soak`.

@@ -18,6 +18,7 @@ fn config(profile: &str, residents: u32, frames: u32, warmup: u32) -> BenchConfi
         profile: Profile::load(profile).expect("a built-in profile"),
         request_ids: false,
         observe_sections: Vec::new(),
+        observe_batch: 0,
         max_memory_bytes: None,
     }
 }
@@ -213,6 +214,37 @@ fn an_observation_can_ask_for_one_section_only() {
     assert_eq!(run.actions.observes, run.actions.sent);
     assert_eq!(run.actions.reports_finished, 0, "the section `reports` was not asked for");
     assert!(run.summary().contains("(only the sections self)"), "{}", run.summary());
+}
+
+#[test]
+fn observations_in_batches_are_the_observations_one_by_one() {
+    // The residents that observe, their order and the answers are the same
+    // in both ways. So the two runs count the same actions, observations
+    // and reports. A batch of 7 leaves a last batch that is not full.
+    let one_by_one = bench::run(&config("daily_life", 300, 40, 10), &[]).expect("the bench runs");
+    assert_eq!(one_by_one.observe_batch, 0);
+    assert!(
+        one_by_one.actions.observes > 100,
+        "{} observations were made",
+        one_by_one.actions.observes
+    );
+    assert!(one_by_one.actions.reports_finished > 0, "the residents read reports");
+    assert!(
+        one_by_one.summary().contains("microseconds in World::observe on one thread"),
+        "{}",
+        one_by_one.summary()
+    );
+
+    let mut batched = config("daily_life", 300, 40, 10);
+    batched.observe_batch = 7;
+    let run = bench::run(&batched, &[]).expect("the bench runs");
+    assert_eq!(run.observe_batch, 7);
+    assert_eq!(run.actions, one_by_one.actions);
+    assert!(
+        run.summary().contains("World::observe_batch on all cores, at most 7 requests in one call"),
+        "{}",
+        run.summary()
+    );
 }
 
 #[test]

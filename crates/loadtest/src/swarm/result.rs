@@ -56,6 +56,10 @@ pub struct SwarmRun {
     pub think: Option<ThinkTime>,
     /// How the HTTP agents held connections.
     pub http_connections: HttpConnections,
+    /// True when the HTTP agents sent `POST /v1/act?observe=false`: the
+    /// answers had no observation.
+    #[serde(default)]
+    pub acks_only: bool,
     /// The profile.
     pub profile: ProfileUse,
     /// Agents that used a key from the credentials file.
@@ -242,11 +246,16 @@ impl SwarmRun {
         );
         out.push_str(&format!("  {}\n", self.profile.line()));
         out.push_str(&format!(
-            "  ramp-up {:.0} s, window {:.0} s, think time {}, HTTP connections {}\n",
+            "  ramp-up {:.0} s, window {:.0} s, think time {}, HTTP connections {}{}\n",
             self.ramp_up_secs,
             self.duration_secs,
             self.think.map_or_else(|| "unknown".to_string(), |t| t.to_string()),
             self.http_connections,
+            if self.acks_only {
+                ", POST /v1/act?observe=false (answers without an observation)"
+            } else {
+                ""
+            },
         ));
         out.push_str(&format!(
             "  agents: {} started, {} ready, {} gave up; sign-up: {} with POST /v1/owners and POST /v1/residents{}\n",
@@ -349,6 +358,17 @@ impl SwarmRun {
                     thousands(sim.overloaded),
                     thousands(sim.mailbox_depth),
                     thousands(sim.mailbox_capacity),
+                ));
+                out.push_str(&format!(
+                    "  observations of the simulation thread: {} in {} steps ({:.1} for each step), {:.0} ms; one step builds the observations of the `observe` calls of one batch of calls, or the observation of one `wait` call\n",
+                    thousands(sim.observations),
+                    thousands(sim.observe_steps),
+                    if sim.observe_steps > 0 {
+                        sim.observations as f64 / sim.observe_steps as f64
+                    } else {
+                        0.0
+                    },
+                    sim.observe_ms,
                 ));
             }
             None if self.server_stats.route_end.is_some() => {

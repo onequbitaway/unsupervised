@@ -14,8 +14,10 @@ pub struct ActAnswer {
     /// One acknowledgement for each request that the server sent to the
     /// simulation.
     pub acks: Vec<ActionAck>,
-    /// The observation after the action.
-    pub observation: Observation,
+    /// The observation after the action. `None` when the request asked
+    /// for none (`observe=false`).
+    #[serde(default)]
+    pub observation: Option<Observation>,
 }
 
 /// How an action ended, from its report.

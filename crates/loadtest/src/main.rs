@@ -91,6 +91,7 @@ fn bench_command(args: &BenchArgs, argv: Vec<String>) -> anyhow::Result<()> {
                 profile: Profile::load(&args.world.profile)?,
                 request_ids: args.world.request_ids,
                 observe_sections: args.observe_sections.clone(),
+                observe_batch: args.observe_batch,
                 // A limit that is not a usable number is no limit of the
                 // user; the default applies.
                 max_memory_bytes: args
@@ -178,6 +179,7 @@ fn swarm_command(args: &SwarmArgs, argv: Vec<String>) -> anyhow::Result<()> {
             .map_err(|message| anyhow::anyhow!(message))?,
         ws_share: args.ws_share,
         http_connections: args.http_connections,
+        acks_only: args.acks_only,
         profile: Profile::load(&args.profile)?,
         seed: args.seed,
         credentials: args.credentials.clone(),

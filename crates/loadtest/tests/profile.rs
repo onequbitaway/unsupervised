@@ -557,7 +557,7 @@ fn the_built_in_profiles_fit_the_world_of_the_server() {
         build_world(Shape { cities: 1, districts: 1 }.to_config(1), &[]).expect("a valid world");
     let catalogue = world.catalogue();
     let map = WorldMap::of_world(&world).expect("the map of the world");
-    assert_eq!(Profile::builtin_names(), ["walkers", "rush", "daily_life", "still"]);
+    assert_eq!(Profile::builtin_names(), ["walkers", "rush", "daily_life", "still", "sprint"]);
     for name in Profile::builtin_names() {
         let profile = Profile::load(name).unwrap_or_else(|e| panic!("profile `{name}`: {e}"));
         assert_eq!(profile.name, name);
@@ -625,5 +625,5 @@ fn a_profile_is_loaded_from_a_file_and_a_missing_file_names_the_built_in_ones() 
 
     let error = Profile::load("no/such/profile.toml").expect_err("the file is missing");
     assert!(error.message.contains("no/such/profile.toml"), "{error}");
-    assert!(error.message.contains("walkers, rush, daily_life, still"), "{error}");
+    assert!(error.message.contains("walkers, rush, daily_life, still, sprint"), "{error}");
 }

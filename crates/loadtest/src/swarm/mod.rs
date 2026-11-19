@@ -91,6 +91,11 @@ pub struct SwarmConfig {
     pub ws_share: f64,
     /// How the HTTP agents hold connections.
     pub http_connections: HttpConnections,
+    /// True: the HTTP agents send `POST /v1/act?observe=false`, so the
+    /// server builds no observation for the answer. Use it to measure the
+    /// rate of actions. False: the answer has an observation, which is the
+    /// default of the route.
+    pub acks_only: bool,
     /// What the agents do.
     pub profile: Profile,
     /// Seed of the choices of the agents.
@@ -202,6 +207,7 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
         end,
         pool,
         http_connections: config.http_connections,
+        acks_only: config.acks_only,
     });
 
     eprintln!(
@@ -359,6 +365,7 @@ pub async fn run(config: &SwarmConfig) -> anyhow::Result<SwarmRun> {
         duration_secs: window_secs,
         think: Some(config.think),
         http_connections: config.http_connections,
+        acks_only: config.acks_only,
         profile: profile_use,
         credentials_reused,
         credentials_renewed: m.credentials_renewed.get(),

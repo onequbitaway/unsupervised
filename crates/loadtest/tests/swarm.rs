@@ -31,6 +31,7 @@ fn config(target: Target) -> SwarmConfig {
         think: ThinkTime::new(ThinkKind::Exponential, 0.05, 0.0).expect("a valid think time"),
         ws_share: 0.5,
         http_connections: HttpConnections::PerAgent,
+        acks_only: false,
         profile: Profile::load("walkers").expect("a built-in profile"),
         seed: 3,
         credentials: None,
@@ -137,6 +138,81 @@ async fn a_swarm_runs_against_the_server_of_the_project() {
         summary.contains("sign-up: 8 with POST /v1/owners and POST /v1/residents"),
         "{summary}"
     );
+}
+
+/// Residents that walk, never look by themselves and never wait for the
+/// end of a walk. Each observation that the server builds for them comes
+/// from the answer of `POST /v1/act`, or is the first one of an agent.
+const BLIND_WALKERS: &str = r#"
+name = "blind_walkers"
+summary = "Residents walk and never look."
+observe_share = 0.0
+wait_share = 0.0
+
+[think]
+kind = "uniform"
+min = 0
+max = 2
+
+[[action]]
+verb = "move_to"
+weight = 1
+args = { gen = "near_tile", radius = 6 }
+"#;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_that_ask_for_acknowledgements_only_make_the_server_build_no_observation() {
+    let spawn = SpawnServer { seed: 5, shape: Shape { cities: 1, districts: 1 }, tick_ms: 20 };
+    let mut config = config(Target::Spawn(spawn));
+    config.ws_share = 0.0;
+    config.profile = Profile::parse(BLIND_WALKERS).expect("a valid profile");
+    config.duration = Duration::from_millis(1_500);
+
+    // The default of the route: each answer has an observation, so the
+    // server builds one for each request.
+    let with = swarm::run(&config).await.expect("the swarm runs");
+    assert!(!with.acks_only);
+    assert_eq!(with.agents_ready, 8);
+    assert_eq!(with.failed_requests, 0, "errors: {:?}", with.errors);
+    assert!(with.acks > 40, "{} acknowledgements", with.acks);
+    let sim = with.server_stats.sim.expect("a server in this process gives statistics");
+    assert!(
+        sim.observations >= with.acks / 2,
+        "{} observations for {} acknowledgements",
+        sim.observations,
+        with.acks
+    );
+    assert!(sim.observe_steps > 0 && sim.observe_steps <= sim.observations);
+    assert!(!with.summary().contains("observe=false"), "{}", with.summary());
+
+    // `observe=false`: the answers have no observation. An agent of this
+    // profile looks one time, when it starts.
+    config.acks_only = true;
+    let without = swarm::run(&config).await.expect("the swarm runs");
+    assert!(without.acks_only);
+    assert_eq!(without.agents_ready, 8);
+    assert!(without.agents_failed.is_empty(), "agents gave up: {:?}", without.agents_failed);
+    assert_eq!(without.failed_requests, 0, "errors: {:?}", without.errors);
+    assert!(without.acks > 40, "{} acknowledgements", without.acks);
+    assert_eq!(without.ack_http.count, without.acks, "every agent used HTTP");
+    let sim = without.server_stats.sim.expect("a server in this process gives statistics");
+    assert!(
+        sim.observations <= 8,
+        "{} observations in the window for 8 agents that look one time",
+        sim.observations
+    );
+    assert!(without.observations <= 8, "{} observations of the agents", without.observations);
+    // The game still takes the actions. An agent that never waits fills
+    // the queue of its resident, so an accepted walk starts or waits in
+    // the queue, and the world rejects the others.
+    assert!(without.actions.accepted() > 0, "no action was accepted: {:?}", without.ack_states);
+    assert_eq!(without.ack_states.values().sum::<u64>(), without.acks);
+    let summary = without.summary();
+    assert!(
+        summary.contains("POST /v1/act?observe=false (answers without an observation)"),
+        "{summary}"
+    );
+    assert!(summary.contains("observations of the simulation thread: "), "{summary}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

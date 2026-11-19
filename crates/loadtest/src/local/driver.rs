@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use unsup_kernel::{Input, Output, Rng, World};
 use unsup_protocol::{
-    ActionAck, ActionRequest, ActionStatus, ObserveOpts, RealmId, ResidentId, SimError,
+    ActionAck, ActionRequest, ActionStatus, Observation, ObserveOpts, RealmId, ResidentId, SimError,
 };
 
 use super::ActionCounts;
@@ -41,6 +41,12 @@ pub struct DriverOptions {
     /// sections, as a client does by default. The reports of ended actions
     /// are counted only when the list is empty or has `reports`.
     pub observe_sections: Vec<String>,
+    /// How the observations of one frame are built. 0: one call of
+    /// `World::observe` for each observation, on one thread. N: calls of
+    /// `World::observe_batch` with at most N requests each, as the runtime
+    /// builds the observations of the `observe` calls of one batch of its
+    /// mailbox. The answers are the same in both ways.
+    pub observe_batch: usize,
 }
 
 /// What the world answered to one request.
@@ -77,6 +83,9 @@ pub struct Driver {
     memory: Vec<Memory>,
     /// The sections of an observation. `None`: all sections.
     sections: Option<Vec<String>>,
+    /// Greatest number of requests in one call of `World::observe_batch`.
+    /// 0: one call of `World::observe` for each observation.
+    observe_batch: usize,
 }
 
 impl Driver {
@@ -107,6 +116,7 @@ impl Driver {
             scratch: Scratch::default(),
             pending_recheck: u64::from(defaults().driver.pending_recheck_ticks.max(1)),
             sections: Some(options.observe_sections).filter(|sections| !sections.is_empty()),
+            observe_batch: options.observe_batch,
         };
         let now = world.frame();
         for slot in 0..driver.ids.len() {
@@ -311,28 +321,61 @@ impl Driver {
     /// gets only the notices and reports that are new. The reports of
     /// ended actions in these observations are counted. Returns the number
     /// of observations.
-    pub fn observe(&mut self, world: &World) -> usize {
+    ///
+    /// The observations are built one by one on this thread, or in calls
+    /// of `World::observe_batch` on all processor cores
+    /// ([`DriverOptions::observe_batch`]). The residents, the order and
+    /// the answers are the same in both ways.
+    pub fn observe(&mut self, world: &mut World) -> usize {
         let share = self.profile.observe_share;
-        let mut opts = ObserveOpts { sections: self.sections.clone(), ..ObserveOpts::default() };
-        let mut made = 0;
+        let mut slots = Vec::new();
         for slot in std::mem::take(&mut self.acted) {
-            if !random::chance(&mut self.rng, share) {
-                continue;
+            if random::chance(&mut self.rng, share) {
+                slots.push(slot);
             }
-            opts.since_notice = self.cursors[slot as usize];
-            // A resident that is gone gives an error. That is counted at
-            // its next turn.
-            if let Ok(observation) = world.observe(self.ids[slot as usize], &opts) {
-                self.cursors[slot as usize] = observation.next_notice;
-                self.counts.record_reports(&observation);
-                // The observation is built and dropped: its cost is what
-                // counts here.
-                std::hint::black_box(&observation);
-                made += 1;
+        }
+        let request = |driver: &Driver, slot: u32| {
+            let opts = ObserveOpts {
+                sections: driver.sections.clone(),
+                since_notice: driver.cursors[slot as usize],
+                ..ObserveOpts::default()
+            };
+            (driver.ids[slot as usize], opts)
+        };
+        let mut made = 0;
+        if self.observe_batch == 0 {
+            for slot in slots {
+                let (resident, opts) = request(self, slot);
+                made += usize::from(self.take_observation(slot, world.observe(resident, &opts)));
+            }
+        } else {
+            for chunk in slots.chunks(self.observe_batch) {
+                let requests: Vec<(ResidentId, ObserveOpts)> =
+                    chunk.iter().map(|&slot| request(self, slot)).collect();
+                let answers = world.observe_batch(&requests);
+                for (&slot, answer) in chunk.iter().zip(answers) {
+                    made += usize::from(self.take_observation(slot, answer));
+                }
             }
         }
         self.counts.observes += made as u64;
         made
+    }
+
+    /// Takes the answer to the observation request of one resident: keeps
+    /// the notice cursor and counts the reports. Returns true when the
+    /// answer is an observation. A resident that is gone gives an error;
+    /// that is counted at its next turn.
+    fn take_observation(&mut self, slot: u32, answer: Result<Observation, SimError>) -> bool {
+        let Ok(observation) = answer else {
+            return false;
+        };
+        self.cursors[slot as usize] = observation.next_notice;
+        self.counts.record_reports(&observation);
+        // The observation is built and dropped: its cost is what counts
+        // here.
+        std::hint::black_box(&observation);
+        true
     }
 
     /// Does one whole turn before a frame: plan, apply and observe. Returns
