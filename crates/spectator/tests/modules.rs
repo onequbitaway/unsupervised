@@ -154,6 +154,68 @@ fn residents(story: &Value) -> Vec<(u64, &str)> {
         .collect()
 }
 
+/// Returns the shot that the director has on air.
+async fn on_air(harness: &Harness) -> Value {
+    harness.get_ok("/v1/director").await["shot"].clone()
+}
+
+#[tokio::test]
+async fn the_director_leaves_the_wide_view_for_an_arrest_of_the_real_modules() {
+    let (world, Cast { bo, cy, eve, .. }) = world();
+    let storage = std::sync::Arc::new(MemStorage::new());
+    let mut harness =
+        Harness::start_world(world, Config::default(), RuntimeConfig::manual(), storage).await;
+    // Frame 1 calls the elections. Frame 2 gives Eve her office, and the
+    // zones know it one frame later.
+    harness.steps(3).await;
+    let layout = harness.get_ok("/v1/world").await;
+    let city = layout["cities"][0]["name"].as_str().expect("a city name").to_string();
+
+    // The elections of frame 1 name no resident, no site and no district,
+    // and they are not breaking news. The director has nothing to show:
+    // a wide view of the city with its residents.
+    let quiet = on_air(&harness).await;
+    assert_eq!(
+        (&quiet["focus"]["type"], &quiet["zoom"], &quiet["drama"], &quiet["breaking"]),
+        (&json!("none"), &json!("city"), &json!(0), &json!(false))
+    );
+    assert_eq!(quiet["caption"], json!(format!("{city} · 4 residents")));
+
+    // Cy takes 500 cents from Bo. The city watch sees it, and Eve arrests
+    // Cy: `crime.arrest_made` with the officer as the actor and the
+    // suspect in `target`, drama 55.
+    harness.act(cy, "pickpocket", json!({ "target": bo })).await;
+    until(&mut harness, "crime.warrant_issued").await;
+    harness.step().await;
+    harness.act(eve, "arrest", json!({ "target": cy })).await;
+    let arrest = until(&mut harness, "crime.arrest_made").await;
+    assert_eq!((&arrest["officer"], &arrest["target"]), (&json!(eve), &json!(cy)));
+
+    // A shot stays for a least time, so the arrest is on air some frames
+    // later. The director then shows the officer from near, with the line
+    // of the event and the words of the crime story.
+    let mut shots = Vec::new();
+    for _ in 0..30 {
+        shots.push(on_air(&harness).await);
+        harness.step().await;
+    }
+    let shot = shots
+        .iter()
+        .find(|shot| shot["kind"] == "crime.arrest_made")
+        .unwrap_or_else(|| panic!("the arrest got no shot in 30 frames: {shots:?}"));
+    assert_eq!(
+        (&shot["zoom"], &shot["breaking"], &shot["drama"], &shot["caption"]),
+        (&json!("close"), &json!(false), &json!(55), &json!("Eve arrested Cy"))
+    );
+    assert_eq!(shot["focus"], json!({ "type": "resident", "id": eve, "name": "Eve" }));
+    assert_eq!(shot["label"], "Crime");
+    assert!(shot["story"].is_u64(), "the shot names the story of the case: {shot}");
+    // The camera is on a resident of the event, not on the city.
+    let wide = shots.iter().filter(|shot| shot["focus"]["type"] == "none").count();
+    assert!(wide < shots.len(), "every one of the 30 frames had a wide view");
+    harness.stop().await;
+}
+
 #[tokio::test]
 async fn the_show_reads_the_events_of_the_real_modules() {
     let (world, Cast { bo, cy, eve, ann }) = world();

@@ -46,11 +46,12 @@ pub use when::When;
 use crate::think::TickThink;
 
 /// The profiles that are part of the binary: name and TOML text.
-const BUILTIN: [(&str, &str); 4] = [
+const BUILTIN: [(&str, &str); 5] = [
     ("walkers", include_str!("../../profiles/walkers.toml")),
     ("rush", include_str!("../../profiles/rush.toml")),
     ("daily_life", include_str!("../../profiles/daily_life.toml")),
     ("still", include_str!("../../profiles/still.toml")),
+    ("sprint", include_str!("../../profiles/sprint.toml")),
 ];
 
 /// A profile could not be read or is not valid.

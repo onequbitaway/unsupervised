@@ -59,6 +59,13 @@ inbox_sample = 256
 pressure_percent = 5
 # Seconds between two progress lines of a long run.
 progress_secs = 10
+# How the observations of one frame are built. 0: one call of
+# `World::observe` for each observation, on one thread. N: calls of
+# `World::observe_batch` with at most N requests each, on all processor
+# cores. The server does that for the `observe` calls of one batch of its
+# mailbox (`batch` in crates/runtime/data/runtime.toml: 256 calls).
+# `--observe-batch` sets it.
+observe_batch = 0
 
 [soak]
 residents = 2000

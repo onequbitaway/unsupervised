@@ -319,6 +319,7 @@ impl Side {
             seed: config.world.seed,
             request_ids: config.request_ids,
             observe_sections: Vec::new(),
+            observe_batch: 0,
         };
         let driver = Driver::new(&world, population.map, population.ids, profile, options);
         Ok((Side { world, driver }, profile_use))

@@ -52,8 +52,8 @@ pub struct WorldArgs {
     /// shelters and stations where the game puts new residents).
     #[arg(long, default_value_t = Placement::Scatter)]
     pub placement: Placement,
-    /// Behaviour profile: a built-in name (walkers, rush, daily_life, still) or
-    /// the path of a TOML file.
+    /// Behaviour profile: a built-in name (walkers, rush, daily_life, still,
+    /// sprint) or the path of a TOML file.
     #[arg(long, default_value = "walkers")]
     pub profile: String,
     /// Send an idempotency key with every request, as a careful client
@@ -142,6 +142,13 @@ pub struct BenchArgs {
     /// cost of one section. Without it, all sections.
     #[arg(long, value_delimiter = ',')]
     pub observe_sections: Vec<String>,
+    /// Build the observations of one frame with `World::observe_batch` on
+    /// all processor cores, at most this many requests in one call. The
+    /// server does that for the `observe` calls of one batch of its
+    /// mailbox, which holds at most 256 calls. 0: one `World::observe` for
+    /// each observation, on one thread.
+    #[arg(long, default_value_t = defaults().bench.observe_batch)]
+    pub observe_batch: usize,
     /// Path of the report file. Default: var/loadtest/bench-<time>.json.
     #[arg(long)]
     pub out: Option<PathBuf>,
@@ -169,6 +176,7 @@ impl BenchArgs {
         if !self.observe_sections.is_empty() {
             args.extend(["--observe-sections".to_string(), self.observe_sections.join(",")]);
         }
+        args.extend(["--observe-batch".to_string(), self.observe_batch.to_string()]);
         args.extend(self.world.to_args());
         args
     }
@@ -240,8 +248,15 @@ pub struct SwarmArgs {
     /// all, for more agents than the machine has ports).
     #[arg(long, default_value_t = HttpConnections::PerAgent)]
     pub http_connections: HttpConnections,
-    /// Behaviour profile: a built-in name (walkers, rush, daily_life, still) or
-    /// the path of a TOML file.
+    /// The HTTP agents send `POST /v1/act?observe=false`: the answer has
+    /// only the acknowledgements, and the server builds no observation
+    /// for it. An agent then looks at the world with the chance
+    /// `observe_share` of the profile. Use it to find the greatest rate of
+    /// actions.
+    #[arg(long)]
+    pub acks_only: bool,
+    /// Behaviour profile: a built-in name (walkers, rush, daily_life, still,
+    /// sprint) or the path of a TOML file.
     #[arg(long, default_value = "walkers")]
     pub profile: String,
     /// Seed of the choices of the agents, and of the world of a server

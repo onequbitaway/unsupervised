@@ -100,6 +100,21 @@ pub struct SimWindow {
     pub waiting: u64,
     /// Inputs that the journal refused since the server started.
     pub journal_errors: u64,
+    /// Observations that the simulation thread built in the window, for
+    /// `observe` calls and for `wait` calls.
+    #[serde(default)]
+    pub observations: u64,
+    /// Steps in which the simulation thread built them. One step builds
+    /// the observations of all `observe` calls of one batch of calls on
+    /// all processor cores, or the observation of one `wait` call.
+    #[serde(default)]
+    pub observe_steps: u64,
+    /// Time in the window that the simulation thread spent in these
+    /// steps, in milliseconds. The part for `observe` calls is also in
+    /// `apply_ms`. The part for `wait` calls that a frame woke is in no
+    /// other number.
+    #[serde(default)]
+    pub observe_ms: f64,
 }
 
 impl SimWindow {
@@ -133,6 +148,9 @@ impl SimWindow {
             mailbox_capacity: end.mailbox_capacity,
             waiting: end.waiting,
             journal_errors: end.journal_errors,
+            observations: end.observations.saturating_sub(start.observations),
+            observe_steps: end.observe_batches.saturating_sub(start.observe_batches),
+            observe_ms: ms(end.observe_micros.saturating_sub(start.observe_micros)),
         }
     }
 
@@ -185,6 +203,9 @@ mod tests {
             commit_micros: 200,
             reply_micros: 300,
             overloaded: 1,
+            observations: 40,
+            observe_batches: 10,
+            observe_micros: 500,
             ..SimStats::default()
         };
         let end = SimStats {
@@ -204,6 +225,9 @@ mod tests {
             overloaded: 4,
             mailbox_depth: 6,
             mailbox_capacity: 1_024,
+            observations: 940,
+            observe_batches: 40,
+            observe_micros: 7_500,
             ..SimStats::default()
         };
         let window = SimWindow::between(&start, &end);
@@ -219,6 +243,9 @@ mod tests {
         assert!((window.calls_ms - 3.0).abs() < 1e-9, "{}", window.calls_ms);
         assert_eq!(window.overloaded, 3);
         assert_eq!((window.mailbox_depth, window.mailbox_capacity), (6, 1_024));
+        // 900 observations in 30 steps, which took 7 ms.
+        assert_eq!((window.observations, window.observe_steps), (900, 30));
+        assert!((window.observe_ms - 7.0).abs() < 1e-9, "{}", window.observe_ms);
         // 20 frames of 4 ms, 50 ms and 3 ms.
         assert!((window.thread_ms() - 133.0).abs() < 1e-9, "{}", window.thread_ms());
         assert_eq!(SimWindow::between(&end, &end).frames, 0);

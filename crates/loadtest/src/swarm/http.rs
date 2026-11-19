@@ -170,6 +170,13 @@ pub async fn post_json<B: Serialize + ?Sized, T: DeserializeOwned>(
     Ok((decode(&body, "the answer")?, latency))
 }
 
+/// Returns the address of `POST /v1/act` with its query: the notice cursor
+/// for the observation in the answer, or `observe=false` for an answer
+/// without an observation.
+fn act_url(act: &str, since: u64, acks_only: bool) -> String {
+    if acks_only { format!("{act}?observe=false") } else { format!("{act}?since={since}") }
+}
+
 /// The HTTP link of one agent.
 #[derive(Clone, Debug)]
 pub struct HttpLink {
@@ -187,21 +194,32 @@ impl HttpLink {
 
     /// Sends one action, or a plan of several actions in sequence. The
     /// latency is the acknowledgement latency. The observation in the
-    /// answer holds the notices and reports since `since`.
+    /// answer holds the notices and reports since `since`. With
+    /// `acks_only` the request is `POST /v1/act?observe=false`: the server
+    /// builds no observation, and the answer has only the
+    /// acknowledgements.
     ///
     /// # Errors
     ///
-    /// Fails when the server gives no acknowledgement.
+    /// Fails when the server gives no acknowledgement, or no observation
+    /// when the request asked for one.
     pub async fn act(
         &self,
         requests: &[ActionRequest],
         since: u64,
+        acks_only: bool,
     ) -> Result<(ActAnswer, Duration), RequestError> {
-        let url = format!("{}?since={since}", self.urls.act);
-        match requests {
-            [request] => post_json(&self.client, &url, Some(&self.key), request).await,
-            plan => post_json(&self.client, &url, Some(&self.key), &json!({ "plan": plan })).await,
+        let url = act_url(&self.urls.act, since, acks_only);
+        let (answer, latency): (ActAnswer, Duration) = match requests {
+            [request] => post_json(&self.client, &url, Some(&self.key), request).await?,
+            plan => {
+                post_json(&self.client, &url, Some(&self.key), &json!({ "plan": plan })).await?
+            }
+        };
+        if !acks_only && answer.observation.is_none() {
+            return Err(RequestError::local("decode", "the answer has no observation"));
         }
+        Ok((answer, latency))
     }
 
     /// Asks for an observation with the notices since `since`.
@@ -254,6 +272,13 @@ mod tests {
         assert_eq!(urls.residents, "http://127.0.0.1:8080/v1/residents");
         assert_eq!(urls.stats, "http://127.0.0.1:8080/v1/spectate/stats");
         assert_eq!(urls.zone(ZoneId(7)), "http://127.0.0.1:8080/v1/world/zones/7?residents=false");
+    }
+
+    #[test]
+    fn the_act_address_asks_for_an_observation_or_for_none() {
+        let act = "http://127.0.0.1:8080/v1/act";
+        assert_eq!(act_url(act, 42, false), "http://127.0.0.1:8080/v1/act?since=42");
+        assert_eq!(act_url(act, 42, true), "http://127.0.0.1:8080/v1/act?observe=false");
     }
 
     #[test]
