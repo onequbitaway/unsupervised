@@ -20,4 +20,4 @@ updated at the end of each build wave. It does not hide gaps.
 
 ## Not done
 
-See [PLAN.md](PLAN.md) for the list of workstreams.
+See [ROADMAP.md](ROADMAP.md) for the work that comes next.

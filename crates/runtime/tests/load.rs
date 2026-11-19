@@ -333,12 +333,13 @@ async fn a_wait_with_news_behind_its_cursor_answers_at_once() {
     };
 
     // The notice arrived before the call. A cursor before it finds it: the
-    // call takes no place among the waiting calls. The statistics call is
-    // behind it in the mailbox, so the runtime has handled it by then.
-    let mut behind = wait(Some(0));
-    assert!(poll_once(&mut behind).await.is_none(), "the call is in the mailbox");
+    // call answers with no frame in between (the world does not move in
+    // this test) and takes no place among the waiting calls. A call that
+    // waited instead would never end, so a time limit turns that into a
+    // failure.
+    let behind = tokio::time::timeout(Duration::from_secs(30), wait(Some(0)));
+    let observation = behind.await.expect("the call answers at once").expect("an observation");
     assert_eq!(handle.stats().await.expect("stats").waiting, 0);
-    let observation = behind.await.expect("an observation");
     let kinds: Vec<&str> = observation.notices.iter().map(|n| n.kind.as_str()).collect();
     assert_eq!(kinds, ["town.greeting"]);
 

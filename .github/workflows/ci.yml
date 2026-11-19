@@ -12,6 +12,14 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # The workspace has many test binaries. Without debug information and
+  # without incremental data they fit on the disk of the runner.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
 jobs:
   gate:
     name: Gate
